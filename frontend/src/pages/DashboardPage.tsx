@@ -11,9 +11,12 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
+  const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
   const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
   const [title, setTitle] = useState("方案评审讨论");
   const solutionReview = formats.data?.find((item) => item.name === "方案评审")?.id;
+  const defaultRecipe = recipes.data?.find((item) => item.name === "方案评审默认配方")?.id;
+  const [recipeId, setRecipeId] = useState("__default__");
   const [formatId, setFormatId] = useState<string | undefined>(undefined);
   const [selectedPersonaIds, setSelectedPersonaIds] = useState<string[]>([]);
 
@@ -21,13 +24,17 @@ export function DashboardPage() {
     const names = new Set(["架构师", "性能批评者", "维护者", "反方律师"]);
     return personas.data?.filter((p) => names.has(p.name)).map((p) => p.id) ?? [];
   }, [personas.data]);
+  const effectiveRecipeId = recipeId === "__none__" ? undefined : recipeId === "__default__" ? defaultRecipe : recipeId;
+  const effectiveRecipe = recipes.data?.find((item) => item.id === effectiveRecipeId);
+  const effectivePersonaIds = selectedPersonaIds.length ? selectedPersonaIds : effectiveRecipe?.persona_ids ?? initialPersonaIds;
 
   const createRoom = useMutation({
     mutationFn: () =>
       api.createRoom({
         title,
-        format_id: formatId ?? solutionReview ?? formats.data?.[0]?.id,
-        persona_ids: selectedPersonaIds.length ? selectedPersonaIds : initialPersonaIds
+        recipe_id: effectiveRecipeId,
+        format_id: effectiveRecipeId ? undefined : formatId ?? solutionReview ?? formats.data?.[0]?.id,
+        persona_ids: selectedPersonaIds.length ? selectedPersonaIds : effectiveRecipeId ? [] : initialPersonaIds
       }),
     onSuccess: (state) => {
       void queryClient.invalidateQueries({ queryKey: ["rooms"] });
@@ -70,8 +77,25 @@ export function DashboardPage() {
             <input className="input mt-1 w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label className="block">
+            <span className="label">配方</span>
+            <select className="input mt-1 w-full" value={recipeId} onChange={(event) => setRecipeId(event.target.value)}>
+              <option value="__default__">默认配方</option>
+              <option value="__none__">不使用配方</option>
+              {(recipes.data ?? []).map((recipe) => (
+                <option key={recipe.id} value={recipe.id}>
+                  {recipe.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block">
             <span className="label">赛制</span>
-            <select className="input mt-1 w-full" value={formatId ?? solutionReview ?? ""} onChange={(event) => setFormatId(event.target.value)}>
+            <select
+              className="input mt-1 w-full"
+              value={formatId ?? effectiveRecipe?.format_id ?? solutionReview ?? ""}
+              disabled={Boolean(effectiveRecipeId)}
+              onChange={(event) => setFormatId(event.target.value)}
+            >
               {(formats.data ?? []).map((format: DebateFormat) => (
                 <option key={format.id} value={format.id}>
                   {format.name}
@@ -83,7 +107,7 @@ export function DashboardPage() {
             <div className="label">参辩人设</div>
             <div className="mt-2 max-h-72 space-y-2 overflow-auto pr-1">
               {(personas.data ?? []).map((persona: Persona) => {
-                const checked = (selectedPersonaIds.length ? selectedPersonaIds : initialPersonaIds).includes(persona.id);
+                const checked = effectivePersonaIds.includes(persona.id);
                 return (
                   <label key={persona.id} className="flex items-start gap-2 rounded-md border border-border p-2 text-sm">
                     <input
@@ -91,7 +115,7 @@ export function DashboardPage() {
                       className="mt-1"
                       checked={checked}
                       onChange={(event) => {
-                        const base = selectedPersonaIds.length ? selectedPersonaIds : initialPersonaIds;
+                        const base = selectedPersonaIds.length ? selectedPersonaIds : effectivePersonaIds;
                         setSelectedPersonaIds(event.target.checked ? [...base, persona.id] : base.filter((id) => id !== persona.id));
                       }}
                     />
@@ -113,4 +137,3 @@ export function DashboardPage() {
     </div>
   );
 }
-

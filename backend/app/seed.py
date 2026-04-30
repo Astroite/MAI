@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .ids import builtin_id
-from .models import DebateFormat, Persona, PhaseTemplate
+from .models import DebateFormat, Persona, PhaseTemplate, Recipe
 
 
 def _transition() -> list[dict]:
@@ -306,6 +306,28 @@ FORMAT_DEFS: list[dict] = [
 ]
 
 
+RECIPE_DEFS: list[dict] = [
+    {
+        "key": "solution_review_default",
+        "name": "方案评审默认配方",
+        "description": "架构师、性能批评者、维护者和反方律师按方案评审赛制推进。",
+        "personas": ["architect", "performance_critic", "maintainer", "devils_advocate"],
+        "format": "solution_review",
+        "initial_settings": {"max_message_tokens": 900, "max_room_tokens": 120000, "auto_transition": False},
+        "tags": ["builtin", "review"],
+    },
+    {
+        "key": "open_roundtable_default",
+        "name": "开放圆桌默认配方",
+        "description": "适合早期探索的圆桌讨论配方。",
+        "personas": ["product_strategist", "ux_researcher", "architect", "research_scout"],
+        "format": "roundtable",
+        "initial_settings": {"max_message_tokens": 800, "max_room_tokens": 90000, "auto_transition": False},
+        "tags": ["builtin", "roundtable"],
+    },
+]
+
+
 async def seed_builtins(session: AsyncSession) -> None:
     existing_persona = await session.scalar(select(Persona.id).limit(1))
     if existing_persona is None:
@@ -362,5 +384,23 @@ async def seed_builtins(session: AsyncSession) -> None:
                     tags=data["tags"],
                 )
             )
+    existing_recipe = await session.scalar(select(Recipe.id).limit(1))
+    if existing_recipe is None:
+        for data in RECIPE_DEFS:
+            session.add(
+                Recipe(
+                    id=builtin_id("recipe", data["key"]),
+                    version=1,
+                    schema_version=1,
+                    status="published",
+                    is_builtin=True,
+                    name=data["name"],
+                    description=data["description"],
+                    persona_ids=[builtin_id("persona", key) for key in data["personas"]],
+                    format_id=builtin_id("format", data["format"]),
+                    format_version=1,
+                    initial_settings=data["initial_settings"],
+                    tags=data["tags"],
+                )
+            )
     await session.commit()
-

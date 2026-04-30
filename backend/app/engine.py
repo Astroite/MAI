@@ -404,6 +404,9 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
     plan = await session.get(RoomPhasePlan, {"room_id": room.id, "position": phase.plan_position})
     allowed = await allowed_persona_ids(session, room.id, template, plan)
     counts = await _spoken_counts(session, room.id, phase.id)
+    latest_message_id = await session.scalar(
+        select(Message.id).where(Message.room_id == room.id).order_by(Message.created_at.desc())
+    )
     matched: list[dict] = []
     for condition in template.exit_conditions or []:
         ctype = condition.get("type")
@@ -417,6 +420,9 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
             min_each = int(condition.get("min_each", 1))
             if allowed and all(counts.get(pid, 0) >= min_each for pid in allowed):
                 matched.append(condition)
+        if ctype == "all_voted":
+            if allowed and all(counts.get(pid, 0) >= 1 for pid in allowed):
+                matched.append(condition)
         if ctype == "token_budget":
             if runtime.token_counter_total >= int(condition.get("max", runtime.max_room_tokens)):
                 matched.append(condition)
@@ -427,7 +433,9 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
             tags = {s.get("tag") for s in (latest.signals if latest else [])}
             if tags.intersection(set(condition.get("trigger_if", []))):
                 matched.append(condition)
-    if matched and emit:
+    if matched and latest_message_id and runtime.phase_exit_suppressed_after_message_id == latest_message_id:
+        return False
+    if matched and emit and not runtime.phase_exit_suggested:
         await emit_phase_exit(session, room, runtime, matched)
     return bool(matched)
 
@@ -438,10 +446,32 @@ async def emit_phase_exit(
     runtime: RoomRuntimeState,
     matched: list[dict] | None = None,
 ) -> None:
+    runtime.phase_exit_suggested = True
+    runtime.phase_exit_matched_conditions = matched or []
     await trace_record(session, room.id, "phase_transition", "phase exit suggested", {"matched": matched or []})
     await event_bus.publish(room.id, {"type": "phase.exit_suggested", "matched_conditions": matched or []})
     if runtime.auto_transition:
         await transition_to_next_phase(session, room.id)
+
+
+async def continue_current_phase(session: AsyncSession, room_id: str) -> None:
+    runtime = await session.get(RoomRuntimeState, room_id)
+    if runtime is None:
+        raise ValueError("runtime not found")
+    latest_message_id = await session.scalar(
+        select(Message.id).where(Message.room_id == room_id).order_by(Message.created_at.desc())
+    )
+    runtime.phase_exit_suggested = False
+    runtime.phase_exit_matched_conditions = []
+    runtime.phase_exit_suppressed_after_message_id = latest_message_id
+    await trace_record(
+        session,
+        room_id,
+        "phase_transition",
+        "phase exit suggestion ignored",
+        {"suppressed_after_message_id": latest_message_id},
+    )
+    await event_bus.publish(room_id, {"type": "phase.exit_continued"})
 
 
 async def transition_to_next_phase(session: AsyncSession, room_id: str, target_position: int | None = None) -> RoomPhaseInstance | None:
@@ -459,6 +489,9 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
     plan = await session.get(RoomPhasePlan, {"room_id": room_id, "position": position})
     if plan is None:
         runtime.current_phase_instance_id = None
+        runtime.phase_exit_suggested = False
+        runtime.phase_exit_matched_conditions = []
+        runtime.phase_exit_suppressed_after_message_id = None
         await trace_record(session, room_id, "phase_transition", "no next phase", {"target_position": position})
         await session.flush()
         return None
@@ -472,6 +505,9 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
     session.add(instance)
     await session.flush()
     runtime.current_phase_instance_id = instance.id
+    runtime.phase_exit_suggested = False
+    runtime.phase_exit_matched_conditions = []
+    runtime.phase_exit_suppressed_after_message_id = None
     marker = Message(
         room_id=room_id,
         phase_instance_id=instance.id,
@@ -612,4 +648,3 @@ def message_to_event(message: Message) -> dict:
         "user_revealed_at": message.user_revealed_at.isoformat() if message.user_revealed_at else None,
         "created_at": message.created_at.isoformat() if message.created_at else None,
     }
-

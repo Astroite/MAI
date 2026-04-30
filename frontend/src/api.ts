@@ -1,4 +1,4 @@
-import type { DebateFormat, Message, Persona, PhaseTemplate, Room, RoomState } from "./types";
+import type { DebateFormat, Message, Persona, PhaseTemplate, Recipe, Room, RoomState } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -18,11 +18,13 @@ export const api = {
   health: () => request<{ status: string; database: string; mock_llm: boolean }>("/health"),
   rooms: () => request<Room[]>("/rooms"),
   roomState: (roomId: string) => request<RoomState>(`/rooms/${roomId}/state`),
-  createRoom: (body: { title: string; format_id?: string | null; persona_ids: string[] }) =>
+  createRoom: (body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }) =>
     request<RoomState>("/rooms", { method: "POST", body: JSON.stringify(body) }),
   personas: (kind?: string) => request<Persona[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
   phases: () => request<PhaseTemplate[]>("/templates/phases"),
   formats: () => request<DebateFormat[]>("/templates/formats"),
+  recipes: () => request<Recipe[]>("/templates/recipes"),
+  createRecipe: (body: unknown) => request<Recipe>("/templates/recipes", { method: "POST", body: JSON.stringify(body) }),
   createPhase: (body: unknown) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),
   appendMessage: (roomId: string, content: string) =>
     request<Message>(`/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
@@ -48,6 +50,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ target_position })
     }),
+  continuePhase: (roomId: string) => request<RoomState>(`/rooms/${roomId}/phase/continue`, { method: "POST" }),
   insertPhase: (roomId: string, phase_template_id: string) =>
     request<RoomState>(`/rooms/${roomId}/phase/insert`, {
       method: "POST",
@@ -70,4 +73,3 @@ export const api = {
 };
 
 export { API_BASE };
-

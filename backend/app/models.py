@@ -270,6 +270,9 @@ class RoomRuntimeState(Base):
     current_masquerade_persona_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     max_message_tokens: Mapped[int] = mapped_column(Integer, default=900)
     max_room_tokens: Mapped[int] = mapped_column(Integer, default=120000)
+    phase_exit_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
+    phase_exit_matched_conditions: Mapped[list[dict]] = mapped_column(JSONB, default=list)
+    phase_exit_suppressed_after_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
@@ -282,4 +285,3 @@ class TraceEvent(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     summary: Mapped[str] = mapped_column(Text)
     payload_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
-

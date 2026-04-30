@@ -14,6 +14,7 @@ from .engine import (
     DEFAULT_SCRIBE_STATE,
     after_message_appended,
     append_verdict,
+    continue_current_phase,
     freeze_room,
     run_room_turn,
     transition_to_next_phase,
@@ -28,6 +29,7 @@ from .models import (
     MergeBack,
     Persona,
     PhaseTemplate,
+    Recipe,
     Room,
     RoomPersona,
     RoomPhaseInstance,
@@ -53,6 +55,8 @@ from .schemas import (
     PhaseTemplateCreate,
     PhaseTemplateOut,
     PhaseTransitionRequest,
+    RecipeCreate,
+    RecipeOut,
     RoomCreate,
     RoomOut,
     RoomPhaseInstanceOut,
@@ -171,6 +175,39 @@ async def list_formats(session: AsyncSession = Depends(get_session)):
     return (await session.scalars(select(DebateFormat).order_by(DebateFormat.is_builtin.desc(), DebateFormat.name))).all()
 
 
+@app.get("/templates/recipes", response_model=list[RecipeOut])
+async def list_recipes(session: AsyncSession = Depends(get_session)):
+    return (await session.scalars(select(Recipe).order_by(Recipe.is_builtin.desc(), Recipe.name))).all()
+
+
+@app.post("/templates/recipes", response_model=RecipeOut)
+async def create_recipe(body: RecipeCreate, session: AsyncSession = Depends(get_session)):
+    recipe = Recipe(
+        id=new_id(),
+        version=1,
+        schema_version=1,
+        status="published",
+        is_builtin=False,
+        **body.model_dump(mode="json"),
+    )
+    session.add(recipe)
+    await session.commit()
+    await session.refresh(recipe)
+    return recipe
+
+
+@app.get("/templates/recipes/{recipe_id}/export")
+async def export_recipe(recipe_id: str, session: AsyncSession = Depends(get_session)):
+    recipe = await session.get(Recipe, recipe_id)
+    if not recipe:
+        raise HTTPException(404, "recipe not found")
+    payload = RecipeOut.model_validate(recipe).model_dump(mode="json", exclude={"owner_user_id"})
+    return JSONResponse(
+        payload,
+        headers={"Content-Disposition": f'attachment; filename="{recipe.name}.recipe.json"'},
+    )
+
+
 @app.get("/rooms", response_model=list[RoomOut])
 async def list_rooms(session: AsyncSession = Depends(get_session)):
     return (await session.scalars(select(Room).order_by(Room.created_at.desc()))).all()
@@ -178,14 +215,16 @@ async def list_rooms(session: AsyncSession = Depends(get_session)):
 
 @app.post("/rooms", response_model=RoomState)
 async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_session)):
-    selected_format = await _select_format(session, body.format_id)
-    persona_ids = body.persona_ids or await _default_discussant_ids(session)
+    selected_recipe = await _select_recipe(session, body.recipe_id)
+    selected_format = await _select_format(session, body.format_id or (selected_recipe.format_id if selected_recipe else None))
+    persona_ids = body.persona_ids or (selected_recipe.persona_ids if selected_recipe else []) or await _default_discussant_ids(session)
     system_ids = await _system_persona_ids(session)
 
     room = Room(
         id=new_id(),
         parent_room_id=body.parent_room_id,
         title=body.title,
+        recipe_id=selected_recipe.id if selected_recipe else None,
         format_id=selected_format.id if selected_format else None,
         format_version=selected_format.version if selected_format else None,
         status="active",
@@ -193,7 +232,13 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
     session.add(room)
     await session.flush()
 
-    runtime = RoomRuntimeState(room_id=room.id)
+    settings_payload = selected_recipe.initial_settings if selected_recipe else {}
+    runtime = RoomRuntimeState(
+        room_id=room.id,
+        max_message_tokens=settings_payload.get("max_message_tokens", 900),
+        max_room_tokens=settings_payload.get("max_room_tokens", 120000),
+        auto_transition=settings_payload.get("auto_transition", False),
+    )
     scribe = ScribeState(room_id=room.id, current_state=DEFAULT_SCRIBE_STATE.copy())
     session.add_all([runtime, scribe])
     for persona_id in dict.fromkeys(persona_ids + system_ids):
@@ -216,7 +261,7 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
         )
     await session.flush()
     await transition_to_next_phase(session, room.id, target_position=0)
-    await trace_record(session, room.id, "state_mutation", "room created", {"format_id": room.format_id})
+    await trace_record(session, room.id, "state_mutation", "room created", {"format_id": room.format_id, "recipe_id": room.recipe_id})
     await session.commit()
     return await _room_state(session, room.id)
 
@@ -337,6 +382,15 @@ async def next_phase(room_id: str, body: PhaseTransitionRequest, session: AsyncS
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
     await transition_to_next_phase(session, room_id, body.target_position)
+    await session.commit()
+    return await _room_state(session, room_id)
+
+
+@app.post("/rooms/{room_id}/phase/continue", response_model=RoomState)
+async def continue_phase(room_id: str, session: AsyncSession = Depends(get_session)):
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    await continue_current_phase(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
 
@@ -511,6 +565,15 @@ async def _select_format(session: AsyncSession, format_id: str | None) -> Debate
             raise HTTPException(404, "format not found")
         return item
     return await session.scalar(select(DebateFormat).where(DebateFormat.name == "自由模式"))
+
+
+async def _select_recipe(session: AsyncSession, recipe_id: str | None) -> Recipe | None:
+    if not recipe_id:
+        return None
+    item = await session.get(Recipe, recipe_id)
+    if not item:
+        raise HTTPException(404, "recipe not found")
+    return item
 
 
 async def _default_discussant_ids(session: AsyncSession) -> list[str]:

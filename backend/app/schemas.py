@@ -190,6 +190,36 @@ class DebateFormatOut(APIModel):
     updated_at: datetime
 
 
+class RecipeOut(APIModel):
+    id: str
+    version: int
+    schema_version: int
+    status: Literal["draft", "published"]
+    forked_from_id: str | None = None
+    forked_from_version: int | None = None
+    owner_user_id: str | None = None
+    is_builtin: bool
+    name: str
+    description: str
+    persona_ids: list[str] = Field(default_factory=list)
+    format_id: str | None = None
+    format_version: int | None = None
+    initial_settings: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class RecipeCreate(APIModel):
+    name: str
+    description: str = ""
+    persona_ids: list[str] = Field(default_factory=list)
+    format_id: str | None = None
+    format_version: int | None = None
+    initial_settings: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+
+
 class RoomOut(APIModel):
     id: str
     parent_room_id: str | None = None
@@ -214,11 +244,15 @@ class RoomRuntimeOut(APIModel):
     current_masquerade_persona_id: str | None = None
     max_message_tokens: int
     max_room_tokens: int
+    phase_exit_suggested: bool = False
+    phase_exit_matched_conditions: list[dict[str, Any]] = Field(default_factory=list)
+    phase_exit_suppressed_after_message_id: str | None = None
     updated_at: datetime
 
 
 class RoomCreate(APIModel):
     title: str
+    recipe_id: str | None = None
     format_id: str | None = None
     persona_ids: list[str] = Field(default_factory=list)
     parent_room_id: str | None = None
@@ -366,4 +400,3 @@ class RoomState(APIModel):
     messages: list[MessageOut]
     scribe_state: ScribeStateOut
     facilitator_signals: list[FacilitatorSignalOut]
-

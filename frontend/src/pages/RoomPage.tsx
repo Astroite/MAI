@@ -5,7 +5,7 @@ import { FileUp, Gavel, Lock, MessageSquarePlus, Play, Plus, Snowflake, Unlock, 
 import { api } from "../api";
 import { useRoomEvents } from "../hooks";
 import { useUIStore } from "../store";
-import type { Message, Persona, ScribeState } from "../types";
+import type { Message, Persona, Runtime, ScribeState } from "../types";
 import { MarkdownBlock } from "../components/MarkdownBlock";
 import { StatusPill } from "../components/StatusPill";
 
@@ -24,6 +24,7 @@ export function RoomPage() {
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
   const runTurn = useMutation({ mutationFn: () => api.runTurn(roomId!, speakerId || undefined), onSuccess: invalidate });
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(roomId!), onSuccess: invalidate });
+  const continuePhase = useMutation({ mutationFn: () => api.continuePhase(roomId!), onSuccess: invalidate });
   const freeze = useMutation({ mutationFn: () => api.freeze(roomId!), onSuccess: invalidate });
   const unfreeze = useMutation({ mutationFn: () => api.unfreeze(roomId!), onSuccess: invalidate });
   const insertPhase = useMutation({ mutationFn: () => api.insertPhase(roomId!, insertPhaseId), onSuccess: invalidate });
@@ -129,11 +130,20 @@ export function RoomPage() {
             </div>
           </div>
         </div>
+        {state.runtime.phase_exit_suggested && (
+          <PhaseExitBanner
+            matched={state.runtime.phase_exit_matched_conditions}
+            onNext={() => nextPhase.mutate()}
+            onContinue={() => continuePhase.mutate()}
+            disabled={state.runtime.frozen || nextPhase.isPending || continuePhase.isPending}
+          />
+        )}
         <MessageList messages={state.messages} personas={state.personas} />
         <Composer roomId={roomId} personas={discussants} frozen={state.runtime.frozen} />
       </section>
 
       <aside className="space-y-4 max-xl:col-span-2 max-lg:col-span-1">
+        <LimitPanel roomId={roomId} runtime={state.runtime} />
         <ScribePanel state={state.scribe_state.current_state} />
         <FacilitatorPanel signals={state.facilitator_signals} />
         <UploadPanel roomId={roomId} frozen={state.runtime.frozen} />
@@ -151,6 +161,89 @@ function PersonaRow({ persona }: { persona: Persona }) {
       </div>
       <div className="mt-1 text-xs text-muted">{persona.description}</div>
     </div>
+  );
+}
+
+function PhaseExitBanner({
+  matched,
+  onNext,
+  onContinue,
+  disabled
+}: {
+  matched: Array<Record<string, unknown>>;
+  onNext: () => void;
+  onContinue: () => void;
+  disabled: boolean;
+}) {
+  const label = matched.map((item) => String(item.type ?? "condition")).join(", ");
+  return (
+    <div className="border-b border-accent bg-accent/10 px-4 py-3">
+      <div className="mx-auto flex max-w-4xl items-center justify-between gap-3 max-md:flex-col max-md:items-stretch">
+        <div>
+          <div className="text-sm font-semibold text-accent">当前阶段已满足退出条件</div>
+          <div className="mt-0.5 text-xs text-muted">{label || "phase exit suggested"}</div>
+        </div>
+        <div className="flex gap-2">
+          <button className="btn btn-primary" disabled={disabled} onClick={onNext}>
+            <Play size={16} />
+            进入下一阶段
+          </button>
+          <button className="btn" disabled={disabled} onClick={onContinue}>
+            再来一回合
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
+  const queryClient = useQueryClient();
+  const [maxMessageTokens, setMaxMessageTokens] = useState(runtime.max_message_tokens);
+  const [maxRoomTokens, setMaxRoomTokens] = useState(runtime.max_room_tokens);
+  const [autoTransition, setAutoTransition] = useState(runtime.auto_transition);
+  const update = useMutation({
+    mutationFn: () =>
+      api.updateLimits(roomId, {
+        max_message_tokens: maxMessageTokens,
+        max_room_tokens: maxRoomTokens,
+        auto_transition: autoTransition
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+  });
+  return (
+    <section className="panel p-4">
+      <div className="label">Limit 与阶段切换</div>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <label className="block">
+          <span className="text-xs text-muted">单条 tokens</span>
+          <input
+            className="input mt-1 w-full"
+            type="number"
+            min={1}
+            value={maxMessageTokens}
+            onChange={(event) => setMaxMessageTokens(Number(event.target.value))}
+          />
+        </label>
+        <label className="block">
+          <span className="text-xs text-muted">房间 tokens</span>
+          <input
+            className="input mt-1 w-full"
+            type="number"
+            min={1}
+            value={maxRoomTokens}
+            onChange={(event) => setMaxRoomTokens(Number(event.target.value))}
+          />
+        </label>
+      </div>
+      <label className="mt-3 flex items-center gap-2 text-sm">
+        <input type="checkbox" checked={autoTransition} onChange={(event) => setAutoTransition(event.target.checked)} />
+        自动进入下一阶段
+      </label>
+      <button className="btn mt-3 w-full" onClick={() => update.mutate()} disabled={update.isPending}>
+        保存
+      </button>
+    </section>
   );
 }
 

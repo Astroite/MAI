@@ -17,6 +17,10 @@ def test_health_and_builtin_templates():
         assert formats.status_code == 200
         assert any(item["name"] == "方案评审" for item in formats.json())
 
+        recipes = client.get("/templates/recipes")
+        assert recipes.status_code == 200
+        assert any(item["name"] == "方案评审默认配方" for item in recipes.json())
+
 
 def test_room_message_and_mock_turn():
     with TestClient(app) as client:
@@ -42,3 +46,10 @@ def test_room_message_and_mock_turn():
         assert payload
         assert payload[0]["author_actual"] == "ai"
 
+        state = client.get("/rooms/%s/state" % room_id).json()
+        assert state["runtime"]["phase_exit_suggested"] is True
+        assert state["runtime"]["phase_exit_matched_conditions"][0]["type"] == "all_spoken"
+
+        continued = client.post("/rooms/%s/phase/continue" % room_id)
+        assert continued.status_code == 200
+        assert continued.json()["runtime"]["phase_exit_suggested"] is False

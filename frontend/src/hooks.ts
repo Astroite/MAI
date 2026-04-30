@@ -33,6 +33,7 @@ export function useRoomEvents(roomId?: string) {
             "scribe.updated",
             "facilitator.signal",
             "phase.exit_suggested",
+            "phase.exit_continued",
             "phase.transitioned",
             "room.frozen",
             "room.unfrozen"

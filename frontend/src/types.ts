@@ -34,6 +34,18 @@ export interface DebateFormat {
   is_builtin: boolean;
 }
 
+export interface Recipe {
+  id: string;
+  name: string;
+  description: string;
+  persona_ids: string[];
+  format_id?: string | null;
+  format_version?: number | null;
+  initial_settings: Record<string, unknown>;
+  tags: string[];
+  is_builtin: boolean;
+}
+
 export interface Room {
   id: string;
   parent_room_id?: string | null;
@@ -52,6 +64,9 @@ export interface Runtime {
   auto_transition: boolean;
   max_message_tokens: number;
   max_room_tokens: number;
+  phase_exit_suggested: boolean;
+  phase_exit_matched_conditions: Array<Record<string, unknown>>;
+  phase_exit_suppressed_after_message_id?: string | null;
 }
 
 export interface PhasePlan {
@@ -127,4 +142,3 @@ export interface StreamingEvent {
   chunk_text?: string;
   chunk_index?: number;
 }
-

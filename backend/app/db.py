@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.pool import NullPool
@@ -26,3 +27,27 @@ async def create_schema() -> None:
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE room_runtime_state
+                ADD COLUMN IF NOT EXISTS phase_exit_suggested boolean DEFAULT false NOT NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE room_runtime_state
+                ADD COLUMN IF NOT EXISTS phase_exit_matched_conditions jsonb DEFAULT '[]'::jsonb NOT NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE room_runtime_state
+                ADD COLUMN IF NOT EXISTS phase_exit_suppressed_after_message_id varchar(36)
+                """
+            )
+        )

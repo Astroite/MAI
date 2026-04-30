@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
 import { Download, Plus, Save } from "lucide-react";
 import { api } from "../api";
-import type { DebateFormat, Persona, PhaseTemplate } from "../types";
+import type { DebateFormat, Persona, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
 
 export function TemplatesPage() {
@@ -18,7 +18,7 @@ export function TemplatesPage() {
       </aside>
       {kind === "personas" && <PersonasView />}
       {kind === "formats" && <FormatsView />}
-      {kind === "recipes" && <Placeholder title="配方" />}
+      {kind === "recipes" && <RecipesView />}
       {kind === "phases" && <PhasesView />}
     </div>
   );
@@ -142,6 +142,97 @@ function PhasesView() {
   );
 }
 
+function RecipesView() {
+  const queryClient = useQueryClient();
+  const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
+  const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
+  const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
+  const [name, setName] = useState("我的方案评审配方");
+  const [formatId, setFormatId] = useState("");
+  const [personaIds, setPersonaIds] = useState<string[]>([]);
+  const create = useMutation({
+    mutationFn: () =>
+      api.createRecipe({
+        name,
+        description: "从模板页创建的房间配方。",
+        persona_ids: personaIds,
+        format_id: formatId || formats.data?.[0]?.id,
+        format_version: 1,
+        initial_settings: { max_message_tokens: 900, max_room_tokens: 120000, auto_transition: false },
+        tags: ["custom"]
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["recipes"] })
+  });
+  return (
+    <section className="grid grid-cols-[minmax(0,1fr)_360px] gap-4 max-xl:grid-cols-1">
+      <div className="space-y-3">
+        <Header title="配方模板" />
+        {(recipes.data ?? []).map((recipe: Recipe) => (
+          <div key={recipe.id} className="panel p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h2 className="font-semibold">{recipe.name}</h2>
+                <p className="mt-1 text-sm text-muted">{recipe.description}</p>
+              </div>
+              <a className="btn" href={`/api/templates/recipes/${recipe.id}/export`}>
+                <Download size={16} />
+                导出
+              </a>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <StatusPill tone="brand">{recipe.persona_ids.length} personas</StatusPill>
+              {recipe.tags.map((tag) => (
+                <StatusPill key={tag}>{tag}</StatusPill>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <aside className="panel p-4">
+        <h2 className="font-semibold">新建配方</h2>
+        <div className="mt-4 space-y-3">
+          <label className="block">
+            <span className="label">名称</span>
+            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">赛制</span>
+            <select className="input mt-1 w-full" value={formatId} onChange={(event) => setFormatId(event.target.value)}>
+              <option value="">默认第一个赛制</option>
+              {(formats.data ?? []).map((format) => (
+                <option key={format.id} value={format.id}>
+                  {format.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div>
+            <div className="label">人设</div>
+            <div className="mt-2 max-h-64 space-y-2 overflow-auto">
+              {(personas.data ?? []).map((persona) => (
+                <label key={persona.id} className="flex items-center gap-2 rounded-md border border-border p-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={personaIds.includes(persona.id)}
+                    onChange={(event) =>
+                      setPersonaIds(event.target.checked ? [...personaIds, persona.id] : personaIds.filter((id) => id !== persona.id))
+                    }
+                  />
+                  {persona.name}
+                </label>
+              ))}
+            </div>
+          </div>
+          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
+            <Save size={16} />
+            保存配方
+          </button>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
 function Placeholder({ title }: { title: string }) {
   return (
     <section className="panel p-6">
@@ -165,4 +256,3 @@ function Header({ title }: { title: string }) {
     </div>
   );
 }
-
