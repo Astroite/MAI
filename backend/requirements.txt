@@ -1,0 +1,15 @@
+asyncpg==0.30.0
+fastapi==0.115.12
+httpx==0.28.1
+litellm==1.69.0
+pydantic==2.11.4
+pydantic-settings==2.9.1
+pypdf==5.4.0
+python-dotenv==1.1.0
+python-multipart==0.0.20
+SQLAlchemy==2.0.40
+uvicorn[standard]==0.34.2
+uuid6==2024.7.10
+pytest==8.3.5
+pytest-asyncio==0.26.0
+

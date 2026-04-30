@@ -1,0 +1,15 @@
+.DS_Store
+*.pyc
+*.tsbuildinfo
+__pycache__/
+.pytest_cache/
+
+backend/.venv/
+backend/.env
+backend/trace_payloads/
+backend/uploads/
+
+frontend/node_modules/
+frontend/dist/
+frontend/vite.config.js
+frontend/vite.config.d.ts
