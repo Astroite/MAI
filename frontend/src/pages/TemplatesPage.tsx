@@ -261,27 +261,62 @@ function PhasesView() {
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(phases.data, selectedTags);
   const [name, setName] = useState("快速投票");
+  const [description, setDescription] = useState("所有参辩者并行给出投票和理由。");
   const [tags, setTags] = useState("vote,parallel");
+  const [allowedType, setAllowedType] = useState<"all" | "variables" | "specific">("all");
+  const [allowedValues, setAllowedValues] = useState("");
+  const [orderingType, setOrderingType] = useState("parallel");
+  const [roleConstraints, setRoleConstraints] = useState("给出赞成/反对/保留和一句理由。");
+  const [promptTemplate, setPromptTemplate] = useState("请投票并用一句话说明理由。");
+  const [roundsExit, setRoundsExit] = useState(false);
+  const [roundsN, setRoundsN] = useState(2);
+  const [allSpokenExit, setAllSpokenExit] = useState(false);
+  const [minEach, setMinEach] = useState(1);
+  const [allVotedExit, setAllVotedExit] = useState(true);
+  const [manualExit, setManualExit] = useState(false);
+  const [tokenBudgetExit, setTokenBudgetExit] = useState(false);
+  const [tokenBudget, setTokenBudget] = useState(12000);
+  const [facilitatorExit, setFacilitatorExit] = useState(false);
+  const [facilitatorTags, setFacilitatorTags] = useState("phase_exhausted");
+  const allowedItems = splitTags(allowedValues);
+  const exitConditions = buildExitConditions({
+    roundsExit,
+    roundsN,
+    allSpokenExit,
+    minEach,
+    allVotedExit,
+    manualExit,
+    tokenBudgetExit,
+    tokenBudget,
+    facilitatorExit,
+    facilitatorTags
+  });
+  const canSavePhase = Boolean(name.trim()) && exitConditions.length > 0 && (allowedType === "all" || allowedItems.length > 0);
   const create = useMutation({
     mutationFn: () =>
       api.createPhase({
         name,
-        description: "所有参辩者并行给出投票和理由。",
-        declared_variables: [],
-        allowed_speakers: { type: "all" },
-        ordering_rule: { type: "parallel" },
-        exit_conditions: [{ type: "all_voted" }],
-        role_constraints: "给出赞成/反对/保留和一句理由。",
-        prompt_template: "请投票并用一句话说明理由。",
-        tags: tags
-          .split(",")
-          .map((tag) => tag.trim())
-          .filter(Boolean)
+        description,
+        declared_variables:
+          allowedType === "variables"
+            ? allowedItems.map((item) => ({ name: item, description: "", cardinality: "many", required: true }))
+            : [],
+        allowed_speakers:
+          allowedType === "variables"
+            ? { type: "variables", variable_names: allowedItems }
+            : allowedType === "specific"
+              ? { type: "specific", persona_ids: allowedItems }
+              : { type: "all" },
+        ordering_rule: { type: orderingType },
+        exit_conditions: exitConditions,
+        role_constraints: roleConstraints,
+        prompt_template: promptTemplate,
+        tags: splitTags(tags)
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["phases"] })
   });
   return (
-    <section className="grid grid-cols-[minmax(0,1fr)_340px] gap-4 max-xl:grid-cols-1">
+    <section className="grid grid-cols-[minmax(0,1fr)_440px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
         <Header title="Phase 模板" />
         <TagFilterBar items={phases.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
@@ -299,6 +334,10 @@ function PhasesView() {
             </div>
             <div className="mt-3 flex flex-wrap gap-2">
               <StatusPill tone="brand">{phase.ordering_rule.type}</StatusPill>
+              <StatusPill tone="accent">{String(phase.allowed_speakers.type ?? "allowed")}</StatusPill>
+              {phase.exit_conditions.slice(0, 3).map((condition, index) => (
+                <StatusPill key={`${phase.id}-exit-${index}`}>{String(condition.type ?? "exit")}</StatusPill>
+              ))}
               {phase.tags.map((tag) => (
                 <StatusPill key={tag}>{tag}</StatusPill>
               ))}
@@ -314,10 +353,82 @@ function PhasesView() {
             <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label className="block">
+            <span className="label">描述</span>
+            <textarea className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+          </label>
+          <label className="block">
             <span className="label">Tags</span>
             <input className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
           </label>
-          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="label">发言范围</span>
+              <select className="input mt-1 w-full" value={allowedType} onChange={(event) => setAllowedType(event.target.value as "all" | "variables" | "specific")}>
+                <option value="all">all</option>
+                <option value="variables">variables</option>
+                <option value="specific">specific</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="label">排序规则</span>
+              <select className="input mt-1 w-full" value={orderingType} onChange={(event) => setOrderingType(event.target.value)}>
+                <option value="alternating">alternating</option>
+                <option value="round_robin">round_robin</option>
+                <option value="mention_driven">mention_driven</option>
+                <option value="question_paired">question_paired</option>
+                <option value="parallel">parallel</option>
+                <option value="user_picks">user_picks</option>
+              </select>
+            </label>
+          </div>
+          {allowedType !== "all" && (
+            <label className="block">
+              <span className="label">{allowedType === "variables" ? "变量名" : "Persona IDs"}</span>
+              <input className="input mt-1 w-full" value={allowedValues} onChange={(event) => setAllowedValues(event.target.value)} />
+            </label>
+          )}
+          <div>
+            <div className="label">退出条件</div>
+            <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
+              <label className="flex items-center gap-2 rounded-md border border-border p-2">
+                <input type="checkbox" checked={roundsExit} onChange={(event) => setRoundsExit(event.target.checked)} />
+                rounds
+              </label>
+              <input className="input w-full" type="number" min={1} value={roundsN} onChange={(event) => setRoundsN(Number(event.target.value))} />
+              <label className="flex items-center gap-2 rounded-md border border-border p-2">
+                <input type="checkbox" checked={allSpokenExit} onChange={(event) => setAllSpokenExit(event.target.checked)} />
+                all_spoken
+              </label>
+              <input className="input w-full" type="number" min={1} value={minEach} onChange={(event) => setMinEach(Number(event.target.value))} />
+              <label className="flex items-center gap-2 rounded-md border border-border p-2">
+                <input type="checkbox" checked={allVotedExit} onChange={(event) => setAllVotedExit(event.target.checked)} />
+                all_voted
+              </label>
+              <label className="flex items-center gap-2 rounded-md border border-border p-2">
+                <input type="checkbox" checked={manualExit} onChange={(event) => setManualExit(event.target.checked)} />
+                user_manual
+              </label>
+              <label className="flex items-center gap-2 rounded-md border border-border p-2">
+                <input type="checkbox" checked={tokenBudgetExit} onChange={(event) => setTokenBudgetExit(event.target.checked)} />
+                token_budget
+              </label>
+              <input className="input w-full" type="number" min={1} value={tokenBudget} onChange={(event) => setTokenBudget(Number(event.target.value))} />
+              <label className="flex items-center gap-2 rounded-md border border-border p-2">
+                <input type="checkbox" checked={facilitatorExit} onChange={(event) => setFacilitatorExit(event.target.checked)} />
+                facilitator
+              </label>
+              <input className="input w-full" value={facilitatorTags} onChange={(event) => setFacilitatorTags(event.target.value)} />
+            </div>
+          </div>
+          <label className="block">
+            <span className="label">角色约束</span>
+            <textarea className="textarea mt-1 w-full" value={roleConstraints} onChange={(event) => setRoleConstraints(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Prompt Template</span>
+            <textarea className="textarea mt-1 w-full" value={promptTemplate} onChange={(event) => setPromptTemplate(event.target.value)} />
+          </label>
+          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!canSavePhase || create.isPending}>
             <Save size={16} />
             保存为 published
           </button>
@@ -419,6 +530,28 @@ function RecipesView() {
       </aside>
     </section>
   );
+}
+
+function buildExitConditions(options: {
+  roundsExit: boolean;
+  roundsN: number;
+  allSpokenExit: boolean;
+  minEach: number;
+  allVotedExit: boolean;
+  manualExit: boolean;
+  tokenBudgetExit: boolean;
+  tokenBudget: number;
+  facilitatorExit: boolean;
+  facilitatorTags: string;
+}): Array<Record<string, unknown>> {
+  const conditions: Array<Record<string, unknown>> = [];
+  if (options.roundsExit) conditions.push({ type: "rounds", n: Math.max(1, options.roundsN) });
+  if (options.allSpokenExit) conditions.push({ type: "all_spoken", min_each: Math.max(1, options.minEach) });
+  if (options.allVotedExit) conditions.push({ type: "all_voted" });
+  if (options.manualExit) conditions.push({ type: "user_manual" });
+  if (options.tokenBudgetExit) conditions.push({ type: "token_budget", max: Math.max(1, options.tokenBudget) });
+  if (options.facilitatorExit) conditions.push({ type: "facilitator_suggests", trigger_if: splitTags(options.facilitatorTags) });
+  return conditions;
 }
 
 function splitTags(value: string): string[] {
