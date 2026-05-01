@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Ban,
   FileUp,
   Gavel,
   GitBranchPlus,
@@ -10,6 +11,7 @@ import {
   MessageSquarePlus,
   Play,
   Plus,
+  RotateCcw,
   Snowflake,
   Unlock,
   UserRoundCheck
@@ -160,7 +162,7 @@ export function RoomPage() {
             disabled={state.runtime.frozen || nextPhase.isPending || continuePhase.isPending}
           />
         )}
-        <MessageList messages={state.messages} personas={state.personas} />
+        <MessageList roomId={activeRoomId} frozen={state.runtime.frozen} messages={state.messages} personas={state.personas} />
         <Composer roomId={activeRoomId} personas={discussants} frozen={state.runtime.frozen} />
       </section>
 
@@ -383,15 +385,27 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
   );
 }
 
-function MessageList({ messages, personas }: { messages: Message[]; personas: Persona[] }) {
+function MessageList({ roomId, frozen, messages, personas }: { roomId: string; frozen: boolean; messages: Message[]; personas: Persona[] }) {
   const streaming = useUIStore((state) => state.streaming);
   const personaById = new Map(personas.map((persona) => [persona.id, persona]));
+  const revokedMessageIds = new Set(
+    messages
+      .filter((message) => message.message_type === "verdict_revoke" && message.parent_message_id)
+      .map((message) => message.parent_message_id)
+  );
   const streamed = Object.values(streaming);
   return (
     <div className="min-h-0 flex-1 overflow-auto bg-surface px-4 py-4">
       <div className="mx-auto max-w-4xl space-y-3">
         {messages.map((message) => (
-          <MessageBubble key={message.id} message={message} persona={message.author_persona_id ? personaById.get(message.author_persona_id) : undefined} />
+          <MessageBubble
+            key={message.id}
+            roomId={roomId}
+            frozen={frozen}
+            message={message}
+            persona={message.author_persona_id ? personaById.get(message.author_persona_id) : undefined}
+            revoked={revokedMessageIds.has(message.id)}
+          />
         ))}
         {streamed.map((item) => (
           <div key={item.messageId} className="rounded-lg border border-brand bg-panel p-3 shadow-soft">
@@ -404,7 +418,24 @@ function MessageList({ messages, personas }: { messages: Message[]; personas: Pe
   );
 }
 
-function MessageBubble({ message, persona }: { message: Message; persona?: Persona }) {
+function MessageBubble({
+  roomId,
+  frozen,
+  message,
+  persona,
+  revoked
+}: {
+  roomId: string;
+  frozen: boolean;
+  message: Message;
+  persona?: Persona;
+  revoked: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const revoke = useMutation({
+    mutationFn: () => api.verdict(roomId, `撤销裁决：${message.content}`, false, { revoke_message_id: message.id }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+  });
   const tone =
     message.author_actual === "user_as_judge"
       ? "border-accent"
@@ -427,7 +458,14 @@ function MessageBubble({ message, persona }: { message: Message; persona?: Perso
         <span className="text-sm font-semibold">{author}</span>
         <StatusPill tone={message.message_type === "facilitator_signal" ? "accent" : "neutral"}>{message.message_type}</StatusPill>
         {message.author_actual === "user_as_persona" && <StatusPill tone="brand">{message.user_revealed_at ? "已揭示" : "伪装"}</StatusPill>}
+        {revoked && <StatusPill tone="danger">已撤销</StatusPill>}
         {message.truncated_reason && <StatusPill tone="danger">{message.truncated_reason}</StatusPill>}
+        {message.message_type === "verdict" && message.author_actual === "user_as_judge" && !revoked && (
+          <button className="btn h-7 px-2 text-xs" disabled={frozen || revoke.isPending} onClick={() => revoke.mutate()} title="撤销裁决">
+            <RotateCcw size={13} />
+            撤销
+          </button>
+        )}
       </div>
       <MarkdownBlock content={message.content} />
     </article>
@@ -437,12 +475,13 @@ function MessageBubble({ message, persona }: { message: Message; persona?: Perso
 function Composer({ roomId, personas, frozen }: { roomId: string; personas: Persona[]; frozen: boolean }) {
   const queryClient = useQueryClient();
   const [content, setContent] = useState("");
-  const [mode, setMode] = useState<"normal" | "judge" | "masquerade">("normal");
+  const [mode, setMode] = useState<"normal" | "judge" | "dead_end" | "masquerade">("normal");
   const [personaId, setPersonaId] = useState("");
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
   const submit = useMutation({
     mutationFn: async () => {
       if (mode === "judge") return api.verdict(roomId, content, true);
+      if (mode === "dead_end") return api.verdict(roomId, content, false, { dead_end: true });
       if (mode === "masquerade") return api.masquerade(roomId, personaId || personas[0]?.id, content);
       return api.appendMessage(roomId, content);
     },
@@ -454,9 +493,10 @@ function Composer({ roomId, personas, frozen }: { roomId: string; personas: Pers
   return (
     <div className="border-t border-border p-3">
       <div className="mb-2 flex flex-wrap gap-2">
-        <select className="input" value={mode} onChange={(event) => setMode(event.target.value as "normal" | "judge" | "masquerade")}>
+        <select className="input" value={mode} onChange={(event) => setMode(event.target.value as "normal" | "judge" | "dead_end" | "masquerade")}>
           <option value="normal">普通发言</option>
-          <option value="judge">裁决者</option>
+          <option value="judge">裁决锁定</option>
+          <option value="dead_end">标记死路</option>
           <option value="masquerade">伪装人设</option>
         </select>
         {mode === "masquerade" && (
@@ -472,7 +512,15 @@ function Composer({ roomId, personas, frozen }: { roomId: string; personas: Pers
       <textarea className="textarea w-full" value={content} onChange={(event) => setContent(event.target.value)} disabled={frozen} />
       <div className="mt-2 flex justify-end">
         <button className="btn btn-primary" disabled={frozen || !content.trim() || submit.isPending} onClick={() => submit.mutate()}>
-          {mode === "judge" ? <Gavel size={16} /> : mode === "masquerade" ? <UserRoundCheck size={16} /> : <MessageSquarePlus size={16} />}
+          {mode === "judge" ? (
+            <Gavel size={16} />
+          ) : mode === "dead_end" ? (
+            <Ban size={16} />
+          ) : mode === "masquerade" ? (
+            <UserRoundCheck size={16} />
+          ) : (
+            <MessageSquarePlus size={16} />
+          )}
           提交
         </button>
       </div>

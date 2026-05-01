@@ -90,6 +90,7 @@ export interface Message {
   id: string;
   room_id: string;
   phase_instance_id?: string | null;
+  parent_message_id?: string | null;
   message_type: string;
   author_persona_id?: string | null;
   author_model?: string | null;

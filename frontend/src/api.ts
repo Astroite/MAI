@@ -32,10 +32,15 @@ export const api = {
   createPhase: (body: unknown) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),
   appendMessage: (roomId: string, content: string) =>
     request<Message>(`/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
-  verdict: (roomId: string, content: string, is_locked: boolean) =>
+  verdict: (
+    roomId: string,
+    content: string,
+    is_locked: boolean,
+    extra?: { dead_end?: boolean; revoke_message_id?: string }
+  ) =>
     request<Message>(`/rooms/${roomId}/verdicts`, {
       method: "POST",
-      body: JSON.stringify({ content, is_locked })
+      body: JSON.stringify({ content, is_locked, ...(extra ?? {}) })
     }),
   masquerade: (roomId: string, persona_id: string, content: string) =>
     request<Message>(`/rooms/${roomId}/masquerade`, {

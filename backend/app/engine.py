@@ -684,6 +684,16 @@ async def append_verdict(
     )
     session.add(message)
     await session.flush()
+    if revoke_message_id:
+        decision = await session.scalar(
+            select(Decision).where(
+                Decision.room_id == room_id,
+                Decision.scribe_event_message_id == revoke_message_id,
+                Decision.revoked_by_message_id.is_(None),
+            )
+        )
+        if decision:
+            decision.revoked_by_message_id = message.id
     if not revoke_message_id and not dead_end:
         session.add(
             Decision(

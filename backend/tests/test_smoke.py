@@ -1,6 +1,11 @@
-from fastapi.testclient import TestClient
+import asyncio
 
+from fastapi.testclient import TestClient
+from sqlalchemy import select
+
+from app.db import SessionLocal
 from app.main import app
+from app.models import Decision
 
 
 def test_health_and_builtin_templates():
@@ -173,3 +178,39 @@ def test_facilitator_cooldown_and_manual_request():
         manual = client.post("/rooms/%s/facilitator" % room_id)
         assert manual.status_code == 200
         assert len(manual.json()["facilitator_signals"]) == 2
+
+
+def test_verdict_revoke_and_dead_end_messages():
+    with TestClient(app) as client:
+        room = client.post("/rooms", json={"title": "pytest verdict controls", "persona_ids": []})
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+
+        verdict = client.post("/rooms/%s/verdicts" % room_id, json={"content": "锁定 SSE 方案。", "is_locked": True})
+        assert verdict.status_code == 200
+        verdict_id = verdict.json()["id"]
+
+        revoke = client.post(
+            "/rooms/%s/verdicts" % room_id,
+            json={"content": "证据更新，撤销 SSE 方案裁决。", "revoke_message_id": verdict_id},
+        )
+        assert revoke.status_code == 200
+        assert revoke.json()["message_type"] == "verdict_revoke"
+        assert revoke.json()["parent_message_id"] == verdict_id
+
+        dead_end = client.post(
+            "/rooms/%s/verdicts" % room_id,
+            json={"content": "轮询所有 provider SDK 的方案成本过高。", "dead_end": True},
+        )
+        assert dead_end.status_code == 200
+
+        state = client.get("/rooms/%s/state" % room_id).json()
+        assert any(message["content"].startswith("死路：轮询所有 provider SDK") for message in state["messages"])
+
+    async def fetch_decision() -> Decision:
+        async with SessionLocal() as session:
+            return await session.scalar(select(Decision).where(Decision.scribe_event_message_id == verdict_id))
+
+    decision = asyncio.run(fetch_decision())
+    assert decision is not None
+    assert decision.revoked_by_message_id == revoke.json()["id"]
