@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,6 +22,7 @@ from .models import (
     ScribeState,
     now_utc,
 )
+from .schemas import FacilitatorEvaluation, ScribeUpdate
 from .trace import trace_record
 
 
@@ -33,6 +34,15 @@ DEFAULT_SCRIBE_STATE = {
     "artifacts": [],
     "dead_ends": [],
 }
+
+SCRIBE_TOOL_DESCRIPTION = (
+    "Fold new discussion messages into a structured scribe diff. "
+    "Only add or remove items that are directly supported by message evidence."
+)
+FACILITATOR_TOOL_DESCRIPTION = (
+    "Evaluate the hidden health and pacing of a multi-agent discussion. "
+    "Return concise signals for the user; do not join the argument."
+)
 
 
 @dataclass
@@ -62,6 +72,24 @@ async def get_room_discussants(session: AsyncSession, room_id: str) -> list[Pers
         .order_by(Persona.name)
     )
     return list((await session.scalars(stmt)).all())
+
+
+async def get_room_system_persona(session: AsyncSession, room_id: str, kind: Literal["scribe", "facilitator"]) -> Persona:
+    room_stmt = (
+        select(Persona)
+        .join(RoomPersona, RoomPersona.persona_id == Persona.id)
+        .where(and_(RoomPersona.room_id == room_id, Persona.kind == kind))
+        .order_by(Persona.is_builtin, Persona.name)
+        .limit(1)
+    )
+    persona = await session.scalar(room_stmt)
+    if persona:
+        return persona
+    fallback_stmt = select(Persona).where(and_(Persona.kind == kind, Persona.is_builtin.is_(True))).order_by(Persona.name).limit(1)
+    persona = await session.scalar(fallback_stmt)
+    if persona is None:
+        raise ValueError(f"{kind} persona not found")
+    return persona
 
 
 async def allowed_persona_ids(
@@ -294,71 +322,69 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
         state = ScribeState(room_id=room_id, current_state=DEFAULT_SCRIBE_STATE.copy())
         session.add(state)
         await session.flush()
-    current = {**DEFAULT_SCRIBE_STATE, **(state.current_state or {})}
-    messages = list((await session.scalars(select(Message).where(Message.room_id == room_id).order_by(Message.created_at))).all())
-    known_decision_ids = {item.get("message_id") for item in current["decisions"]}
-    known_dead_end_ids = {item.get("message_id") for item in current["dead_ends"]}
-    for message in messages:
-        if message.message_type == "verdict" and message.id not in known_decision_ids:
-            current["decisions"].append({"message_id": message.id, "content": message.content, "locked": True})
-        if message.message_type == "verdict_revoke":
-            current["dead_ends"].append({"message_id": message.id, "content": f"撤销裁决：{message.content}"})
-        if message.message_type == "user_doc" and not any(a.get("message_id") == message.id for a in current["artifacts"]):
-            current["artifacts"].append({"message_id": message.id, "type": "uploaded_document", "title": message.content[:80]})
-        if message.message_type == "meta" and "死路" in message.content and message.id not in known_dead_end_ids:
-            current["dead_ends"].append({"message_id": message.id, "content": message.content})
+    current = normalize_scribe_state(state.current_state)
+    messages = list(
+        (
+            await session.scalars(
+                select(Message)
+                .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
+                .order_by(Message.created_at)
+            )
+        ).all()
+    )
+    start_index = 0
+    if state.last_event_message_id:
+        for index, message in enumerate(messages):
+            if message.id == state.last_event_message_id:
+                start_index = index + 1
+                break
+    new_messages = messages[start_index:]
+    scribe = await get_room_system_persona(session, room_id, "scribe")
+    update = await llm_adapter.complete_tool(
+        scribe,
+        "scribe_update",
+        SCRIBE_TOOL_DESCRIPTION,
+        ScribeUpdate,
+        {
+            "current_state": current,
+            "latest_message_id": latest_message_id,
+            "messages": [message_to_tool_payload(message) for message in new_messages],
+        },
+    )
+    current = apply_scribe_update(current, update)
     state.current_state = current
     state.last_event_message_id = latest_message_id
-    await trace_record(session, room_id, "scribe_update", "ScribeState folded", {"state": current})
+    await trace_record(session, room_id, "scribe_update", "ScribeState tool folded", {"update": update, "state": current})
     await session.flush()
     await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
 
 
 async def run_facilitator_eval(session: AsyncSession, room_id: str, latest_message_id: str) -> None:
+    facilitator = await get_room_system_persona(session, room_id, "facilitator")
+    context_window = int((facilitator.config or {}).get("context_window_messages", 8))
     recent = list(
         (
             await session.scalars(
                 select(Message)
                 .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
                 .order_by(Message.created_at.desc())
-                .limit(8)
+                .limit(context_window)
             )
         ).all()
     )
-    signals: list[dict] = []
-    overall = "productive"
-    pacing = "节奏正常。"
-    if len(recent) >= 5:
-        authors = [m.author_persona_id or m.author_actual for m in recent[:5]]
-        if len(set(authors)) <= 2:
-            overall = "circling"
-            pacing = "最近几轮发言集中在少数角色，建议切换 phase 或点名反方。"
-            signals.append(
-                {
-                    "tag": "disagreement_unproductive",
-                    "severity": "suggest",
-                    "reasoning": "最近发言集中，可能开始原地循环。",
-                    "evidence_message_ids": [m.id for m in recent[:5]],
-                }
-            )
-    if recent and estimate_tokens(recent[0].content) > 450:
-        signals.append(
-            {
-                "tag": "pacing_warning",
-                "severity": "info",
-                "reasoning": "最近单轮输出较长。",
-                "evidence_message_ids": [recent[0].id],
-            }
-        )
-    if not signals:
-        signals.append(
-            {
-                "tag": "consensus_emerging",
-                "severity": "info",
-                "reasoning": "讨论仍在产出可整理的观点，暂不需要强制干预。",
-                "evidence_message_ids": [m.id for m in recent[:3]],
-            }
-        )
+    evaluation = await llm_adapter.complete_tool(
+        facilitator,
+        "facilitator_evaluation",
+        FACILITATOR_TOOL_DESCRIPTION,
+        FacilitatorEvaluation,
+        {
+            "latest_message_id": latest_message_id,
+            "recent_messages": [message_to_tool_payload(message) for message in recent],
+        },
+    )
+    signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
+    overall = evaluation.get("overall_health") or "productive"
+    pacing = evaluation.get("pacing_note") or "节奏正常。"
 
     meta = Message(
         room_id=room_id,
@@ -379,7 +405,7 @@ async def run_facilitator_eval(session: AsyncSession, room_id: str, latest_messa
         pacing_note=pacing,
     )
     session.add(item)
-    await trace_record(session, room_id, "facilitator_signal", overall, {"signals": signals, "pacing_note": pacing})
+    await trace_record(session, room_id, "facilitator_signal", overall, {"evaluation": evaluation})
     await session.flush()
     await event_bus.publish(
         room_id,
@@ -622,8 +648,77 @@ async def append_verdict(
     return message
 
 
+def normalize_scribe_state(raw: dict[str, Any] | None) -> dict[str, list[dict[str, Any]]]:
+    raw = raw or {}
+    return {key: list(raw.get(key) or []) for key in DEFAULT_SCRIBE_STATE}
+
+
+def apply_scribe_update(current: dict[str, Any], update: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+    next_state = normalize_scribe_state(current)
+    _remove_items(next_state["consensus"], update.get("consensus_removed") or [])
+    _remove_items(next_state["disagreements"], update.get("disagreements_resolved") or [])
+    _remove_items(next_state["open_questions"], update.get("open_questions_answered") or [])
+    _append_items(next_state["consensus"], update.get("consensus_added") or [])
+    _append_items(next_state["disagreements"], update.get("disagreements_added") or [])
+    _append_items(next_state["open_questions"], update.get("open_questions_added") or [])
+    _append_items(next_state["decisions"], update.get("decisions_added") or [])
+    _append_items(next_state["artifacts"], update.get("artifacts_added") or [])
+    _append_items(next_state["dead_ends"], update.get("dead_ends_added") or [])
+    return next_state
+
+
+def _append_items(target: list[dict[str, Any]], additions: list[dict[str, Any]]) -> None:
+    existing_message_ids = {item.get("message_id") for item in target if item.get("message_id")}
+    existing_contents = {item.get("content") for item in target if item.get("content")}
+    for item in additions:
+        message_id = item.get("message_id")
+        content = item.get("content")
+        if message_id and message_id in existing_message_ids:
+            continue
+        if not message_id and content and content in existing_contents:
+            continue
+        target.append(dict(item))
+        if message_id:
+            existing_message_ids.add(message_id)
+        if content:
+            existing_contents.add(content)
+
+
+def _remove_items(target: list[dict[str, Any]], identifiers: list[str]) -> None:
+    if not identifiers:
+        return
+    remove = set(identifiers)
+    target[:] = [item for item in target if (item.get("id") or item.get("message_id") or item.get("content")) not in remove]
+
+
+def default_facilitator_signal(recent: list[Message]) -> dict[str, Any]:
+    return {
+        "tag": "consensus_emerging",
+        "severity": "info",
+        "reasoning": "讨论仍在产出可整理的观点，暂不需要强制干预。",
+        "evidence_message_ids": [message.id for message in recent[:3]],
+    }
+
+
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4) if text else 0
+
+
+def message_to_tool_payload(message: Message) -> dict[str, Any]:
+    return {
+        "id": message.id,
+        "room_id": message.room_id,
+        "phase_instance_id": message.phase_instance_id,
+        "parent_message_id": message.parent_message_id,
+        "message_type": message.message_type,
+        "author_persona_id": message.author_persona_id,
+        "author_model": message.author_model,
+        "author_actual": message.author_actual,
+        "visibility": message.visibility,
+        "visibility_to_models": message.visibility_to_models,
+        "content": message.content,
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+    }
 
 
 def message_to_event(message: Message) -> dict:

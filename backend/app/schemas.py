@@ -352,6 +352,32 @@ class ScribeStateValue(APIModel):
     dead_ends: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class ScribeUpdate(APIModel):
+    consensus_added: list[dict[str, Any]] = Field(default_factory=list)
+    consensus_removed: list[str] = Field(default_factory=list)
+    disagreements_added: list[dict[str, Any]] = Field(default_factory=list)
+    disagreements_resolved: list[str] = Field(default_factory=list)
+    open_questions_added: list[dict[str, Any]] = Field(default_factory=list)
+    open_questions_answered: list[str] = Field(default_factory=list)
+    decisions_added: list[dict[str, Any]] = Field(default_factory=list)
+    artifacts_added: list[dict[str, Any]] = Field(default_factory=list)
+    dead_ends_added: list[dict[str, Any]] = Field(default_factory=list)
+    reasoning: str = ""
+
+
+class FacilitatorSignalItem(APIModel):
+    tag: str
+    severity: Literal["info", "suggest", "warning", "block"] = "info"
+    reasoning: str
+    evidence_message_ids: list[str] = Field(default_factory=list)
+
+
+class FacilitatorEvaluation(APIModel):
+    signals: list[FacilitatorSignalItem] = Field(default_factory=list)
+    overall_health: Literal["productive", "circling", "blocked", "exhausted"] = "productive"
+    pacing_note: str = ""
+
+
 class ScribeStateOut(APIModel):
     room_id: str
     current_state: ScribeStateValue

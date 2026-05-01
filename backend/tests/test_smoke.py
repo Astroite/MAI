@@ -73,3 +73,37 @@ def test_room_message_and_mock_turn():
         assert merge.status_code == 200
         parent_state = client.get("/rooms/%s/state" % room_id).json()
         assert any("子讨论合并结论" in message["content"] for message in parent_state["messages"])
+
+
+def test_structured_scribe_and_facilitator_tools():
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = next(item for item in personas if item["name"] == "架构师")
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest tool loop", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        )
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+
+        for content in [
+            "目标是评审结构化工具调用。",
+            "目前的主要问题是如何保留证据？",
+            "共识：工具输出必须能追溯消息。",
+            "分歧：是否每轮都触发整理。",
+        ]:
+            message = client.post("/rooms/%s/messages" % room_id, json={"content": content})
+            assert message.status_code == 200
+
+        verdict = client.post("/rooms/%s/verdicts" % room_id, json={"content": "采用结构化 tool-call 作为整理入口。"})
+        assert verdict.status_code == 200
+        verdict_id = verdict.json()["id"]
+
+        state = client.get("/rooms/%s/state" % room_id).json()
+        scribe = state["scribe_state"]["current_state"]
+        assert any(item["message_id"] == verdict_id for item in scribe["decisions"])
+        assert any("工具输出" in item["content"] for item in scribe["consensus"])
+        assert state["facilitator_signals"]
+        assert state["facilitator_signals"][0]["signals"]
