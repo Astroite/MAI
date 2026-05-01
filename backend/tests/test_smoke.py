@@ -1,16 +1,17 @@
 import asyncio
 import threading
 import time
+from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import engine as engine_module
 from app.db import SessionLocal
-from app.engine import ACTIVE_CALLS, InFlightCall
+from app.engine import ACTIVE_CALLS, InFlightCall, pick_next_speaker
 from app.llm import llm_adapter
 from app.main import app
-from app.models import Decision, Persona
+from app.models import Decision, Persona, Room, RoomRuntimeState
 
 
 def test_health_and_builtin_templates():
@@ -349,6 +350,130 @@ def test_parallel_turn_exposes_multiple_in_flight_partials():
         turn = turn_result["response"]
         assert turn.status_code == 200
         assert {message["author_persona_id"] for message in turn.json()} == {p["id"] for p in personas}
+
+
+def test_pick_next_speaker_ordering_rules():
+    async def pick(room_id: str):
+        async with SessionLocal() as session:
+            room = await session.get(Room, room_id)
+            runtime = await session.get(RoomRuntimeState, room_id)
+            assert room is not None
+            assert runtime is not None
+            result = await pick_next_speaker(session, room, runtime, None)
+            return result.kind, result.persona_ids, result.reason
+
+    with TestClient(app) as client:
+        personas = client.get("/templates/personas?kind=discussant").json()[:2]
+        persona_ids = {persona["id"] for persona in personas}
+        results = {}
+        for ordering in ["mention_driven", "user_picks", "parallel", "round_robin", "alternating", "question_paired"]:
+            phase = client.post(
+                "/templates/phases",
+                json={
+                    "name": f"pytest ordering {ordering}",
+                    "description": "ordering unit test",
+                    "declared_variables": [],
+                    "allowed_speakers": {"type": "all"},
+                    "ordering_rule": {"type": ordering},
+                    "exit_conditions": [{"type": "user_manual"}],
+                    "role_constraints": "",
+                    "prompt_template": "请发言。",
+                    "tags": ["pytest", "ordering"],
+                },
+            ).json()
+            debate_format = client.post(
+                "/templates/formats",
+                json={
+                    "name": f"pytest ordering format {ordering}",
+                    "phase_sequence": [{"phase_template_id": phase["id"], "phase_template_version": phase["version"]}],
+                    "tags": ["pytest", "ordering"],
+                },
+            ).json()
+            room = client.post(
+                "/rooms",
+                json={
+                    "title": f"pytest ordering room {ordering}",
+                    "format_id": debate_format["id"],
+                    "persona_ids": list(persona_ids),
+                },
+            ).json()
+            results[ordering] = asyncio.run(pick(room["room"]["id"]))
+
+        assert results["mention_driven"][0] == "wait"
+        assert results["user_picks"][0] == "wait"
+        assert results["parallel"][0] == "parallel"
+        assert set(results["parallel"][1]) == persona_ids
+        for ordering in ["round_robin", "alternating", "question_paired"]:
+            kind, picked, reason = results[ordering]
+            assert kind == "single"
+            assert reason == ordering
+            assert len(picked) == 1
+            assert picked[0] in persona_ids
+
+
+def test_masquerade_reveal_flow():
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = personas[0]
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest masquerade reveal", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        ).json()
+        room_id = room["room"]["id"]
+
+        masquerade = client.post(
+            f"/rooms/{room_id}/masquerade",
+            json={"persona_id": speaker["id"], "content": "我以该人设补充一个受控观点。"},
+        )
+        assert masquerade.status_code == 200
+        masquerade_payload = masquerade.json()
+        assert masquerade_payload["author_actual"] == "user_as_persona"
+        assert masquerade_payload["author_persona_id"] == speaker["id"]
+        assert masquerade_payload["user_masquerade_persona_id"] == speaker["id"]
+        assert masquerade_payload["user_revealed_at"] is None
+
+        revealed = client.post(f"/rooms/{room_id}/messages/{masquerade_payload['id']}/reveal")
+        assert revealed.status_code == 200
+        assert revealed.json()["user_revealed_at"]
+
+        normal = client.post(f"/rooms/{room_id}/messages", json={"content": "普通用户消息。"}).json()
+        rejected = client.post(f"/rooms/{room_id}/messages/{normal['id']}/reveal")
+        assert rejected.status_code == 400
+
+
+def test_hidden_facilitator_messages_are_filtered_from_llm_context(monkeypatch):
+    captured = {}
+
+    async def capture_stream(persona, context, phase, max_tokens, scribe_state=None):
+        captured["contents"] = [message.content for message in context]
+        yield SimpleNamespace(text="可见上下文已检查。", index=0)
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = personas[0]
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest visibility filtering", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        ).json()
+        room_id = room["room"]["id"]
+
+        for index in range(5):
+            assert client.post(f"/rooms/{room_id}/messages", json={"content": f"可见讨论消息 {index}"}).status_code == 200
+        state = client.get(f"/rooms/{room_id}/state").json()
+        hidden_messages = [message for message in state["messages"] if message["visibility_to_models"] is False]
+        assert hidden_messages
+
+        turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": speaker["id"]})
+        assert turn.status_code == 200
+        assert "contents" in captured
+        assert any("可见讨论消息" in content for content in captured["contents"])
+        assert all(message["content"] not in captured["contents"] for message in hidden_messages)
 
 
 def test_structured_scribe_and_facilitator_tools():

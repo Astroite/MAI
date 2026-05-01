@@ -84,7 +84,7 @@
 
 ### 2.7 测试
 
-`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、断线重连 partial、parallel 多路 in-flight、模板 PATCH / fork、deep thinking 参数路由。
+`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、子讨论 merge-back、masquerade + reveal、6 种 ordering 调度、visibility 过滤、断线重连 partial、parallel 多路 in-flight、模板 PATCH / fork、deep thinking 参数路由。
 
 ---
 
@@ -118,10 +118,10 @@
 
 ### P4 · 测试覆盖补强
 
-- 子讨论 + merge-back 端到端
-- masquerade 完整流程（含 reveal）
-- 6 种 ordering 各自的单测
-- visibility 过滤的真实场景断言
+- [x] 子讨论 + merge-back 端到端：`test_room_message_and_mock_turn` 覆盖子房间创建、merge_back、父房间合并消息。
+- [x] masquerade 完整流程（含 reveal）：`test_masquerade_reveal_flow` 覆盖伪装发言、身份揭示、普通消息 reveal 拒绝。
+- [x] 6 种 ordering 各自的单测：`test_pick_next_speaker_ordering_rules` 覆盖 mention_driven / user_picks / parallel / round_robin / alternating / question_paired。
+- [x] visibility 过滤的真实场景断言：`test_hidden_facilitator_messages_are_filtered_from_llm_context` 覆盖 observer_only facilitator 消息不进入 LLM context。
 
 ---
 
@@ -131,7 +131,7 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：P1 / P2 / P3 已清；决议锁、代码高亮、tag 筛选、Persona 创建与编辑、Format 顺序卡片编辑与详情编辑、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。后续主要是 P4 测试覆盖补强。
+**前端**：P1 / P2 / P3 已清；决议锁、代码高亮、tag 筛选、Persona 创建与编辑、Format 顺序卡片编辑与详情编辑、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。P4 测试补强已完成，当前 v1 范围内待办清零。
 
 附加场景（自定义 phase + 导出）：列表筛选 + Phase 字段表单 + Format 顺序模板可走通。
 
