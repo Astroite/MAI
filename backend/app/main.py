@@ -11,8 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .db import create_schema, get_session
 from .engine import (
-    ACTIVE_CALLS,
     DEFAULT_SCRIBE_STATE,
+    active_calls_for_room,
     after_message_appended,
     append_verdict,
     continue_current_phase,
@@ -714,9 +714,10 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
     decisions = (
         await session.scalars(select(Decision).where(Decision.room_id == room_id).order_by(Decision.created_at))
     ).all()
-    active_call = ACTIVE_CALLS.get(room_id)
     in_flight_partial = []
-    if active_call and active_call.partial_text:
+    for active_call in active_calls_for_room(room_id):
+        if not active_call.partial_text:
+            continue
         in_flight_partial.append(
             InFlightPartialOut(
                 message_id=active_call.message_id,

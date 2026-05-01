@@ -12,7 +12,7 @@
 | 数据模型 / Schema | ✅ 完整 | ✅ 类型已镜像 |
 | 引擎调度 / Phase FSM | ✅ 完整 | — |
 | 系统级角色（书记官 / 副手） | ✅ 完整 | ✅ 面板已渲染 |
-| 流式 + SSE | ✅ 含 30s 空闲超时 | ✅ 含 `message.cancelled` 处理 |
+| 流式 + SSE | ✅ 含 30s 空闲超时 / parallel 多路 in-flight | ✅ 含 `message.cancelled` + 多气泡渲染 |
 | 冻结 + 快照 | ✅ 完整 | ✅ 完整 |
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
 | 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
@@ -33,7 +33,7 @@
 - 6 种 ordering 全部实现：alternating / round_robin / mention_driven / question_paired / parallel / user_picks（`engine.py:154-171`）
 - 6 种 exit conditions 全部实现：rounds / all_spoken / all_voted / user_manual / facilitator_suggests / token_budget（`engine.py:517+`）
 - `pick_next_speaker` 返回 wait / single / parallel / phase_done（`engine.py:51`）
-- `ACTIVE_CALLS: dict[room_id, InFlightCall]` 单飞约束 + `freeze_room` 取消流 + 后台任务取消 + 房间快照 + SSE 推送
+- `ACTIVE_CALLS: dict[room_id, dict[message_id, InFlightCall]]` 支持 parallel 多路流；`freeze_room` 批量取消 in-flight + 房间快照 + SSE 推送
 - 书记官 / 副手每 5 条消息 + phase 边界触发；副手按 tag cooldown（`filter_facilitator_signals`）；副手输出落 `messages` 表 meta + `facilitator_signals` 表 + SSE
 - 严格 append-only：verdict / verdict_revoke / dead_end 都是新消息（`engine.py:720-774`），`Decision.revoked_by_message_id` 反向链接
 - AI 视图过滤 `visibility_to_models is True`（`engine.py:236`），副手信号对讨论者完全隐藏
@@ -73,7 +73,7 @@
 - freeze / unfreeze、askFacilitator、Scribe / Facilitator 面板
 - 子讨论创建 + merge-back 表单
 - 文件上传（md/txt/pdf）→ user_doc 消息，支持拖拽上传区
-- SSE useRoomEvents 处理 streaming / appended / scribe / facilitator / phase 事件
+- SSE useRoomEvents 处理 streaming / appended / scribe / facilitator / phase 事件；parallel ordering 下按 `message_id` 同时显示多个正在发言气泡
 - 断线重连：`/rooms/{id}/state` 返回 `in_flight_partial`，前端恢复 partial 并按 `chunk_index` 去重
 - Markdown + KaTeX、暗色模式（Zustand 持久化）
 - 模板页 tag 筛选 + Format dnd-kit 顺序卡片编辑器（phase 库添加、拖拽排序、移除、保存 published）
@@ -83,7 +83,7 @@
 
 ### 2.7 测试
 
-`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、deep thinking 参数路由。
+`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、断线重连 partial、parallel 多路 in-flight、deep thinking 参数路由。
 
 ---
 
@@ -103,7 +103,7 @@
 
 - [x] **决议锁定 / 解锁 UI** —— 新增 `PATCH /rooms/{id}/decisions/{id}`、`DecisionsPanel`，锁定动作 append meta 消息保留审计；覆盖测试 `test_decision_lock_toggle_creates_audit_meta`。
 - [x] **`message.cancelled` SSE** —— `hooks.ts` 在 cancelled 上 clearStream + invalidate query。
-- [ ] **parallel 模式多气泡渲染**：后端可并行 stream，前端目前只单流；按 §8.8 同时显示多个 "正在打字"。
+- [x] **parallel 模式多气泡渲染**：后端 parallel ordering 为每个 persona 开独立 LLM stream / `InFlightCall`，`/state` 返回多个 partial；前端按 room + `message_id` 路由并同时显示多个 "正在发言" 气泡（§8.8）。
 - [x] **persona 创建 UI**：模板页可新建 discussant / scribe / facilitator，并配置 backing_model、temperature、system_prompt、config JSON、tags。
 - [ ] **format / persona 详情编辑 UI**：format、persona 已能创建，但还缺已有模板的详情编辑。
 - [x] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端 hydrate streaming 气泡并按 `chunk_index` dedupe（§8.4）。
@@ -130,7 +130,7 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Persona 创建、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区已落地。剩余 P2/P3 主要是 parallel 多气泡、format/persona 详情编辑。
+**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Persona 创建、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。剩余 P2/P3 主要是 format/persona 详情编辑。
 
 附加场景（自定义 phase + 导出）：列表筛选 + Phase 字段表单 + Format 顺序模板可走通。
 

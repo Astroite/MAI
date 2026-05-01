@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 interface StreamingMessage {
+  roomId: string;
   messageId: string;
   personaId: string;
   text: string;
@@ -12,8 +13,8 @@ interface UIState {
   dark: boolean;
   streaming: Record<string, StreamingMessage>;
   toggleDark: () => void;
-  appendChunk: (messageId: string, personaId: string, text: string, chunkIndex?: number) => void;
-  hydrateStream: (messageId: string, personaId: string, text: string, lastChunkIndex: number) => void;
+  appendChunk: (roomId: string, messageId: string, personaId: string, text: string, chunkIndex?: number) => void;
+  hydrateStream: (roomId: string, messageId: string, personaId: string, text: string, lastChunkIndex: number) => void;
   clearStream: (messageId: string) => void;
 }
 
@@ -23,7 +24,7 @@ export const useUIStore = create<UIState>()(
       dark: false,
       streaming: {},
       toggleDark: () => set((state) => ({ dark: !state.dark })),
-      appendChunk: (messageId, personaId, text, chunkIndex) =>
+      appendChunk: (roomId, messageId, personaId, text, chunkIndex) =>
         set((state) => {
           const current = state.streaming[messageId];
           if (chunkIndex !== undefined && current && chunkIndex <= current.lastChunkIndex) {
@@ -33,6 +34,7 @@ export const useUIStore = create<UIState>()(
             streaming: {
               ...state.streaming,
               [messageId]: {
+                roomId,
                 messageId,
                 personaId,
                 text: `${current?.text ?? ""}${text}`,
@@ -41,7 +43,7 @@ export const useUIStore = create<UIState>()(
             }
           };
         }),
-      hydrateStream: (messageId, personaId, text, lastChunkIndex) =>
+      hydrateStream: (roomId, messageId, personaId, text, lastChunkIndex) =>
         set((state) => {
           const current = state.streaming[messageId];
           if (current && current.lastChunkIndex > lastChunkIndex) {
@@ -50,7 +52,7 @@ export const useUIStore = create<UIState>()(
           return {
             streaming: {
               ...state.streaming,
-              [messageId]: { messageId, personaId, text, lastChunkIndex }
+              [messageId]: { roomId, messageId, personaId, text, lastChunkIndex }
             }
           };
         }),

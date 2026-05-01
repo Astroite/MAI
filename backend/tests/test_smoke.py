@@ -201,7 +201,7 @@ def test_room_state_exposes_in_flight_partial():
             json={"title": "pytest reconnect", "format_id": review["id"], "persona_ids": [speaker["id"]]},
         ).json()
         room_id = room["room"]["id"]
-        ACTIVE_CALLS[room_id] = InFlightCall(
+        call = InFlightCall(
             room_id=room_id,
             message_id="msg-reconnect",
             persona_id=speaker["id"],
@@ -209,6 +209,7 @@ def test_room_state_exposes_in_flight_partial():
             partial_text="partial answer",
             last_chunk_index=3,
         )
+        ACTIVE_CALLS.setdefault(room_id, {})[call.message_id] = call
         try:
             state = client.get(f"/rooms/{room_id}/state")
             assert state.status_code == 200
@@ -219,6 +220,70 @@ def test_room_state_exposes_in_flight_partial():
             assert partial["last_chunk_index"] == 3
         finally:
             ACTIVE_CALLS.pop(room_id, None)
+
+
+def test_parallel_turn_exposes_multiple_in_flight_partials():
+    with TestClient(app) as client:
+        personas = client.get("/templates/personas?kind=discussant").json()[:2]
+        phase = client.post(
+            "/templates/phases",
+            json={
+                "name": "pytest parallel phase",
+                "description": "parallel streaming test",
+                "declared_variables": [],
+                "allowed_speakers": {"type": "all"},
+                "ordering_rule": {"type": "parallel"},
+                "exit_conditions": [{"type": "user_manual"}],
+                "role_constraints": "",
+                "prompt_template": "请同时给出一句独立观点。",
+                "tags": ["pytest"],
+            },
+        ).json()
+        debate_format = client.post(
+            "/templates/formats",
+            json={
+                "name": "pytest parallel format",
+                "phase_sequence": [{"phase_template_id": phase["id"], "phase_template_version": phase["version"]}],
+                "tags": ["pytest"],
+            },
+        ).json()
+        room = client.post(
+            "/rooms",
+            json={
+                "title": "pytest parallel streams",
+                "format_id": debate_format["id"],
+                "persona_ids": [p["id"] for p in personas],
+            },
+        ).json()
+        room_id = room["room"]["id"]
+        assert client.post(f"/rooms/{room_id}/messages", json={"content": "请并行发言。"}).status_code == 200
+
+        turn_result = {}
+
+        def run_turn():
+            turn_result["response"] = client.post(f"/rooms/{room_id}/turn", json={})
+
+        thread = threading.Thread(target=run_turn)
+        thread.start()
+        partials = []
+        try:
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                if len(ACTIVE_CALLS.get(room_id, {})) >= 2:
+                    state = client.get(f"/rooms/{room_id}/state").json()
+                    partials = state["in_flight_partial"]
+                    if len(partials) >= 2:
+                        break
+                time.sleep(0.01)
+            assert len(ACTIVE_CALLS.get(room_id, {})) >= 2
+            assert len(partials) >= 2
+            assert {item["persona_id"] for item in partials} == {p["id"] for p in personas}
+        finally:
+            thread.join(timeout=5)
+        assert not thread.is_alive()
+        turn = turn_result["response"]
+        assert turn.status_code == 200
+        assert {message["author_persona_id"] for message in turn.json()} == {p["id"] for p in personas}
 
 
 def test_structured_scribe_and_facilitator_tools():

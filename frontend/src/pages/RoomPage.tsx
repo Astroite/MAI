@@ -40,10 +40,11 @@ export function RoomPage() {
   const discussants = useMemo(() => state?.personas.filter((p) => p.kind === "discussant") ?? [], [state]);
   const currentPhaseTemplate = phases.data?.find((phase) => phase.id === state?.current_phase?.phase_template_id);
   useEffect(() => {
+    if (!activeRoomId) return;
     for (const partial of state?.in_flight_partial ?? []) {
-      hydrateStream(partial.message_id, partial.persona_id, partial.content, partial.last_chunk_index);
+      hydrateStream(activeRoomId, partial.message_id, partial.persona_id, partial.content, partial.last_chunk_index);
     }
-  }, [hydrateStream, state?.in_flight_partial]);
+  }, [activeRoomId, hydrateStream, state?.in_flight_partial]);
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", activeRoomId] });
   const runTurn = useMutation({ mutationFn: () => api.runTurn(activeRoomId!, speakerId || undefined), onSuccess: invalidate });
@@ -449,7 +450,7 @@ function MessageList({ roomId, frozen, messages, personas }: { roomId: string; f
       .filter((message) => message.message_type === "verdict_revoke" && message.parent_message_id)
       .map((message) => message.parent_message_id)
   );
-  const streamed = Object.values(streaming);
+  const streamed = Object.values(streaming).filter((item) => item.roomId === roomId);
   return (
     <div className="min-h-0 flex-1 overflow-auto bg-surface px-4 py-4">
       <div className="mx-auto max-w-4xl space-y-3">

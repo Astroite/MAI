@@ -5,6 +5,7 @@ from typing import Any, Literal
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .db import SessionLocal
 from .event_bus import event_bus
 from .ids import new_id
 from .llm import llm_adapter
@@ -74,7 +75,24 @@ class InFlightCall:
         self.task.cancel()
 
 
-ACTIVE_CALLS: dict[str, InFlightCall] = {}
+ACTIVE_CALLS: dict[str, dict[str, InFlightCall]] = {}
+
+
+def active_calls_for_room(room_id: str) -> list[InFlightCall]:
+    return list(ACTIVE_CALLS.get(room_id, {}).values())
+
+
+def _register_active_call(call: InFlightCall) -> None:
+    ACTIVE_CALLS.setdefault(call.room_id, {})[call.message_id] = call
+
+
+def _unregister_active_call(call: InFlightCall) -> None:
+    room_calls = ACTIVE_CALLS.get(call.room_id)
+    if not room_calls or room_calls.get(call.message_id) is not call:
+        return
+    del room_calls[call.message_id]
+    if not room_calls:
+        ACTIVE_CALLS.pop(call.room_id, None)
 
 
 async def get_current_phase(session: AsyncSession, runtime: RoomRuntimeState) -> RoomPhaseInstance | None:
@@ -238,11 +256,30 @@ async def run_room_turn(
     if result.kind == "wait":
         return []
 
+    if result.kind == "parallel":
+        return await _stream_parallel_messages(room.id, result.persona_ids)
+
     messages: list[Message] = []
     for persona_id in result.persona_ids:
         message = await _stream_one_message(session, room, runtime, persona_id)
         messages.append(message)
     return messages
+
+
+async def _stream_parallel_messages(room_id: str, persona_ids: list[str]) -> list[Message]:
+    if not persona_ids:
+        return []
+    tasks = [_stream_one_message_in_new_session(room_id, persona_id) for persona_id in persona_ids]
+    return list(await asyncio.gather(*tasks))
+
+
+async def _stream_one_message_in_new_session(room_id: str, persona_id: str) -> Message:
+    async with SessionLocal() as session:
+        room = await session.get(Room, room_id)
+        runtime = await session.get(RoomRuntimeState, room_id)
+        if room is None or runtime is None:
+            raise ValueError("room not found")
+        return await _stream_one_message(session, room, runtime, persona_id)
 
 
 async def _stream_one_message(
@@ -276,7 +313,7 @@ async def _stream_one_message(
     if task is None:
         raise RuntimeError("streaming requires an asyncio task")
     call = InFlightCall(room_id=room.id, message_id=tmp_message_id, persona_id=persona.id, task=task)
-    ACTIVE_CALLS[room.id] = call
+    _register_active_call(call)
 
     await trace_record(
         session,
@@ -337,11 +374,14 @@ async def _stream_one_message(
                 await aclose()
             except Exception:
                 pass
-        if ACTIVE_CALLS.get(room.id) is call:
-            ACTIVE_CALLS.pop(room.id, None)
+        _unregister_active_call(call)
 
     completion_tokens = estimate_tokens(partial)
     generated_tokens = prompt_tokens + completion_tokens
+    locked_runtime = await session.get(RoomRuntimeState, room.id, with_for_update=True, populate_existing=True)
+    if locked_runtime is None:
+        raise ValueError("room runtime not found")
+    runtime = locked_runtime
     if truncated_reason is None and _token_limit_exceeded(
         runtime,
         runtime.token_counter_total + generated_tokens,
@@ -778,8 +818,8 @@ async def freeze_room(session: AsyncSession, room_id: str) -> None:
     runtime = await session.get(RoomRuntimeState, room_id)
     if room is None or runtime is None:
         raise ValueError("room not found")
-    active_call = ACTIVE_CALLS.get(room_id)
-    if active_call:
+    active_calls = active_calls_for_room(room_id)
+    for active_call in active_calls:
         active_call.cancel("frozen")
     runtime.frozen = True
     room.status = "frozen"
@@ -791,7 +831,11 @@ async def freeze_room(session: AsyncSession, room_id: str) -> None:
         room_id,
         "state_mutation",
         "room frozen",
-        {"snapshot_id": snapshot.id, "cancelled_message_id": active_call.message_id if active_call else None},
+        {
+            "snapshot_id": snapshot.id,
+            "cancelled_message_id": active_calls[0].message_id if active_calls else None,
+            "cancelled_message_ids": [call.message_id for call in active_calls],
+        },
     )
     await session.flush()
     await event_bus.publish(room_id, {"type": "room.frozen"})
