@@ -53,3 +53,23 @@ def test_room_message_and_mock_turn():
         continued = client.post("/rooms/%s/phase/continue" % room_id)
         assert continued.status_code == 200
         assert continued.json()["runtime"]["phase_exit_suggested"] is False
+
+        subroom = client.post(
+            "/rooms/%s/subrooms" % room_id,
+            json={"title": "pytest subroom", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        )
+        assert subroom.status_code == 200
+        subroom_id = subroom.json()["room"]["id"]
+        assert subroom.json()["room"]["parent_room_id"] == room_id
+
+        merge = client.post(
+            "/rooms/%s/merge_back" % subroom_id,
+            json={
+                "conclusion": "子讨论认为 SSE 可以保留。",
+                "key_reasoning": ["父讨论只需要结构化合并包"],
+                "unresolved": [],
+            },
+        )
+        assert merge.status_code == 200
+        parent_state = client.get("/rooms/%s/state" % room_id).json()
+        assert any("子讨论合并结论" in message["content"] for message in parent_state["messages"])

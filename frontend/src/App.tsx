@@ -42,6 +42,7 @@ export function App() {
           <Route path="/" element={<DashboardPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/rooms/:roomId" element={<RoomPage />} />
+          <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
           <Route path="/templates/:kind" element={<TemplatesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

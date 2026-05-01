@@ -20,6 +20,10 @@ export const api = {
   roomState: (roomId: string) => request<RoomState>(`/rooms/${roomId}/state`),
   createRoom: (body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }) =>
     request<RoomState>("/rooms", { method: "POST", body: JSON.stringify(body) }),
+  createSubroom: (
+    roomId: string,
+    body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }
+  ) => request<RoomState>(`/rooms/${roomId}/subrooms`, { method: "POST", body: JSON.stringify(body) }),
   personas: (kind?: string) => request<Persona[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
   phases: () => request<PhaseTemplate[]>("/templates/phases"),
   formats: () => request<DebateFormat[]>("/templates/formats"),
@@ -69,7 +73,17 @@ export const api = {
     request<Message>(`/rooms/${roomId}/messages/from_upload`, {
       method: "POST",
       body: JSON.stringify({ upload_id })
-    })
+    }),
+  mergeBack: (
+    roomId: string,
+    body: {
+      conclusion: string;
+      key_reasoning: string[];
+      rejected_alternatives?: Array<Record<string, unknown>>;
+      unresolved?: string[];
+      artifacts_ref?: Record<string, unknown>;
+    }
+  ) => request<{ status: string; merge_back_id: string }>(`/rooms/${roomId}/merge_back`, { method: "POST", body: JSON.stringify(body) })
 };
 
 export { API_BASE };

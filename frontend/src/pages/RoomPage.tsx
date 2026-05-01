@@ -1,19 +1,33 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useParams } from "react-router-dom";
-import { FileUp, Gavel, Lock, MessageSquarePlus, Play, Plus, Snowflake, Unlock, UserRoundCheck } from "lucide-react";
+import { Link, useNavigate, useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  FileUp,
+  Gavel,
+  GitBranchPlus,
+  Merge,
+  MessageSquarePlus,
+  Play,
+  Plus,
+  Snowflake,
+  Unlock,
+  UserRoundCheck
+} from "lucide-react";
 import { api } from "../api";
 import { useRoomEvents } from "../hooks";
 import { useUIStore } from "../store";
-import type { Message, Persona, Runtime, ScribeState } from "../types";
+import type { Message, Persona, Room, Runtime, ScribeState } from "../types";
 import { MarkdownBlock } from "../components/MarkdownBlock";
 import { StatusPill } from "../components/StatusPill";
 
 export function RoomPage() {
-  const { roomId } = useParams();
-  useRoomEvents(roomId);
+  const { roomId, subId } = useParams();
+  const activeRoomId = subId ?? roomId;
+  useRoomEvents(activeRoomId);
   const queryClient = useQueryClient();
-  const room = useQuery({ queryKey: ["room", roomId], queryFn: () => api.roomState(roomId!), enabled: Boolean(roomId) });
+  const room = useQuery({ queryKey: ["room", activeRoomId], queryFn: () => api.roomState(activeRoomId!), enabled: Boolean(activeRoomId) });
+  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const phases = useQuery({ queryKey: ["phases"], queryFn: api.phases });
   const [speakerId, setSpeakerId] = useState("");
   const [insertPhaseId, setInsertPhaseId] = useState("");
@@ -21,16 +35,17 @@ export function RoomPage() {
   const discussants = useMemo(() => state?.personas.filter((p) => p.kind === "discussant") ?? [], [state]);
   const currentPhaseTemplate = phases.data?.find((phase) => phase.id === state?.current_phase?.phase_template_id);
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
-  const runTurn = useMutation({ mutationFn: () => api.runTurn(roomId!, speakerId || undefined), onSuccess: invalidate });
-  const nextPhase = useMutation({ mutationFn: () => api.nextPhase(roomId!), onSuccess: invalidate });
-  const continuePhase = useMutation({ mutationFn: () => api.continuePhase(roomId!), onSuccess: invalidate });
-  const freeze = useMutation({ mutationFn: () => api.freeze(roomId!), onSuccess: invalidate });
-  const unfreeze = useMutation({ mutationFn: () => api.unfreeze(roomId!), onSuccess: invalidate });
-  const insertPhase = useMutation({ mutationFn: () => api.insertPhase(roomId!, insertPhaseId), onSuccess: invalidate });
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", activeRoomId] });
+  const runTurn = useMutation({ mutationFn: () => api.runTurn(activeRoomId!, speakerId || undefined), onSuccess: invalidate });
+  const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
+  const continuePhase = useMutation({ mutationFn: () => api.continuePhase(activeRoomId!), onSuccess: invalidate });
+  const freeze = useMutation({ mutationFn: () => api.freeze(activeRoomId!), onSuccess: invalidate });
+  const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidate });
+  const insertPhase = useMutation({ mutationFn: () => api.insertPhase(activeRoomId!, insertPhaseId), onSuccess: invalidate });
 
-  if (!roomId) return null;
+  if (!activeRoomId) return null;
   if (room.isLoading || !state) return <div className="panel p-6 text-sm text-muted">加载中...</div>;
+  const childRooms = (rooms.data ?? []).filter((item) => item.parent_room_id === state.room.id);
 
   return (
     <div className="grid grid-cols-[280px_minmax(0,1fr)_340px] gap-4 max-xl:grid-cols-[260px_minmax(0,1fr)] max-lg:grid-cols-1">
@@ -42,9 +57,16 @@ export function RoomPage() {
               <div className="mt-2 flex flex-wrap gap-2">
                 <StatusPill tone={state.room.status === "frozen" ? "danger" : "brand"}>{state.room.status}</StatusPill>
                 <StatusPill tone="accent">≈{state.runtime.token_counter_total} tokens</StatusPill>
+                {state.room.parent_room_id && <StatusPill tone="accent">子讨论</StatusPill>}
               </div>
             </div>
           </div>
+          {state.room.parent_room_id && (
+            <Link className="btn mt-3 w-full" to={`/rooms/${state.room.parent_room_id}`}>
+              <ArrowLeft size={16} />
+              返回父讨论
+            </Link>
+          )}
           <div className="mt-4 grid grid-cols-2 gap-2">
             {state.runtime.frozen ? (
               <button className="btn" onClick={() => unfreeze.mutate()}>
@@ -139,14 +161,22 @@ export function RoomPage() {
           />
         )}
         <MessageList messages={state.messages} personas={state.personas} />
-        <Composer roomId={roomId} personas={discussants} frozen={state.runtime.frozen} />
+        <Composer roomId={activeRoomId} personas={discussants} frozen={state.runtime.frozen} />
       </section>
 
       <aside className="space-y-4 max-xl:col-span-2 max-lg:col-span-1">
-        <LimitPanel roomId={roomId} runtime={state.runtime} />
+        <SubroomPanel
+          roomId={activeRoomId}
+          parentRoomId={state.room.parent_room_id}
+          title={state.room.title}
+          formatId={state.room.format_id ?? undefined}
+          personaIds={discussants.map((persona) => persona.id)}
+          childRooms={childRooms}
+        />
+        <LimitPanel roomId={activeRoomId} runtime={state.runtime} />
         <ScribePanel state={state.scribe_state.current_state} />
         <FacilitatorPanel signals={state.facilitator_signals} />
-        <UploadPanel roomId={roomId} frozen={state.runtime.frozen} />
+        <UploadPanel roomId={activeRoomId} frozen={state.runtime.frozen} />
       </aside>
     </div>
   );
@@ -194,6 +224,112 @@ function PhaseExitBanner({
         </div>
       </div>
     </div>
+  );
+}
+
+function SubroomPanel({
+  roomId,
+  parentRoomId,
+  title,
+  formatId,
+  personaIds,
+  childRooms
+}: {
+  roomId: string;
+  parentRoomId?: string | null;
+  title: string;
+  formatId?: string;
+  personaIds: string[];
+  childRooms: Room[];
+}) {
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const [subroomTitle, setSubroomTitle] = useState(`子讨论：${title}`);
+  const [conclusion, setConclusion] = useState("");
+  const [keyReasoning, setKeyReasoning] = useState("");
+  const [unresolved, setUnresolved] = useState("");
+  const create = useMutation({
+    mutationFn: () =>
+      api.createSubroom(roomId, {
+        title: subroomTitle,
+        format_id: formatId,
+        persona_ids: personaIds
+      }),
+    onSuccess: (state) => {
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      navigate(`/rooms/${roomId}/sub/${state.room.id}`);
+    }
+  });
+  const merge = useMutation({
+    mutationFn: () =>
+      api.mergeBack(roomId, {
+        conclusion,
+        key_reasoning: keyReasoning
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .slice(0, 3),
+        unresolved: unresolved
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean),
+        rejected_alternatives: [],
+        artifacts_ref: {}
+      }),
+    onSuccess: () => {
+      if (parentRoomId) {
+        void queryClient.invalidateQueries({ queryKey: ["room", parentRoomId] });
+        navigate(`/rooms/${parentRoomId}`);
+      }
+    }
+  });
+
+  if (parentRoomId) {
+    return (
+      <section className="panel p-4">
+        <div className="label">合并回父讨论</div>
+        <div className="mt-3 space-y-3">
+          <label className="block">
+            <span className="text-xs text-muted">结论</span>
+            <textarea className="textarea mt-1 w-full" value={conclusion} onChange={(event) => setConclusion(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">关键推理，每行一条</span>
+            <textarea className="textarea mt-1 w-full" value={keyReasoning} onChange={(event) => setKeyReasoning(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">未解决问题，每行一条</span>
+            <textarea className="textarea mt-1 w-full" value={unresolved} onChange={(event) => setUnresolved(event.target.value)} />
+          </label>
+          <button className="btn btn-primary w-full" disabled={!conclusion.trim() || merge.isPending} onClick={() => merge.mutate()}>
+            <Merge size={16} />
+            合并
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="panel p-4">
+      <div className="label">子讨论</div>
+      <div className="mt-3 space-y-2">
+        {childRooms.map((room) => (
+          <Link key={room.id} className="block rounded-md border border-border p-2 text-sm hover:border-brand" to={`/rooms/${roomId}/sub/${room.id}`}>
+            <span className="font-medium">{room.title}</span>
+            <span className="mt-0.5 block text-xs text-muted">{room.status}</span>
+          </Link>
+        ))}
+        {!childRooms.length && <div className="text-sm text-muted">暂无子讨论</div>}
+      </div>
+      <div className="mt-4 space-y-2">
+        <input className="input w-full" value={subroomTitle} onChange={(event) => setSubroomTitle(event.target.value)} />
+        <button className="btn w-full" disabled={!subroomTitle.trim() || create.isPending} onClick={() => create.mutate()}>
+          <GitBranchPlus size={16} />
+          开子讨论
+        </button>
+      </div>
+    </section>
   );
 }
 
