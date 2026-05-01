@@ -45,6 +45,8 @@ FACILITATOR_TOOL_DESCRIPTION = (
     "Return concise signals for the user; do not join the argument."
 )
 
+CHUNK_IDLE_TIMEOUT_SECONDS = 30.0
+
 
 @dataclass
 class NextSpeakerResult:
@@ -260,8 +262,20 @@ async def _stream_one_message(
     await session.commit()
 
     truncated_reason = None
+    stream_iter = llm_adapter.stream(
+        persona, context, template, runtime.max_message_tokens, scribe_state
+    ).__aiter__()
     try:
-        async for chunk in llm_adapter.stream(persona, context, template, runtime.max_message_tokens, scribe_state):
+        while True:
+            try:
+                chunk = await asyncio.wait_for(
+                    stream_iter.__anext__(), timeout=CHUNK_IDLE_TIMEOUT_SECONDS
+                )
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                truncated_reason = "timeout"
+                break
             if call.cancel_reason:
                 truncated_reason = call.cancel_reason
                 break
@@ -284,6 +298,12 @@ async def _stream_one_message(
     except asyncio.CancelledError:
         truncated_reason = call.cancel_reason or "cancelled"
     finally:
+        aclose = getattr(stream_iter, "aclose", None)
+        if aclose is not None:
+            try:
+                await aclose()
+            except Exception:
+                pass
         if ACTIVE_CALLS.get(room.id) is call:
             ACTIVE_CALLS.pop(room.id, None)
 

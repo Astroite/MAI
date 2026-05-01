@@ -5,8 +5,10 @@ import time
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
+from app import engine as engine_module
 from app.db import SessionLocal
 from app.engine import ACTIVE_CALLS
+from app.llm import llm_adapter
 from app.main import app
 from app.models import Decision
 
@@ -236,6 +238,75 @@ def test_verdict_revoke_and_dead_end_messages():
     decision = asyncio.run(fetch_decision())
     assert decision is not None
     assert decision.revoked_by_message_id == revoke.json()["id"]
+
+
+def test_decision_lock_toggle_creates_audit_meta():
+    with TestClient(app) as client:
+        room = client.post("/rooms", json={"title": "pytest decision lock", "persona_ids": []})
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+
+        verdict = client.post(
+            "/rooms/%s/verdicts" % room_id,
+            json={"content": "采纳子讨论结论。", "is_locked": False},
+        )
+        assert verdict.status_code == 200
+
+        state = client.get("/rooms/%s/state" % room_id).json()
+        assert state["decisions"]
+        decision_id = state["decisions"][0]["id"]
+        assert state["decisions"][0]["is_locked"] is False
+
+        locked = client.patch(
+            "/rooms/%s/decisions/%s" % (room_id, decision_id),
+            json={"is_locked": True},
+        )
+        assert locked.status_code == 200
+        assert locked.json()["is_locked"] is True
+        assert locked.json()["locked_by_message_id"]
+
+        state = client.get("/rooms/%s/state" % room_id).json()
+        audit_messages = [
+            message
+            for message in state["messages"]
+            if message["message_type"] == "meta" and message["content"].startswith("锁定决议：")
+        ]
+        assert audit_messages
+
+        unlocked = client.patch(
+            "/rooms/%s/decisions/%s" % (room_id, decision_id),
+            json={"is_locked": False},
+        )
+        assert unlocked.status_code == 200
+        assert unlocked.json()["is_locked"] is False
+        assert unlocked.json()["locked_by_message_id"] is None
+
+
+def test_chunk_idle_timeout_truncates_message(monkeypatch):
+    monkeypatch.setattr(engine_module, "CHUNK_IDLE_TIMEOUT_SECONDS", 0.05)
+
+    async def stalled_stream(persona, context, phase, max_tokens, scribe_state=None):
+        await asyncio.sleep(5)
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(llm_adapter, "stream", stalled_stream)
+
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = next(item for item in personas if item["name"] == "架构师")
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest chunk timeout", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        )
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+        assert client.post("/rooms/%s/messages" % room_id, json={"content": "请触发空闲超时。"}).status_code == 200
+
+        turn = client.post("/rooms/%s/turn" % room_id, json={"speaker_persona_id": speaker["id"]})
+        assert turn.status_code == 200
+        assert turn.json()[0]["truncated_reason"] == "timeout"
 
 
 def test_freeze_cancels_active_mock_turn():

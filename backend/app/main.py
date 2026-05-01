@@ -25,6 +25,7 @@ from .event_bus import event_bus
 from .ids import new_id
 from .models import (
     DebateFormat,
+    Decision,
     FacilitatorSignal,
     Message,
     MergeBack,
@@ -43,6 +44,8 @@ from .models import (
 from .schemas import (
     AddPersonasRequest,
     DebateFormatOut,
+    DecisionLockUpdate,
+    DecisionOut,
     FacilitatorSignalOut,
     FromUploadRequest,
     InsertPhaseRequest,
@@ -321,6 +324,52 @@ async def create_verdict(room_id: str, body: VerdictCreate, session: AsyncSessio
     message = await append_verdict(session, room_id, body.content, body.is_locked, body.dead_end, body.revoke_message_id)
     await session.commit()
     return message
+
+
+@app.patch("/rooms/{room_id}/decisions/{decision_id}", response_model=DecisionOut)
+async def update_decision_lock(
+    room_id: str,
+    decision_id: str,
+    body: DecisionLockUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    decision = await session.get(Decision, decision_id)
+    if not decision or decision.room_id != room_id:
+        raise HTTPException(404, "decision not found")
+    if decision.revoked_by_message_id:
+        raise HTTPException(409, "decision already revoked")
+    if decision.is_locked == body.is_locked:
+        return decision
+    audit = Message(
+        room_id=room_id,
+        phase_instance_id=runtime.current_phase_instance_id,
+        parent_message_id=decision.scribe_event_message_id,
+        message_type="meta",
+        author_actual="user_as_judge",
+        visibility="public",
+        visibility_to_models=True,
+        content=("锁定决议：" if body.is_locked else "解锁决议：") + decision.content,
+    )
+    session.add(audit)
+    await session.flush()
+    decision.is_locked = body.is_locked
+    decision.locked_by_message_id = audit.id if body.is_locked else None
+    await trace_record(
+        session,
+        room_id,
+        "user_action",
+        "decision lock toggled",
+        {"decision_id": decision_id, "is_locked": body.is_locked, "audit_message_id": audit.id},
+    )
+    await session.commit()
+    await session.refresh(decision)
+    await event_bus.publish(
+        room_id,
+        {"type": "message.appended", "message": MessageOut.model_validate(audit).model_dump(mode="json")},
+    )
+    return decision
 
 
 @app.post("/rooms/{room_id}/masquerade", response_model=MessageOut)
@@ -634,6 +683,9 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
             select(FacilitatorSignal).where(FacilitatorSignal.room_id == room_id).order_by(FacilitatorSignal.created_at.desc()).limit(20)
         )
     ).all()
+    decisions = (
+        await session.scalars(select(Decision).where(Decision.room_id == room_id).order_by(Decision.created_at))
+    ).all()
     return RoomState(
         room=RoomOut.model_validate(room),
         runtime=RoomRuntimeOut.model_validate(runtime),
@@ -643,6 +695,7 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         messages=[MessageOut.model_validate(m) for m in messages],
         scribe_state=ScribeStateOut.model_validate(scribe_state),
         facilitator_signals=[FacilitatorSignalOut.model_validate(s) for s in signals],
+        decisions=[DecisionOut.model_validate(d) for d in decisions],
     )
 
 

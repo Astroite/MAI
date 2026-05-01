@@ -23,13 +23,14 @@ export function useRoomEvents(roomId?: string) {
         if (payload.type === "message.streaming" && payload.message_id && payload.persona_id && payload.chunk_text) {
           appendChunk(payload.message_id, payload.persona_id, payload.chunk_text);
         }
-        if (payload.type === "message.appended") {
+        if (payload.type === "message.appended" || payload.type === "message.cancelled") {
           const id = payload.message_id ?? payload.message?.id;
           if (id) clearStream(id);
         }
         if (
           [
             "message.appended",
+            "message.cancelled",
             "scribe.updated",
             "facilitator.signal",
             "phase.exit_suggested",

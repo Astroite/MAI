@@ -385,6 +385,21 @@ class ScribeStateOut(APIModel):
     updated_at: datetime
 
 
+class DecisionOut(APIModel):
+    id: str
+    room_id: str
+    scribe_event_message_id: str
+    content: str
+    is_locked: bool
+    locked_by_message_id: str | None = None
+    revoked_by_message_id: str | None = None
+    created_at: datetime
+
+
+class DecisionLockUpdate(APIModel):
+    is_locked: bool
+
+
 class FacilitatorSignalOut(APIModel):
     id: str
     room_id: str
@@ -426,3 +441,4 @@ class RoomState(APIModel):
     messages: list[MessageOut]
     scribe_state: ScribeStateOut
     facilitator_signals: list[FacilitatorSignalOut]
+    decisions: list[DecisionOut] = Field(default_factory=list)

@@ -1,4 +1,4 @@
-import type { DebateFormat, Message, Persona, PhaseTemplate, Recipe, Room, RoomState } from "./types";
+import type { DebateFormat, Decision, Message, Persona, PhaseTemplate, Recipe, Room, RoomState } from "./types";
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -65,6 +65,11 @@ export const api = {
     request<RoomState>(`/rooms/${roomId}/phase/insert`, {
       method: "POST",
       body: JSON.stringify({ phase_template_id })
+    }),
+  lockDecision: (roomId: string, decisionId: string, is_locked: boolean) =>
+    request<Decision>(`/rooms/${roomId}/decisions/${decisionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ is_locked })
     }),
   freeze: (roomId: string) => request<RoomState>(`/rooms/${roomId}/freeze`, { method: "POST" }),
   unfreeze: (roomId: string) => request<RoomState>(`/rooms/${roomId}/unfreeze`, { method: "POST" }),

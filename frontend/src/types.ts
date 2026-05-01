@@ -122,6 +122,17 @@ export interface FacilitatorSignal {
   created_at: string;
 }
 
+export interface Decision {
+  id: string;
+  room_id: string;
+  scribe_event_message_id: string;
+  content: string;
+  is_locked: boolean;
+  locked_by_message_id?: string | null;
+  revoked_by_message_id?: string | null;
+  created_at: string;
+}
+
 export interface RoomState {
   room: Room;
   runtime: Runtime;
@@ -133,6 +144,7 @@ export interface RoomState {
     current_state: ScribeState;
   };
   facilitator_signals: FacilitatorSignal[];
+  decisions: Decision[];
 }
 
 export interface StreamingEvent {

@@ -7,6 +7,8 @@ import {
   FileUp,
   Gavel,
   GitBranchPlus,
+  Lock,
+  LockOpen,
   Merge,
   MessageSquarePlus,
   Play,
@@ -19,7 +21,7 @@ import {
 import { api } from "../api";
 import { useRoomEvents } from "../hooks";
 import { useUIStore } from "../store";
-import type { Message, Persona, Room, Runtime, ScribeState } from "../types";
+import type { Decision, Message, Persona, Room, Runtime, ScribeState } from "../types";
 import { MarkdownBlock } from "../components/MarkdownBlock";
 import { StatusPill } from "../components/StatusPill";
 
@@ -176,6 +178,7 @@ export function RoomPage() {
           childRooms={childRooms}
         />
         <LimitPanel roomId={activeRoomId} runtime={state.runtime} />
+        <DecisionsPanel roomId={activeRoomId} frozen={state.runtime.frozen} decisions={state.decisions ?? []} />
         <ScribePanel state={state.scribe_state.current_state} />
         <FacilitatorPanel roomId={activeRoomId} frozen={state.runtime.frozen} signals={state.facilitator_signals} />
         <UploadPanel roomId={activeRoomId} frozen={state.runtime.frozen} />
@@ -525,6 +528,59 @@ function Composer({ roomId, personas, frozen }: { roomId: string; personas: Pers
         </button>
       </div>
     </div>
+  );
+}
+
+function DecisionsPanel({
+  roomId,
+  frozen,
+  decisions
+}: {
+  roomId: string;
+  frozen: boolean;
+  decisions: Decision[];
+}) {
+  const queryClient = useQueryClient();
+  const toggleLock = useMutation({
+    mutationFn: ({ id, lock }: { id: string; lock: boolean }) => api.lockDecision(roomId, id, lock),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+  });
+  const active = decisions.filter((decision) => !decision.revoked_by_message_id);
+  if (!active.length) {
+    return (
+      <section className="panel p-4">
+        <div className="label">决议</div>
+        <div className="mt-3 text-sm text-muted">暂无裁决</div>
+      </section>
+    );
+  }
+  return (
+    <section className="panel p-4">
+      <div className="label">决议</div>
+      <ul className="mt-3 space-y-2">
+        {active.map((decision) => (
+          <li key={decision.id} className="rounded-md border border-border p-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="text-sm">{decision.content}</div>
+              <StatusPill tone={decision.is_locked ? "danger" : "neutral"}>
+                {decision.is_locked ? "已锁" : "未锁"}
+              </StatusPill>
+            </div>
+            <div className="mt-2 flex justify-end">
+              <button
+                className="btn h-7 px-2 text-xs"
+                disabled={frozen || toggleLock.isPending}
+                onClick={() => toggleLock.mutate({ id: decision.id, lock: !decision.is_locked })}
+                title={decision.is_locked ? "解锁该决议" : "锁定该决议"}
+              >
+                {decision.is_locked ? <LockOpen size={13} /> : <Lock size={13} />}
+                {decision.is_locked ? "解锁" : "锁定"}
+              </button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
