@@ -222,6 +222,8 @@ async def _stream_one_message(
             )
         ).all()
     )
+    scribe = await session.get(ScribeState, room.id)
+    scribe_state = normalize_scribe_state(scribe.current_state if scribe else None)
     tmp_message_id = new_id()
     partial = ""
     chunk_count = 0
@@ -236,7 +238,7 @@ async def _stream_one_message(
     )
     await session.commit()
 
-    async for chunk in llm_adapter.stream(persona, context, template, runtime.max_message_tokens):
+    async for chunk in llm_adapter.stream(persona, context, template, runtime.max_message_tokens, scribe_state):
         partial += chunk.text
         chunk_count += 1
         await event_bus.publish(

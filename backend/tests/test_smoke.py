@@ -107,3 +107,8 @@ def test_structured_scribe_and_facilitator_tools():
         assert any("工具输出" in item["content"] for item in scribe["consensus"])
         assert state["facilitator_signals"]
         assert state["facilitator_signals"][0]["signals"]
+
+        turn = client.post("/rooms/%s/turn" % room_id, json={"speaker_persona_id": speaker["id"]})
+        assert turn.status_code == 200
+        assert "已裁决" in turn.json()[0]["content"]
+        assert "采用结构化 tool-call" in turn.json()[0]["content"]

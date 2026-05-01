@@ -26,9 +26,10 @@ class LLMAdapter:
         context: list[Message],
         phase: PhaseTemplate | None,
         max_tokens: int,
+        scribe_state: dict[str, Any] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         if self.settings.mock_llm or persona.backing_model.startswith("mock/"):
-            text = self._mock_response(persona, context, phase, max_tokens)
+            text = self._mock_response(persona, context, phase, max_tokens, scribe_state)
             for index, part in enumerate(self._chunk_text(text)):
                 await asyncio.sleep(0.025)
                 yield StreamChunk(text=part, index=index)
@@ -39,7 +40,7 @@ class LLMAdapter:
         except ImportError as exc:
             raise RuntimeError("LiteLLM is not installed; enable MOCK_LLM or install dependencies.") from exc
 
-        messages = [{"role": "system", "content": persona.system_prompt}]
+        messages = [{"role": "system", "content": self._build_system_prompt(persona, phase, scribe_state)}]
         for message in context[-50:]:
             role = "assistant" if message.author_actual in {"ai", "user_as_persona"} else "user"
             messages.append({"role": role, "content": message.content})
@@ -126,11 +127,14 @@ class LLMAdapter:
         context: list[Message],
         phase: PhaseTemplate | None,
         max_tokens: int,
+        scribe_state: dict[str, Any] | None = None,
     ) -> str:
         recent = [m for m in context if m.visibility_to_models][-6:]
         latest_user = next((m.content for m in reversed(recent) if m.author_actual in {"user", "user_as_judge"}), "")
         latest_any = recent[-1].content if recent else ""
         phase_name = phase.name if phase else "自由讨论"
+        phase_instruction = self._render_phase_instruction(phase)
+        scribe_brief = self._render_scribe_brief(scribe_state)
         role_hint = {
             "架构师": "我会先收紧边界和数据流，再指出一个需要尽早验证的结构性假设。",
             "性能批评者": "我先看吞吐、延迟和资源消耗，避免方案在规模上失真。",
@@ -142,12 +146,60 @@ class LLMAdapter:
         basis = latest_user or latest_any or "目前还没有足够上下文，先建立讨论框架。"
         text = (
             f"【{persona.name} · {phase_name}】{role_hint}\n\n"
+            f"{phase_instruction}"
+            f"{scribe_brief}"
             f"基于当前上下文：{basis[:360]}\n\n"
             "我的判断是：先明确目标、约束和可验证标准，再决定是否进入下一阶段。"
             "如果这是方案评审，我建议把关键风险写成可测试的检查项，而不是停留在偏好层面。"
         )
         char_budget = max(280, max_tokens * 3)
         return text[:char_budget]
+
+    def _build_system_prompt(
+        self,
+        persona: Persona,
+        phase: PhaseTemplate | None,
+        scribe_state: dict[str, Any] | None,
+    ) -> str:
+        parts = [persona.system_prompt.strip()]
+        if phase:
+            parts.append(f"当前 Phase：{phase.name}。{phase.description}".strip())
+            if phase.role_constraints:
+                parts.append(f"本阶段行为约束：{phase.role_constraints}")
+            if phase.prompt_template:
+                parts.append(f"本轮任务：{phase.prompt_template}")
+        brief = self._render_scribe_brief(scribe_state).strip()
+        if brief:
+            parts.append(f"当前结构化记录：\n{brief}")
+        return "\n\n".join(part for part in parts if part)
+
+    def _render_phase_instruction(self, phase: PhaseTemplate | None) -> str:
+        if not phase:
+            return ""
+        lines = []
+        if phase.role_constraints:
+            lines.append(f"阶段约束：{phase.role_constraints}")
+        if phase.prompt_template:
+            lines.append(f"本轮任务：{phase.prompt_template}")
+        return "\n".join(lines) + ("\n\n" if lines else "")
+
+    def _render_scribe_brief(self, scribe_state: dict[str, Any] | None) -> str:
+        if not scribe_state:
+            return ""
+        labels = {
+            "decisions": "已裁决",
+            "consensus": "共识",
+            "disagreements": "分歧",
+            "open_questions": "开放问题",
+            "dead_ends": "死路",
+        }
+        lines: list[str] = []
+        for key, label in labels.items():
+            items = [item for item in scribe_state.get(key, []) if item.get("content")]
+            if items:
+                joined = "；".join(item["content"][:140] for item in items[-3:])
+                lines.append(f"{label}：{joined}")
+        return "\n".join(lines) + ("\n\n" if lines else "")
 
     def _mock_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "scribe_update":
