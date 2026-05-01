@@ -43,6 +43,7 @@ from .models import (
 )
 from .schemas import (
     AddPersonasRequest,
+    DebateFormatCreate,
     DebateFormatOut,
     DecisionLockUpdate,
     DecisionOut,
@@ -177,6 +178,22 @@ async def export_phase(phase_id: str, session: AsyncSession = Depends(get_sessio
 @app.get("/templates/formats", response_model=list[DebateFormatOut])
 async def list_formats(session: AsyncSession = Depends(get_session)):
     return (await session.scalars(select(DebateFormat).order_by(DebateFormat.is_builtin.desc(), DebateFormat.name))).all()
+
+
+@app.post("/templates/formats", response_model=DebateFormatOut)
+async def create_format(body: DebateFormatCreate, session: AsyncSession = Depends(get_session)):
+    debate_format = DebateFormat(
+        id=new_id(),
+        version=1,
+        schema_version=1,
+        status="published",
+        is_builtin=False,
+        **body.model_dump(mode="json"),
+    )
+    session.add(debate_format)
+    await session.commit()
+    await session.refresh(debate_format)
+    return debate_format
 
 
 @app.get("/templates/recipes", response_model=list[RecipeOut])

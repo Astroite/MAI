@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { Download, Plus, Save } from "lucide-react";
+import { Download, GripVertical, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { DebateFormat, Persona, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -61,33 +63,195 @@ function PersonasView() {
   );
 }
 
+interface FormatSlotDraft {
+  id: string;
+  phaseId: string;
+}
+
 function FormatsView() {
+  const queryClient = useQueryClient();
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
+  const phases = useQuery({ queryKey: ["phases"], queryFn: api.phases });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [name, setName] = useState("我的评审赛制");
+  const [description, setDescription] = useState("从模板页拖拽编排的讨论赛制。");
+  const [tags, setTags] = useState("custom");
+  const [phaseId, setPhaseId] = useState("");
+  const [phaseSlots, setPhaseSlots] = useState<FormatSlotDraft[]>([]);
   const items = filterByTags(formats.data, selectedTags);
+  const phaseById = useMemo(() => new Map((phases.data ?? []).map((phase) => [phase.id, phase])), [phases.data]);
+  const create = useMutation({
+    mutationFn: () =>
+      api.createFormat({
+        name,
+        description,
+        phase_sequence: phaseSlots.map((slot) => ({
+          phase_template_id: slot.phaseId,
+          phase_template_version: phaseById.get(slot.phaseId)?.version ?? 1,
+          transitions: [{ condition: "always", target: "next" }]
+        })),
+        tags: splitTags(tags)
+      }),
+    onSuccess: () => {
+      setName("我的评审赛制");
+      setDescription("从模板页拖拽编排的讨论赛制。");
+      setTags("custom");
+      setPhaseSlots([]);
+      void queryClient.invalidateQueries({ queryKey: ["formats"] });
+    }
+  });
+
+  const addPhase = () => {
+    const selectedPhaseId = phaseId || phases.data?.[0]?.id;
+    if (!selectedPhaseId) return;
+    setPhaseSlots((current) => [...current, { id: newSlotId(), phaseId: selectedPhaseId }]);
+  };
+
+  const onDragEnd = (event: DragEndEvent) => {
+    const overId = event.over?.id;
+    if (!overId || event.active.id === overId) return;
+    setPhaseSlots((current) => {
+      const oldIndex = current.findIndex((slot) => slot.id === event.active.id);
+      const newIndex = current.findIndex((slot) => slot.id === overId);
+      if (oldIndex < 0 || newIndex < 0) return current;
+      return arrayMove(current, oldIndex, newIndex);
+    });
+  };
+
   return (
-    <section className="space-y-3">
-      <Header title="赛制模板" />
-      <TagFilterBar items={formats.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
+    <section className="grid grid-cols-[minmax(0,1fr)_400px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
-        {items.map((format: DebateFormat) => (
-          <div key={format.id} className="panel p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-semibold">{format.name}</h2>
-              <StatusPill tone="brand">{format.phase_sequence.length} phases</StatusPill>
-            </div>
-            <p className="mt-2 text-sm text-muted">{format.description}</p>
-            {format.tags.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {format.tags.map((tag) => (
-                  <StatusPill key={tag}>{tag}</StatusPill>
-                ))}
+        <Header title="赛制模板" />
+        <TagFilterBar items={formats.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
+        <div className="space-y-3">
+          {items.map((format: DebateFormat) => (
+            <div key={format.id} className="panel p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">{format.name}</h2>
+                  <p className="mt-1 text-sm text-muted">{format.description}</p>
+                </div>
+                <StatusPill tone={format.is_builtin ? "brand" : "accent"}>{format.phase_sequence.length} phases</StatusPill>
               </div>
-            )}
-          </div>
-        ))}
+              <ol className="mt-3 space-y-1 text-sm text-muted">
+                {format.phase_sequence.slice(0, 5).map((slot, index) => (
+                  <li key={`${format.id}-${index}-${slot.phase_template_id}`} className="flex gap-2">
+                    <span className="text-xs text-muted">{index + 1}.</span>
+                    <span>{phaseById.get(slot.phase_template_id)?.name ?? slot.phase_template_id}</span>
+                  </li>
+                ))}
+                {format.phase_sequence.length > 5 && <li>+{format.phase_sequence.length - 5} phases</li>}
+              </ol>
+              {format.tags.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {format.tags.map((tag) => (
+                    <StatusPill key={tag}>{tag}</StatusPill>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
+      <aside className="panel p-4">
+        <h2 className="font-semibold">新建赛制</h2>
+        <div className="mt-4 space-y-3">
+          <label className="block">
+            <span className="label">名称</span>
+            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">描述</span>
+            <textarea className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Tags</span>
+            <input className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
+          </label>
+          <div>
+            <span className="label">Phase 顺序</span>
+            <div className="mt-2 flex gap-2">
+              <select className="input min-w-0 flex-1" value={phaseId} onChange={(event) => setPhaseId(event.target.value)}>
+                <option value="">选择 Phase</option>
+                {(phases.data ?? []).map((phase) => (
+                  <option key={phase.id} value={phase.id}>
+                    {phase.name}
+                  </option>
+                ))}
+              </select>
+              <button className="btn" type="button" onClick={addPhase} disabled={!phases.data?.length}>
+                <Plus size={16} />
+                加入
+              </button>
+            </div>
+            <DndContext collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={phaseSlots.map((slot) => slot.id)} strategy={verticalListSortingStrategy}>
+                <div className="mt-3 space-y-2">
+                  {phaseSlots.map((slot, index) => (
+                    <FormatPhaseCard
+                      key={slot.id}
+                      index={index}
+                      slot={slot}
+                      phase={phaseById.get(slot.phaseId)}
+                      onRemove={() => setPhaseSlots((current) => current.filter((item) => item.id !== slot.id))}
+                    />
+                  ))}
+                  {phaseSlots.length === 0 && <div className="rounded-md border border-dashed border-border p-3 text-sm text-muted">从上方加入 phase 后可拖拽排序。</div>}
+                </div>
+              </SortableContext>
+            </DndContext>
+          </div>
+          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || phaseSlots.length === 0 || create.isPending}>
+            <Save size={16} />
+            保存赛制
+          </button>
+        </div>
+      </aside>
     </section>
+  );
+}
+
+function FormatPhaseCard({
+  index,
+  slot,
+  phase,
+  onRemove
+}: {
+  index: number;
+  slot: FormatSlotDraft;
+  phase?: PhaseTemplate;
+  onRemove: () => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: slot.id });
+  const style = {
+    transform: transform
+      ? `translate3d(${Math.round(transform.x)}px, ${Math.round(transform.y)}px, 0) scaleX(${transform.scaleX}) scaleY(${transform.scaleY})`
+      : undefined,
+    transition
+  };
+  return (
+    <div ref={setNodeRef} style={style} className={`rounded-md border border-border bg-panel p-3 ${isDragging ? "shadow-soft" : ""}`}>
+      <div className="flex items-start gap-2">
+        <button className="btn h-8 w-8 shrink-0 px-0" type="button" aria-label="拖拽排序" {...attributes} {...listeners}>
+          <GripVertical size={16} />
+        </button>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted">{index + 1}</span>
+            <div className="truncate text-sm font-medium">{phase?.name ?? slot.phaseId}</div>
+          </div>
+          <div className="mt-1 flex flex-wrap gap-2">
+            <StatusPill tone="brand">{phase?.ordering_rule.type ?? "unknown"}</StatusPill>
+            {(phase?.tags ?? []).slice(0, 3).map((tag) => (
+              <StatusPill key={tag}>{tag}</StatusPill>
+            ))}
+          </div>
+        </div>
+        <button className="btn btn-danger h-8 w-8 shrink-0 px-0" type="button" aria-label="移除 phase" onClick={onRemove}>
+          <Trash2 size={15} />
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -255,6 +419,17 @@ function RecipesView() {
       </aside>
     </section>
   );
+}
+
+function splitTags(value: string): string[] {
+  return value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function newSlotId(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `slot-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
 function filterByTags<T extends { tags?: string[] }>(items: T[] | undefined, selected: string[]): T[] {

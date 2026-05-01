@@ -14,6 +14,7 @@ export interface Persona {
 
 export interface PhaseTemplate {
   id: string;
+  version: number;
   name: string;
   description: string;
   allowed_speakers: Record<string, unknown>;
@@ -25,11 +26,18 @@ export interface PhaseTemplate {
   is_builtin: boolean;
 }
 
+export interface FormatPhaseSlot {
+  phase_template_id: string;
+  phase_template_version: number;
+  transitions?: Array<Record<string, unknown>>;
+}
+
 export interface DebateFormat {
   id: string;
+  version: number;
   name: string;
   description: string;
-  phase_sequence: Array<{ phase_template_id: string; phase_template_version: number }>;
+  phase_sequence: FormatPhaseSlot[];
   tags: string[];
   is_builtin: boolean;
 }

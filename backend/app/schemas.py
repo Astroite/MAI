@@ -190,6 +190,13 @@ class DebateFormatOut(APIModel):
     updated_at: datetime
 
 
+class DebateFormatCreate(APIModel):
+    name: str
+    description: str = ""
+    phase_sequence: list[FormatPhaseSlot] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+
+
 class RecipeOut(APIModel):
     id: str
     version: int

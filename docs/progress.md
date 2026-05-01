@@ -17,7 +17,7 @@
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
 | 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
 | 文档上传 | ✅ MD/TXT/PDF | ⚠️ 仅 input，无拖拽区 |
-| 模板可视化编辑 | API 完整 | ⚠️ 列表 + tag 筛选完成；仍缺 dnd-kit 卡片编辑器 |
+| 模板可视化编辑 | API 完整 | ⚠️ Format 顺序卡片编辑器完成；phase 复杂字段 / persona 编辑仍缺 |
 | Limit 分层 | ⚠️ 仅消息 / 房间两层 | ⚠️ 同上 |
 | Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
 | Trace | ✅ 写入完整 | — (v1 不做查询 UI) |
@@ -73,6 +73,7 @@
 - 文件上传（md/txt/pdf）→ user_doc 消息
 - SSE useRoomEvents 处理 streaming / appended / scribe / facilitator / phase 事件
 - Markdown + KaTeX、暗色模式（Zustand 持久化）
+- 模板页 tag 筛选 + Format dnd-kit 顺序卡片编辑器（phase 库添加、拖拽排序、移除、保存 published）
 
 ### 2.7 测试
 
@@ -88,7 +89,8 @@
 
 ### P1 · v1 验收剧本必经
 
-- [ ] **模板可视化编辑器**：列表已加 tag 筛选 + 卡片展示，但 phase/recipe 仍是单一表单，persona / format 仍只读。按 §8.9 实现 dnd-kit 顺序卡片 + 卡内 form（allowed_speakers / ordering_rule / exit_conditions / prompt_template）。
+- [x] **Format 顺序卡片编辑器**：赛制页已支持从 phase 库添加、dnd-kit 拖拽排序、移除 phase，并通过 `POST /templates/formats` 保存为 published。
+- [ ] **Phase 卡内完整字段编辑器**：phase/recipe 仍是单一表单，persona 仍只读；按 §8.9 补 allowed_speakers / ordering_rule / exit_conditions / prompt_template 的可视化表单。
 - [ ] **Limit 分层补齐**：UI 缺 per-phase 轮次、账户日 / 月 budget；副手 `pacing_warning` 在接近 limit 时的主动触发链路也未见。
 
 ### P2 · 完整体验
@@ -96,7 +98,7 @@
 - [x] **决议锁定 / 解锁 UI** —— 新增 `PATCH /rooms/{id}/decisions/{id}`、`DecisionsPanel`，锁定动作 append meta 消息保留审计；覆盖测试 `test_decision_lock_toggle_creates_audit_meta`。
 - [x] **`message.cancelled` SSE** —— `hooks.ts` 在 cancelled 上 clearStream + invalidate query。
 - [ ] **parallel 模式多气泡渲染**：后端可并行 stream，前端目前只单流；按 §8.8 同时显示多个 "正在打字"。
-- [ ] **persona / format 创建编辑 UI**：v1 必做范围，目前只能走 API。
+- [ ] **persona 创建编辑 UI + format 详情编辑 UI**：format 已能创建顺序模板，但还缺已有 format 的详情编辑；persona 仍只能走 API。
 - [ ] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端按 `chunk_index` dedupe（§8.4）。
 
 ### P3 · 打磨
@@ -121,9 +123,9 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：阻塞在 P1 两项（dnd-kit 模板编辑器 + 限额分层）；决议锁、代码高亮、tag 筛选已落地，其余 v1 主线均可走完。
+**前端**：阻塞在 P1 剩余项（phase 卡内字段编辑 + 限额分层）；决议锁、代码高亮、tag 筛选、Format 顺序卡片编辑器已落地，其余 v1 主线均可走完。
 
-附加场景（自定义 phase + 导出）：列表筛选 + 简易表单可走通；完整 dnd-kit 卡片编辑器仍待补。
+附加场景（自定义 phase + 导出）：列表筛选 + 简易表单可走通；Format 顺序模板可拖拽创建，Phase 卡内复杂字段仍待补。
 
 ---
 

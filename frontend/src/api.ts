@@ -27,6 +27,7 @@ export const api = {
   personas: (kind?: string) => request<Persona[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
   phases: () => request<PhaseTemplate[]>("/templates/phases"),
   formats: () => request<DebateFormat[]>("/templates/formats"),
+  createFormat: (body: unknown) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),
   recipes: () => request<Recipe[]>("/templates/recipes"),
   createRecipe: (body: unknown) => request<Recipe>("/templates/recipes", { method: "POST", body: JSON.stringify(body) }),
   createPhase: (body: unknown) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),

@@ -32,6 +32,31 @@ def test_health_and_builtin_templates():
         assert any(item["name"] == "方案评审默认配方" for item in recipes.json())
 
 
+def test_create_debate_format():
+    with TestClient(app) as client:
+        phases = client.get("/templates/phases").json()
+        assert len(phases) >= 2
+        body = {
+            "name": "pytest custom format",
+            "description": "created by smoke test",
+            "phase_sequence": [
+                {"phase_template_id": phases[0]["id"], "phase_template_version": phases[0]["version"]},
+                {"phase_template_id": phases[1]["id"], "phase_template_version": phases[1]["version"]},
+            ],
+            "tags": ["pytest", "custom"],
+        }
+        response = client.post("/templates/formats", json=body)
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["name"] == body["name"]
+        assert payload["is_builtin"] is False
+        assert payload["phase_sequence"][0]["phase_template_id"] == phases[0]["id"]
+        assert payload["phase_sequence"][0]["transitions"][0]["target"] == "next"
+
+        formats = client.get("/templates/formats").json()
+        assert any(item["id"] == payload["id"] for item in formats)
+
+
 def test_room_message_and_mock_turn():
     with TestClient(app) as client:
         formats = client.get("/templates/formats").json()
