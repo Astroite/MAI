@@ -258,6 +258,9 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
         room_id=room.id,
         max_message_tokens=settings_payload.get("max_message_tokens", 900),
         max_room_tokens=settings_payload.get("max_room_tokens", 120000),
+        max_phase_rounds=settings_payload.get("max_phase_rounds", 3),
+        max_account_daily_tokens=settings_payload.get("max_account_daily_tokens", 250000),
+        max_account_monthly_tokens=settings_payload.get("max_account_monthly_tokens", 3000000),
         auto_transition=settings_payload.get("auto_transition", False),
     )
     scribe = ScribeState(room_id=room.id, current_state=DEFAULT_SCRIBE_STATE.copy())
@@ -515,6 +518,12 @@ async def update_limits(room_id: str, body: LimitUpdate, session: AsyncSession =
         runtime.max_message_tokens = body.max_message_tokens
     if body.max_room_tokens is not None:
         runtime.max_room_tokens = body.max_room_tokens
+    if body.max_phase_rounds is not None:
+        runtime.max_phase_rounds = body.max_phase_rounds
+    if body.max_account_daily_tokens is not None:
+        runtime.max_account_daily_tokens = body.max_account_daily_tokens
+    if body.max_account_monthly_tokens is not None:
+        runtime.max_account_monthly_tokens = body.max_account_monthly_tokens
     if body.auto_transition is not None:
         runtime.auto_transition = body.auto_transition
     await trace_record(session, room_id, "user_action", "limits updated", body.model_dump(exclude_none=True))

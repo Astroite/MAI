@@ -51,3 +51,27 @@ async def create_schema() -> None:
                 """
             )
         )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE room_runtime_state
+                ADD COLUMN IF NOT EXISTS max_phase_rounds integer DEFAULT 3 NOT NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE room_runtime_state
+                ADD COLUMN IF NOT EXISTS max_account_daily_tokens integer DEFAULT 250000 NOT NULL
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                ALTER TABLE room_runtime_state
+                ADD COLUMN IF NOT EXISTS max_account_monthly_tokens integer DEFAULT 3000000 NOT NULL
+                """
+            )
+        )

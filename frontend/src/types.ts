@@ -72,6 +72,9 @@ export interface Runtime {
   auto_transition: boolean;
   max_message_tokens: number;
   max_room_tokens: number;
+  max_phase_rounds: number;
+  max_account_daily_tokens: number;
+  max_account_monthly_tokens: number;
   phase_exit_suggested: boolean;
   phase_exit_matched_conditions: Array<Record<string, unknown>>;
   phase_exit_suppressed_after_message_id?: string | null;

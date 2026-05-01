@@ -251,6 +251,9 @@ class RoomRuntimeOut(APIModel):
     current_masquerade_persona_id: str | None = None
     max_message_tokens: int
     max_room_tokens: int
+    max_phase_rounds: int
+    max_account_daily_tokens: int
+    max_account_monthly_tokens: int
     phase_exit_suggested: bool = False
     phase_exit_matched_conditions: list[dict[str, Any]] = Field(default_factory=list)
     phase_exit_suppressed_after_message_id: str | None = None
@@ -347,6 +350,9 @@ class InsertPhaseRequest(APIModel):
 class LimitUpdate(APIModel):
     max_message_tokens: int | None = Field(default=None, ge=1)
     max_room_tokens: int | None = Field(default=None, ge=1)
+    max_phase_rounds: int | None = Field(default=None, ge=1)
+    max_account_daily_tokens: int | None = Field(default=None, ge=1)
+    max_account_monthly_tokens: int | None = Field(default=None, ge=1)
     auto_transition: bool | None = None
 
 

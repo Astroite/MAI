@@ -187,6 +187,24 @@ async def _spoken_counts(session: AsyncSession, room_id: str, phase_instance_id:
     return {pid: count for pid, count in (await session.execute(stmt)).all()}
 
 
+async def _account_token_totals(session: AsyncSession) -> tuple[int, int]:
+    now = now_utc()
+    day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    month_start = day_start.replace(day=1)
+    token_expr = func.coalesce(Message.prompt_tokens, 0) + func.coalesce(Message.completion_tokens, 0)
+    daily = await session.scalar(select(func.coalesce(func.sum(token_expr), 0)).where(Message.created_at >= day_start))
+    monthly = await session.scalar(select(func.coalesce(func.sum(token_expr), 0)).where(Message.created_at >= month_start))
+    return int(daily or 0), int(monthly or 0)
+
+
+def _token_limit_exceeded(runtime: RoomRuntimeState, room_total: int, account_daily_total: int, account_monthly_total: int) -> bool:
+    return (
+        room_total > runtime.max_room_tokens
+        or account_daily_total > runtime.max_account_daily_tokens
+        or account_monthly_total > runtime.max_account_monthly_tokens
+    )
+
+
 async def run_room_turn(
     session: AsyncSession,
     room_id: str,
@@ -246,6 +264,7 @@ async def _stream_one_message(
     partial = ""
     chunk_count = 0
     prompt_tokens = estimate_tokens("\n".join(m.content for m in context[-20:]))
+    account_daily_total, account_monthly_total = await _account_token_totals(session)
     task = asyncio.current_task()
     if task is None:
         raise RuntimeError("streaming requires an asyncio task")
@@ -292,7 +311,13 @@ async def _stream_one_message(
                     "cumulative_tokens_estimate": estimate_tokens(partial),
                 },
             )
-            if runtime.token_counter_total + estimate_tokens(partial) > runtime.max_room_tokens:
+            generated_tokens = prompt_tokens + estimate_tokens(partial)
+            if _token_limit_exceeded(
+                runtime,
+                runtime.token_counter_total + generated_tokens,
+                account_daily_total + generated_tokens,
+                account_monthly_total + generated_tokens,
+            ):
                 truncated_reason = "limit_exceeded"
                 break
     except asyncio.CancelledError:
@@ -308,7 +333,13 @@ async def _stream_one_message(
             ACTIVE_CALLS.pop(room.id, None)
 
     completion_tokens = estimate_tokens(partial)
-    if truncated_reason is None and runtime.token_counter_total + completion_tokens > runtime.max_room_tokens:
+    generated_tokens = prompt_tokens + completion_tokens
+    if truncated_reason is None and _token_limit_exceeded(
+        runtime,
+        runtime.token_counter_total + generated_tokens,
+        account_daily_total + generated_tokens,
+        account_monthly_total + generated_tokens,
+    ):
         truncated_reason = "limit_exceeded"
     if truncated_reason:
         partial = format_truncated_partial(partial, truncated_reason)
@@ -476,6 +507,7 @@ async def run_facilitator_eval(
         },
     )
     signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
+    signals = (await limit_facilitator_signals(session, runtime, phase, template, latest_message_id)) + signals
     signals = filter_facilitator_signals(signals, previous, config, force)
     if not signals:
         await trace_record(
@@ -534,6 +566,52 @@ async def run_manual_facilitator_eval(session: AsyncSession, room_id: str) -> Fa
     return await run_facilitator_eval(session, room_id, latest_visible_message_id, force=True)
 
 
+async def limit_facilitator_signals(
+    session: AsyncSession,
+    runtime: RoomRuntimeState | None,
+    phase: RoomPhaseInstance | None,
+    template: PhaseTemplate | None,
+    latest_message_id: str,
+) -> list[dict[str, Any]]:
+    if runtime is None:
+        return []
+    notes: list[str] = []
+    severity: Literal["suggest", "warning"] = "suggest"
+
+    def add_note(used: int, limit: int, label: str) -> None:
+        nonlocal severity
+        if limit <= 0:
+            return
+        ratio = used / limit
+        if ratio >= 0.85:
+            notes.append(f"{label} 已用 {used}/{limit}，接近硬限制")
+            if ratio >= 0.95:
+                severity = "warning"
+
+    add_note(runtime.token_counter_total, runtime.max_room_tokens, "房间 token")
+    account_daily_total, account_monthly_total = await _account_token_totals(session)
+    add_note(account_daily_total, runtime.max_account_daily_tokens, "账号日 token")
+    add_note(account_monthly_total, runtime.max_account_monthly_tokens, "账号月 token")
+
+    if phase is not None and template is not None and runtime.max_phase_rounds:
+        plan = await session.get(RoomPhasePlan, {"room_id": phase.room_id, "position": phase.plan_position})
+        allowed = await allowed_persona_ids(session, phase.room_id, template, plan)
+        counts = await _spoken_counts(session, phase.room_id, phase.id)
+        phase_turn_budget = max(1, len(allowed)) * runtime.max_phase_rounds
+        add_note(sum(counts.values()), phase_turn_budget, "当前 phase 轮次")
+
+    if not notes:
+        return []
+    return [
+        {
+            "tag": "pacing_warning",
+            "severity": severity,
+            "reasoning": "；".join(notes) + "。",
+            "evidence_message_ids": [latest_message_id],
+        }
+    ]
+
+
 async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRuntimeState, emit: bool = True) -> bool:
     phase = await get_current_phase(session, runtime)
     template = await get_phase_template(session, phase)
@@ -546,6 +624,8 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
         select(Message.id).where(Message.room_id == room.id).order_by(Message.created_at.desc())
     )
     matched: list[dict] = []
+    if runtime.max_phase_rounds and sum(counts.values()) >= max(1, len(allowed)) * runtime.max_phase_rounds:
+        matched.append({"type": "phase_round_limit", "max": runtime.max_phase_rounds})
     for condition in template.exit_conditions or []:
         ctype = condition.get("type")
         if ctype == "user_manual":
