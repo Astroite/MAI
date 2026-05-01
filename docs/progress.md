@@ -17,7 +17,7 @@
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
 | 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
 | 文档上传 | ✅ MD/TXT/PDF | ✅ 拖拽上传区 |
-| 模板可视化编辑 | API 完整 | ⚠️ Persona / Phase / Format 创建完成；format 详情编辑仍缺 |
+| 模板可视化编辑 | API 完整 | ⚠️ Persona / Phase / Format 创建完成；format / persona 详情编辑仍缺 |
 | Limit 分层 | ✅ 单条 / 房间 / phase 轮次 / 账号日月预算 | ✅ LimitPanel 已可调整 |
 | Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
 | Trace | ✅ 写入完整 | — (v1 不做查询 UI) |
@@ -63,6 +63,7 @@
 
 - `stream` + `complete_tool`，tool calling 走 LiteLLM
 - mock vs real 双重判定：`MOCK_LLM` env + persona `backing_model` 以 `mock/` 起头（CLAUDE.md 已记录此约定）
+- `deep_thinking` 参数路由：Anthropic 走 `thinking` budget，OpenAI 走 `reasoning_effort=high`，stream / tool call 共用同一路径
 
 ### 2.6 前端
 
@@ -82,7 +83,7 @@
 
 ### 2.7 测试
 
-`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze。
+`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、deep thinking 参数路由。
 
 ---
 
@@ -112,7 +113,7 @@
 - [x] **代码高亮（shiki）** —— `MarkdownBlock` 通过 shiki `codeToHtml` 渲染 fenced code，主题随暗色模式切换。
 - [x] **Tag 筛选 UI** —— `TemplatesPage` 四个视图（personas / phases / formats / recipes）顶部加可点选 tag 过滤条，多 tag AND 过滤。
 - [x] **拖拽上传区**：Room 侧上传面板支持拖入或选择 md/txt/pdf，并保留冻结态禁用。
-- [ ] **Extended thinking 参数路由**：`LLMAdapter._build_extra_params` 在跨家差异处的实现（thinking budget / reasoning_effort）尚未填充（§7.3）。
+- [x] **Extended thinking 参数路由**：`LLMAdapter._build_extra_params` 已按 `deep_thinking` 分别路由 Anthropic `thinking` budget 与 OpenAI `reasoning_effort`，stream / tool call 共用并覆盖测试（§7.3）。
 
 ### P4 · 测试覆盖补强
 
@@ -129,7 +130,7 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Persona 创建、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层已落地。剩余 P2/P3 主要是 parallel 多气泡、format/persona 详情编辑、断线重连和上传拖拽区。
+**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Persona 创建、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区已落地。剩余 P2/P3 主要是 parallel 多气泡、format/persona 详情编辑。
 
 附加场景（自定义 phase + 导出）：列表筛选 + Phase 字段表单 + Format 顺序模板可走通。
 

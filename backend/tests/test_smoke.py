@@ -10,7 +10,7 @@ from app.db import SessionLocal
 from app.engine import ACTIVE_CALLS, InFlightCall
 from app.llm import llm_adapter
 from app.main import app
-from app.models import Decision
+from app.models import Decision, Persona
 
 
 def test_health_and_builtin_templates():
@@ -30,6 +30,31 @@ def test_health_and_builtin_templates():
         recipes = client.get("/templates/recipes")
         assert recipes.status_code == 200
         assert any(item["name"] == "方案评审默认配方" for item in recipes.json())
+
+
+def test_deep_thinking_extra_params_route_by_model_family():
+    def persona(model: str, config: dict | None = None) -> Persona:
+        return Persona(
+            id="pytest-%s" % model.replace("/", "-"),
+            kind="discussant",
+            name=model,
+            description="",
+            backing_model=model,
+            system_prompt="",
+            temperature=0.4,
+            config=config or {},
+            tags=["pytest"],
+            is_builtin=False,
+        )
+
+    assert llm_adapter._build_extra_params(persona("anthropic/claude-sonnet-4-5", {"deep_thinking": True})) == {
+        "thinking": {"type": "enabled", "budget_tokens": 10000}
+    }
+    assert llm_adapter._build_extra_params(persona("openai/o3", {"deep_thinking": True})) == {
+        "reasoning_effort": "high"
+    }
+    assert llm_adapter._build_extra_params(persona("mock/generalist", {"deep_thinking": True})) == {}
+    assert llm_adapter._build_extra_params(persona("openai/o3")) == {}
 
 
 def test_create_debate_format():
