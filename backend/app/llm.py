@@ -254,6 +254,47 @@ class LLMAdapter:
             signals: list[dict[str, Any]] = []
             overall = "productive"
             pacing = "节奏正常。"
+            combined = "\n".join(message.get("content", "") for message in recent[:8])
+            evidence_ids = [message.get("id") for message in recent[:5] if message.get("id")]
+
+            if any(marker in combined for marker in ["阶段目标已完成", "可以进入下一阶段", "phase_exhausted"]):
+                overall = "exhausted"
+                pacing = "当前阶段目标看起来已经完成，建议进入下一阶段。"
+                signals.append(
+                    {
+                        "tag": "phase_exhausted",
+                        "severity": "suggest",
+                        "reasoning": "最近消息明确表达阶段目标已完成或可以进入下一阶段。",
+                        "evidence_message_ids": evidence_ids[:3],
+                    }
+                )
+            if any(marker in combined for marker in ["子讨论", "独立争议", "单独讨论", "开分支"]):
+                signals.append(
+                    {
+                        "tag": "consider_subroom",
+                        "severity": "suggest",
+                        "reasoning": "出现可隔离处理的独立争议点，适合开子讨论避免污染主线。",
+                        "evidence_message_ids": evidence_ids[:3],
+                    }
+                )
+            if any(marker in combined for marker in ["需要用户裁决", "等待用户拍板", "请用户拍板", "decision_pending"]):
+                signals.append(
+                    {
+                        "tag": "decision_pending",
+                        "severity": "suggest",
+                        "reasoning": "讨论已经显式等待用户裁决，继续发散的收益较低。",
+                        "evidence_message_ids": evidence_ids[:3],
+                    }
+                )
+            if any(marker in combined for marker in ["术语不清", "定义不清", "概念混淆", "clarification_needed"]):
+                signals.append(
+                    {
+                        "tag": "clarification_needed",
+                        "severity": "suggest",
+                        "reasoning": "最近讨论暴露出术语或概念混淆，需要先澄清定义。",
+                        "evidence_message_ids": evidence_ids[:3],
+                    }
+                )
             if len(recent) >= 5:
                 authors = [message.get("author_persona_id") or message.get("author_actual") for message in recent[:5]]
                 if len(set(authors)) <= 2:

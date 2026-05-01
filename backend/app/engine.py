@@ -428,6 +428,9 @@ async def run_facilitator_eval(
             )
         ).all()
     )
+    runtime = await session.get(RoomRuntimeState, room_id)
+    phase = await get_current_phase(session, runtime) if runtime else None
+    template = await get_phase_template(session, phase)
     history_limit = max(1, int(config.get("cooldown_per_tag_rounds", 5)))
     previous = list(
         (
@@ -447,6 +450,7 @@ async def run_facilitator_eval(
         {
             "latest_message_id": latest_message_id,
             "recent_messages": [message_to_tool_payload(message) for message in recent],
+            "current_phase": phase_to_tool_payload(phase, template),
             "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
             "manual_request": force,
         },
@@ -855,6 +859,22 @@ def facilitator_signal_to_tool_payload(item: FacilitatorSignal) -> dict[str, Any
         "overall_health": item.overall_health,
         "pacing_note": item.pacing_note,
         "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def phase_to_tool_payload(phase: RoomPhaseInstance | None, template: PhaseTemplate | None) -> dict[str, Any] | None:
+    if phase is None or template is None:
+        return None
+    return {
+        "phase_instance_id": phase.id,
+        "plan_position": phase.plan_position,
+        "phase_template_id": template.id,
+        "name": template.name,
+        "description": template.description,
+        "ordering_rule": template.ordering_rule,
+        "exit_conditions": template.exit_conditions,
+        "role_constraints": template.role_constraints,
+        "prompt_template": template.prompt_template,
     }
 
 

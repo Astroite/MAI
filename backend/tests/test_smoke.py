@@ -183,6 +183,25 @@ def test_facilitator_cooldown_and_manual_request():
         assert len(manual.json()["facilitator_signals"]) == 2
 
 
+def test_facilitator_semantic_tags_for_phase_and_subroom():
+    with TestClient(app) as client:
+        room = client.post("/rooms", json={"title": "pytest facilitator semantic tags", "persona_ids": []})
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+
+        for content in [
+            "阶段目标已完成，可以进入下一阶段。",
+            "这里还有一个独立争议，适合开子讨论单独处理。",
+            "需要用户裁决最终方向。",
+        ]:
+            assert client.post("/rooms/%s/messages" % room_id, json={"content": content}).status_code == 200
+
+        state = client.post("/rooms/%s/facilitator" % room_id)
+        assert state.status_code == 200
+        tags = {signal["tag"] for signal in state.json()["facilitator_signals"][0]["signals"]}
+        assert {"phase_exhausted", "consider_subroom", "decision_pending"}.issubset(tags)
+
+
 def test_verdict_revoke_and_dead_end_messages():
     with TestClient(app) as client:
         room = client.post("/rooms", json={"title": "pytest verdict controls", "persona_ids": []})
