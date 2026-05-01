@@ -1,9 +1,12 @@
 import asyncio
+import threading
+import time
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app.db import SessionLocal
+from app.engine import ACTIVE_CALLS
 from app.main import app
 from app.models import Decision
 
@@ -214,3 +217,41 @@ def test_verdict_revoke_and_dead_end_messages():
     decision = asyncio.run(fetch_decision())
     assert decision is not None
     assert decision.revoked_by_message_id == revoke.json()["id"]
+
+
+def test_freeze_cancels_active_mock_turn():
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = next(item for item in personas if item["name"] == "架构师")
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest freeze active turn", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        )
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+        assert client.post("/rooms/%s/messages" % room_id, json={"content": "请给出一个可以被冻结的长回复。"}).status_code == 200
+
+        turn_result = {}
+
+        def run_turn():
+            turn_result["response"] = client.post("/rooms/%s/turn" % room_id, json={"speaker_persona_id": speaker["id"]})
+
+        thread = threading.Thread(target=run_turn)
+        thread.start()
+        deadline = time.monotonic() + 2
+        while room_id not in ACTIVE_CALLS and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert room_id in ACTIVE_CALLS
+
+        freeze = client.post("/rooms/%s/freeze" % room_id)
+        assert freeze.status_code == 200
+        thread.join(timeout=3)
+        assert not thread.is_alive()
+
+        turn = turn_result["response"]
+        assert turn.status_code == 200
+        assert turn.json()[0]["truncated_reason"] == "frozen"
+        state = client.get("/rooms/%s/state" % room_id).json()
+        assert state["room"]["status"] == "frozen"

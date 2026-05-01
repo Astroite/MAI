@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -50,6 +51,21 @@ class NextSpeakerResult:
     kind: Literal["wait", "single", "parallel", "phase_done"]
     persona_ids: list[str]
     reason: str
+
+
+@dataclass
+class InFlightCall:
+    room_id: str
+    message_id: str
+    task: asyncio.Task
+    cancel_reason: str | None = None
+
+    def cancel(self, reason: str) -> None:
+        self.cancel_reason = reason
+        self.task.cancel()
+
+
+ACTIVE_CALLS: dict[str, InFlightCall] = {}
 
 
 async def get_current_phase(session: AsyncSession, runtime: RoomRuntimeState) -> RoomPhaseInstance | None:
@@ -228,6 +244,11 @@ async def _stream_one_message(
     partial = ""
     chunk_count = 0
     prompt_tokens = estimate_tokens("\n".join(m.content for m in context[-20:]))
+    task = asyncio.current_task()
+    if task is None:
+        raise RuntimeError("streaming requires an asyncio task")
+    call = InFlightCall(room_id=room.id, message_id=tmp_message_id, task=task)
+    ACTIVE_CALLS[room.id] = call
 
     await trace_record(
         session,
@@ -238,28 +259,40 @@ async def _stream_one_message(
     )
     await session.commit()
 
-    async for chunk in llm_adapter.stream(persona, context, template, runtime.max_message_tokens, scribe_state):
-        partial += chunk.text
-        chunk_count += 1
-        await event_bus.publish(
-            room.id,
-            {
-                "type": "message.streaming",
-                "message_id": tmp_message_id,
-                "persona_id": persona.id,
-                "chunk_text": chunk.text,
-                "chunk_index": chunk.index,
-                "cumulative_tokens_estimate": estimate_tokens(partial),
-            },
-        )
-        if runtime.token_counter_total + estimate_tokens(partial) > runtime.max_room_tokens:
-            break
+    truncated_reason = None
+    try:
+        async for chunk in llm_adapter.stream(persona, context, template, runtime.max_message_tokens, scribe_state):
+            if call.cancel_reason:
+                truncated_reason = call.cancel_reason
+                break
+            partial += chunk.text
+            chunk_count += 1
+            await event_bus.publish(
+                room.id,
+                {
+                    "type": "message.streaming",
+                    "message_id": tmp_message_id,
+                    "persona_id": persona.id,
+                    "chunk_text": chunk.text,
+                    "chunk_index": chunk.index,
+                    "cumulative_tokens_estimate": estimate_tokens(partial),
+                },
+            )
+            if runtime.token_counter_total + estimate_tokens(partial) > runtime.max_room_tokens:
+                truncated_reason = "limit_exceeded"
+                break
+    except asyncio.CancelledError:
+        truncated_reason = call.cancel_reason or "cancelled"
+    finally:
+        if ACTIVE_CALLS.get(room.id) is call:
+            ACTIVE_CALLS.pop(room.id, None)
 
     completion_tokens = estimate_tokens(partial)
-    truncated_reason = None
-    if runtime.token_counter_total + completion_tokens > runtime.max_room_tokens:
+    if truncated_reason is None and runtime.token_counter_total + completion_tokens > runtime.max_room_tokens:
         truncated_reason = "limit_exceeded"
-        partial = partial[: max(0, len(partial) - 80)] + "\n\n[已因房间 token limit 截断]"
+    if truncated_reason:
+        partial = format_truncated_partial(partial, truncated_reason)
+        completion_tokens = estimate_tokens(partial)
 
     message = Message(
         id=tmp_message_id,
@@ -287,6 +320,17 @@ async def _stream_one_message(
         {"message_id": message.id, "completion": partial, "truncated_reason": truncated_reason},
     )
     await session.commit()
+    if truncated_reason:
+        await event_bus.publish(
+            room.id,
+            {
+                "type": "message.cancelled",
+                "message_id": message.id,
+                "reason": truncated_reason,
+                "partial_text": partial,
+                "partial_tokens": completion_tokens,
+            },
+        )
     await event_bus.publish(
         room.id,
         {
@@ -622,12 +666,21 @@ async def freeze_room(session: AsyncSession, room_id: str) -> None:
     runtime = await session.get(RoomRuntimeState, room_id)
     if room is None or runtime is None:
         raise ValueError("room not found")
+    active_call = ACTIVE_CALLS.get(room_id)
+    if active_call:
+        active_call.cancel("frozen")
     runtime.frozen = True
     room.status = "frozen"
     room.frozen_at = now_utc()
     snapshot = RoomSnapshot(room_id=room_id, full_state=await snapshot_room(session, room_id))
     session.add(snapshot)
-    await trace_record(session, room_id, "state_mutation", "room frozen", {"snapshot_id": snapshot.id})
+    await trace_record(
+        session,
+        room_id,
+        "state_mutation",
+        "room frozen",
+        {"snapshot_id": snapshot.id, "cancelled_message_id": active_call.message_id if active_call else None},
+    )
     await session.flush()
     await event_bus.publish(room_id, {"type": "room.frozen"})
 
@@ -803,6 +856,20 @@ def facilitator_signal_to_tool_payload(item: FacilitatorSignal) -> dict[str, Any
         "pacing_note": item.pacing_note,
         "created_at": item.created_at.isoformat() if item.created_at else None,
     }
+
+
+def format_truncated_partial(partial: str, reason: str) -> str:
+    labels = {
+        "limit_exceeded": "房间 token limit",
+        "frozen": "房间冻结",
+        "timeout": "调用超时",
+        "cancelled": "调用取消",
+    }
+    label = labels.get(reason, reason)
+    suffix = f"\n\n[已因{label}截断]"
+    if partial:
+        return partial[: max(0, len(partial) - len(suffix))] + suffix
+    return f"[已因{label}取消，尚未生成内容]"
 
 
 def estimate_tokens(text: str) -> int:
