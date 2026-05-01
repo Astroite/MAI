@@ -16,6 +16,7 @@ from .engine import (
     append_verdict,
     continue_current_phase,
     freeze_room,
+    run_manual_facilitator_eval,
     run_room_turn,
     transition_to_next_phase,
     unfreeze_room,
@@ -391,6 +392,18 @@ async def continue_phase(room_id: str, session: AsyncSession = Depends(get_sessi
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
     await continue_current_phase(session, room_id)
+    await session.commit()
+    return await _room_state(session, room_id)
+
+
+@app.post("/rooms/{room_id}/facilitator", response_model=RoomState)
+async def ask_facilitator(room_id: str, session: AsyncSession = Depends(get_session)):
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    try:
+        await run_manual_facilitator_eval(session, room_id)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     await session.commit()
     return await _room_state(session, room_id)
 

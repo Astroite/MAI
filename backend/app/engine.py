@@ -361,9 +361,19 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
     await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
 
 
-async def run_facilitator_eval(session: AsyncSession, room_id: str, latest_message_id: str) -> None:
+async def run_facilitator_eval(
+    session: AsyncSession,
+    room_id: str,
+    latest_message_id: str,
+    force: bool = False,
+) -> FacilitatorSignal | None:
     facilitator = await get_room_system_persona(session, room_id, "facilitator")
-    context_window = int((facilitator.config or {}).get("context_window_messages", 8))
+    config = facilitator.config or {}
+    if config.get("disabled") and not force:
+        await trace_record(session, room_id, "facilitator_signal", "facilitator disabled", {"latest_message_id": latest_message_id})
+        await session.flush()
+        return None
+    context_window = int(config.get("context_window_messages", 8))
     recent = list(
         (
             await session.scalars(
@@ -371,6 +381,17 @@ async def run_facilitator_eval(session: AsyncSession, room_id: str, latest_messa
                 .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
                 .order_by(Message.created_at.desc())
                 .limit(context_window)
+            )
+        ).all()
+    )
+    history_limit = max(1, int(config.get("cooldown_per_tag_rounds", 5)))
+    previous = list(
+        (
+            await session.scalars(
+                select(FacilitatorSignal)
+                .where(FacilitatorSignal.room_id == room_id)
+                .order_by(FacilitatorSignal.created_at.desc())
+                .limit(history_limit)
             )
         ).all()
     )
@@ -382,9 +403,22 @@ async def run_facilitator_eval(session: AsyncSession, room_id: str, latest_messa
         {
             "latest_message_id": latest_message_id,
             "recent_messages": [message_to_tool_payload(message) for message in recent],
+            "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
+            "manual_request": force,
         },
     )
     signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
+    signals = filter_facilitator_signals(signals, previous, config, force)
+    if not signals:
+        await trace_record(
+            session,
+            room_id,
+            "facilitator_signal",
+            "all facilitator signals suppressed by cooldown",
+            {"evaluation": evaluation, "cooldown_per_tag_rounds": history_limit},
+        )
+        await session.flush()
+        return None
     overall = evaluation.get("overall_health") or "productive"
     pacing = evaluation.get("pacing_note") or "节奏正常。"
 
@@ -422,6 +456,14 @@ async def run_facilitator_eval(session: AsyncSession, room_id: str, latest_messa
             },
         },
     )
+    return item
+
+
+async def run_manual_facilitator_eval(session: AsyncSession, room_id: str) -> FacilitatorSignal | None:
+    latest_visible_message_id = await latest_visible_message_id_for_room(session, room_id)
+    if latest_visible_message_id is None:
+        raise ValueError("no visible messages to evaluate")
+    return await run_facilitator_eval(session, room_id, latest_visible_message_id, force=True)
 
 
 async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRuntimeState, emit: bool = True) -> bool:
@@ -561,14 +603,18 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
 
 
 async def run_phase_boundary_tasks(session: AsyncSession, room_id: str) -> None:
-    latest_visible_message_id = await session.scalar(
+    latest_visible_message_id = await latest_visible_message_id_for_room(session, room_id)
+    if latest_visible_message_id:
+        await run_scribe_update(session, room_id, latest_visible_message_id)
+        await run_facilitator_eval(session, room_id, latest_visible_message_id)
+
+
+async def latest_visible_message_id_for_room(session: AsyncSession, room_id: str) -> str | None:
+    return await session.scalar(
         select(Message.id)
         .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
         .order_by(Message.created_at.desc())
     )
-    if latest_visible_message_id:
-        await run_scribe_update(session, room_id, latest_visible_message_id)
-        await run_facilitator_eval(session, room_id, latest_visible_message_id)
 
 
 async def freeze_room(session: AsyncSession, room_id: str) -> None:
@@ -715,6 +761,37 @@ def default_facilitator_signal(recent: list[Message]) -> dict[str, Any]:
         "severity": "info",
         "reasoning": "讨论仍在产出可整理的观点，暂不需要强制干预。",
         "evidence_message_ids": [message.id for message in recent[:3]],
+    }
+
+
+def filter_facilitator_signals(
+    signals: list[dict[str, Any]],
+    previous: list[FacilitatorSignal],
+    config: dict[str, Any],
+    force: bool,
+) -> list[dict[str, Any]]:
+    enabled_tags = set(config.get("enabled_signal_tags") or [])
+    filtered = [signal for signal in signals if not enabled_tags or signal.get("tag") in enabled_tags]
+    if force:
+        return filtered
+    recent_tags = {
+        signal.get("tag")
+        for item in previous
+        for signal in (item.signals or [])
+        if signal.get("tag")
+    }
+    return [signal for signal in filtered if signal.get("tag") not in recent_tags]
+
+
+def facilitator_signal_to_tool_payload(item: FacilitatorSignal) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "message_id": item.message_id,
+        "trigger_after_message_id": item.trigger_after_message_id,
+        "signals": item.signals or [],
+        "overall_health": item.overall_health,
+        "pacing_note": item.pacing_note,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
     }
 
 

@@ -175,7 +175,7 @@ export function RoomPage() {
         />
         <LimitPanel roomId={activeRoomId} runtime={state.runtime} />
         <ScribePanel state={state.scribe_state.current_state} />
-        <FacilitatorPanel signals={state.facilitator_signals} />
+        <FacilitatorPanel roomId={activeRoomId} frozen={state.runtime.frozen} signals={state.facilitator_signals} />
         <UploadPanel roomId={activeRoomId} frozen={state.runtime.frozen} />
       </aside>
     </div>
@@ -511,10 +511,29 @@ function ScribePanel({ state }: { state: ScribeState }) {
   );
 }
 
-function FacilitatorPanel({ signals }: { signals: Array<{ id: string; overall_health: string; pacing_note: string; signals: Array<{ tag: string; reasoning: string; severity: string }> }> }) {
+function FacilitatorPanel({
+  roomId,
+  frozen,
+  signals
+}: {
+  roomId: string;
+  frozen: boolean;
+  signals: Array<{ id: string; overall_health: string; pacing_note: string; signals: Array<{ tag: string; reasoning: string; severity: string }> }>;
+}) {
+  const queryClient = useQueryClient();
+  const ask = useMutation({
+    mutationFn: () => api.askFacilitator(roomId),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+  });
   return (
     <section className="panel p-4">
-      <div className="label">上帝副手</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="label">上帝副手</div>
+        <button className="btn h-8 px-2 text-xs" disabled={frozen || ask.isPending} onClick={() => ask.mutate()} title="请求当前讨论健康度">
+          <MessageSquarePlus size={14} />
+          询问
+        </button>
+      </div>
       <div className="mt-3 space-y-2">
         {signals.slice(0, 4).map((signal) => (
           <div key={signal.id} className="rounded-md border border-border p-2">

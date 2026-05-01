@@ -143,3 +143,33 @@ def test_phase_transition_forces_system_role_updates():
             for item in state["scribe_state"]["current_state"]["decisions"]
         )
         assert state["facilitator_signals"]
+
+
+def test_facilitator_cooldown_and_manual_request():
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = next(item for item in personas if item["name"] == "架构师")
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest facilitator cooldown", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        )
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+
+        for index in range(5):
+            assert client.post("/rooms/%s/messages" % room_id, json={"content": f"第一批讨论 {index}"}).status_code == 200
+        state = client.get("/rooms/%s/state" % room_id).json()
+        assert len(state["facilitator_signals"]) == 1
+        first_tag = state["facilitator_signals"][0]["signals"][0]["tag"]
+
+        for index in range(5):
+            assert client.post("/rooms/%s/messages" % room_id, json={"content": f"第二批讨论 {index}"}).status_code == 200
+        state = client.get("/rooms/%s/state" % room_id).json()
+        assert len(state["facilitator_signals"]) == 1
+        assert state["facilitator_signals"][0]["signals"][0]["tag"] == first_tag
+
+        manual = client.post("/rooms/%s/facilitator" % room_id)
+        assert manual.status_code == 200
+        assert len(manual.json()["facilitator_signals"]) == 2
