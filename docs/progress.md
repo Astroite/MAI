@@ -16,7 +16,7 @@
 | 冻结 + 快照 | ✅ 完整 | ✅ 完整 |
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
 | 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
-| 文档上传 | ✅ MD/TXT/PDF | ⚠️ 仅 input，无拖拽区 |
+| 文档上传 | ✅ MD/TXT/PDF | ✅ 拖拽上传区 |
 | 模板可视化编辑 | API 完整 | ⚠️ Persona / Phase / Format 创建完成；format 详情编辑仍缺 |
 | Limit 分层 | ✅ 单条 / 房间 / phase 轮次 / 账号日月预算 | ✅ LimitPanel 已可调整 |
 | Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
@@ -71,7 +71,7 @@
 - 模式切换 dropdown：normal / judge / dead_end / masquerade（含 reveal）
 - freeze / unfreeze、askFacilitator、Scribe / Facilitator 面板
 - 子讨论创建 + merge-back 表单
-- 文件上传（md/txt/pdf）→ user_doc 消息
+- 文件上传（md/txt/pdf）→ user_doc 消息，支持拖拽上传区
 - SSE useRoomEvents 处理 streaming / appended / scribe / facilitator / phase 事件
 - Markdown + KaTeX、暗色模式（Zustand 持久化）
 - 模板页 tag 筛选 + Format dnd-kit 顺序卡片编辑器（phase 库添加、拖拽排序、移除、保存 published）
@@ -110,7 +110,7 @@
 
 - [x] **代码高亮（shiki）** —— `MarkdownBlock` 通过 shiki `codeToHtml` 渲染 fenced code，主题随暗色模式切换。
 - [x] **Tag 筛选 UI** —— `TemplatesPage` 四个视图（personas / phases / formats / recipes）顶部加可点选 tag 过滤条，多 tag AND 过滤。
-- [ ] **拖拽上传区**：当前是 `<input type=file>`，需要拖入区域。
+- [x] **拖拽上传区**：Room 侧上传面板支持拖入或选择 md/txt/pdf，并保留冻结态禁用。
 - [ ] **Extended thinking 参数路由**：`LLMAdapter._build_extra_params` 在跨家差异处的实现（thinking budget / reasoning_effort）尚未填充（§7.3）。
 
 ### P4 · 测试覆盖补强
