@@ -3,7 +3,7 @@ import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { Download, GripVertical, Plus, Save, Trash2 } from "lucide-react";
+import { Download, GripVertical, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { DebateFormat, Persona, PersonaKind, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -47,20 +47,48 @@ function PersonasView() {
   const [tags, setTags] = useState("custom");
   const [systemPrompt, setSystemPrompt] = useState("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
   const [configText, setConfigText] = useState("{}");
+  const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
   const configValue = parseJsonObject(configText);
-  const create = useMutation({
+  const editingPersona = personas.data?.find((persona) => persona.id === editingPersonaId);
+  const personaPayload = () => ({
+    kind,
+    name,
+    description,
+    backing_model: backingModel,
+    system_prompt: systemPrompt,
+    temperature,
+    config: configValue.value,
+    tags: splitTags(tags)
+  });
+  const loadPersona = (persona: Persona) => {
+    setEditingPersonaId(persona.id);
+    setKind(persona.kind);
+    setName(persona.name);
+    setDescription(persona.description);
+    setBackingModel(persona.backing_model);
+    setTemperature(persona.temperature);
+    setTags(persona.tags.join(","));
+    setSystemPrompt(persona.system_prompt);
+    setConfigText(JSON.stringify(persona.config ?? {}, null, 2));
+  };
+  const resetPersonaForm = () => {
+    setEditingPersonaId(null);
+    setKind("discussant");
+    setName("自定义专家");
+    setDescription("从模板页创建的人设。");
+    setBackingModel("mock/generalist");
+    setTemperature(0.4);
+    setTags("custom");
+    setSystemPrompt("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
+    setConfigText("{}");
+  };
+  const save = useMutation({
     mutationFn: () =>
-      api.createPersona({
-        kind,
-        name,
-        description,
-        backing_model: backingModel,
-        system_prompt: systemPrompt,
-        temperature,
-        config: configValue.value,
-        tags: splitTags(tags)
-      }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["personas"] })
+      editingPersonaId ? api.updatePersona(editingPersonaId, personaPayload()) : api.createPersona(personaPayload()),
+    onSuccess: (saved) => {
+      loadPersona(saved);
+      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+    }
   });
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
@@ -72,7 +100,13 @@ function PersonasView() {
             <div key={persona.id} className="panel p-4">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-semibold">{persona.name}</h2>
-                <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
+                <div className="flex items-center gap-2">
+                  <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
+                  <button className="btn h-8 px-2 text-xs" type="button" onClick={() => loadPersona(persona)}>
+                    <Pencil size={14} />
+                    编辑
+                  </button>
+                </div>
               </div>
               <p className="mt-2 text-sm text-muted">{persona.description}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
@@ -86,7 +120,15 @@ function PersonasView() {
         </div>
       </div>
       <aside className="panel p-4">
-        <h2 className="font-semibold">新建人设</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">{editingPersonaId ? "编辑人设" : "新建人设"}</h2>
+          {editingPersonaId && (
+            <button className="btn h-8 px-2 text-xs" type="button" onClick={resetPersonaForm}>
+              <Plus size={14} />
+              新建
+            </button>
+          )}
+        </div>
         <div className="mt-4 space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
@@ -127,9 +169,9 @@ function PersonasView() {
             <textarea className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
           </label>
           {!configValue.ok && <div className="text-xs text-danger">Config 必须是 JSON object。</div>}
-          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || !systemPrompt.trim() || !configValue.ok || create.isPending}>
+          <button className="btn btn-primary w-full" onClick={() => save.mutate()} disabled={!name.trim() || !systemPrompt.trim() || !configValue.ok || save.isPending}>
             <Save size={16} />
-            保存人设
+            {editingPersona?.is_builtin ? "保存为副本" : editingPersonaId ? "保存修改" : "保存人设"}
           </button>
         </div>
       </aside>
@@ -140,6 +182,8 @@ function PersonasView() {
 interface FormatSlotDraft {
   id: string;
   phaseId: string;
+  phaseVersion?: number;
+  transitions?: Array<Record<string, unknown>>;
 }
 
 function FormatsView() {
@@ -152,25 +196,47 @@ function FormatsView() {
   const [tags, setTags] = useState("custom");
   const [phaseId, setPhaseId] = useState("");
   const [phaseSlots, setPhaseSlots] = useState<FormatSlotDraft[]>([]);
+  const [editingFormatId, setEditingFormatId] = useState<string | null>(null);
   const items = filterByTags(formats.data, selectedTags);
   const phaseById = useMemo(() => new Map((phases.data ?? []).map((phase) => [phase.id, phase])), [phases.data]);
-  const create = useMutation({
+  const editingFormat = formats.data?.find((format) => format.id === editingFormatId);
+  const formatPayload = () => ({
+    name,
+    description,
+    phase_sequence: phaseSlots.map((slot) => ({
+      phase_template_id: slot.phaseId,
+      phase_template_version: slot.phaseVersion ?? phaseById.get(slot.phaseId)?.version ?? 1,
+      transitions: slot.transitions ?? [{ condition: "always", target: "next" }]
+    })),
+    tags: splitTags(tags)
+  });
+  const loadFormat = (format: DebateFormat) => {
+    setEditingFormatId(format.id);
+    setName(format.name);
+    setDescription(format.description);
+    setTags(format.tags.join(","));
+    setPhaseSlots(
+      format.phase_sequence.map((slot) => ({
+        id: newSlotId(),
+        phaseId: slot.phase_template_id,
+        phaseVersion: slot.phase_template_version,
+        transitions: slot.transitions
+      }))
+    );
+  };
+  const resetFormatForm = () => {
+    setEditingFormatId(null);
+    setName("我的评审赛制");
+    setDescription("从模板页拖拽编排的讨论赛制。");
+    setTags("custom");
+    setPhaseId("");
+    setPhaseSlots([]);
+  };
+  const save = useMutation({
     mutationFn: () =>
-      api.createFormat({
-        name,
-        description,
-        phase_sequence: phaseSlots.map((slot) => ({
-          phase_template_id: slot.phaseId,
-          phase_template_version: phaseById.get(slot.phaseId)?.version ?? 1,
-          transitions: [{ condition: "always", target: "next" }]
-        })),
-        tags: splitTags(tags)
-      }),
-    onSuccess: () => {
-      setName("我的评审赛制");
-      setDescription("从模板页拖拽编排的讨论赛制。");
-      setTags("custom");
-      setPhaseSlots([]);
+      editingFormatId ? api.updateFormat(editingFormatId, formatPayload()) : api.createFormat(formatPayload()),
+    onSuccess: (saved) => {
+      loadFormat(saved);
       void queryClient.invalidateQueries({ queryKey: ["formats"] });
     }
   });
@@ -178,7 +244,10 @@ function FormatsView() {
   const addPhase = () => {
     const selectedPhaseId = phaseId || phases.data?.[0]?.id;
     if (!selectedPhaseId) return;
-    setPhaseSlots((current) => [...current, { id: newSlotId(), phaseId: selectedPhaseId }]);
+    setPhaseSlots((current) => [
+      ...current,
+      { id: newSlotId(), phaseId: selectedPhaseId, phaseVersion: phaseById.get(selectedPhaseId)?.version ?? 1 }
+    ]);
   };
 
   const onDragEnd = (event: DragEndEvent) => {
@@ -205,7 +274,13 @@ function FormatsView() {
                   <h2 className="font-semibold">{format.name}</h2>
                   <p className="mt-1 text-sm text-muted">{format.description}</p>
                 </div>
-                <StatusPill tone={format.is_builtin ? "brand" : "accent"}>{format.phase_sequence.length} phases</StatusPill>
+                <div className="flex items-center gap-2">
+                  <StatusPill tone={format.is_builtin ? "brand" : "accent"}>{format.phase_sequence.length} phases</StatusPill>
+                  <button className="btn h-8 px-2 text-xs" type="button" onClick={() => loadFormat(format)}>
+                    <Pencil size={14} />
+                    编辑
+                  </button>
+                </div>
               </div>
               <ol className="mt-3 space-y-1 text-sm text-muted">
                 {format.phase_sequence.slice(0, 5).map((slot, index) => (
@@ -228,7 +303,15 @@ function FormatsView() {
         </div>
       </div>
       <aside className="panel p-4">
-        <h2 className="font-semibold">新建赛制</h2>
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">{editingFormatId ? "编辑赛制" : "新建赛制"}</h2>
+          {editingFormatId && (
+            <button className="btn h-8 px-2 text-xs" type="button" onClick={resetFormatForm}>
+              <Plus size={14} />
+              新建
+            </button>
+          )}
+        </div>
         <div className="mt-4 space-y-3">
           <label className="block">
             <span className="label">名称</span>
@@ -275,9 +358,9 @@ function FormatsView() {
               </SortableContext>
             </DndContext>
           </div>
-          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || phaseSlots.length === 0 || create.isPending}>
+          <button className="btn btn-primary w-full" onClick={() => save.mutate()} disabled={!name.trim() || phaseSlots.length === 0 || save.isPending}>
             <Save size={16} />
-            保存赛制
+            {editingFormat?.is_builtin ? "保存为副本" : editingFormatId ? "保存修改" : "保存赛制"}
           </button>
         </div>
       </aside>

@@ -82,6 +82,71 @@ def test_create_debate_format():
         assert any(item["id"] == payload["id"] for item in formats)
 
 
+def test_update_persona_and_format_templates():
+    with TestClient(app) as client:
+        persona = client.post(
+            "/templates/personas",
+            json={
+                "kind": "discussant",
+                "name": "pytest editable persona",
+                "description": "before",
+                "backing_model": "mock/generalist",
+                "system_prompt": "before prompt",
+                "temperature": 0.4,
+                "config": {},
+                "tags": ["pytest"],
+            },
+        ).json()
+        updated_persona = client.patch(
+            f"/templates/personas/{persona['id']}",
+            json={
+                "name": "pytest edited persona",
+                "description": "after",
+                "config": {"deep_thinking": True},
+                "tags": ["pytest", "edited"],
+            },
+        )
+        assert updated_persona.status_code == 200
+        persona_payload = updated_persona.json()
+        assert persona_payload["id"] == persona["id"]
+        assert persona_payload["version"] == 2
+        assert persona_payload["name"] == "pytest edited persona"
+        assert persona_payload["config"]["deep_thinking"] is True
+
+        builtin_persona = next(item for item in client.get("/templates/personas").json() if item["is_builtin"])
+        forked_persona = client.patch(
+            f"/templates/personas/{builtin_persona['id']}",
+            json={"name": "pytest forked builtin persona", "tags": ["pytest", "fork"]},
+        ).json()
+        assert forked_persona["id"] != builtin_persona["id"]
+        assert forked_persona["forked_from_id"] == builtin_persona["id"]
+        assert forked_persona["is_builtin"] is False
+
+        phases = client.get("/templates/phases").json()
+        debate_format = client.post(
+            "/templates/formats",
+            json={
+                "name": "pytest editable format",
+                "description": "before",
+                "phase_sequence": [{"phase_template_id": phases[0]["id"], "phase_template_version": phases[0]["version"]}],
+                "tags": ["pytest"],
+            },
+        ).json()
+        updated_format = client.patch(
+            f"/templates/formats/{debate_format['id']}",
+            json={
+                "name": "pytest edited format",
+                "phase_sequence": [{"phase_template_id": phases[1]["id"], "phase_template_version": phases[1]["version"]}],
+                "tags": ["pytest", "edited"],
+            },
+        )
+        assert updated_format.status_code == 200
+        format_payload = updated_format.json()
+        assert format_payload["id"] == debate_format["id"]
+        assert format_payload["version"] == 2
+        assert format_payload["phase_sequence"][0]["phase_template_id"] == phases[1]["id"]
+
+
 def test_layered_limit_update_and_phase_round_exit():
     with TestClient(app) as client:
         personas = client.get("/templates/personas?kind=discussant").json()

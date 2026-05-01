@@ -2,12 +2,14 @@ export type PersonaKind = "discussant" | "scribe" | "facilitator";
 
 export interface Persona {
   id: string;
+  version: number;
   kind: PersonaKind;
   name: string;
   description: string;
   backing_model: string;
   system_prompt: string;
   temperature: number;
+  config: Record<string, unknown>;
   tags: string[];
   is_builtin: boolean;
 }

@@ -17,7 +17,7 @@
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
 | 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
 | 文档上传 | ✅ MD/TXT/PDF | ✅ 拖拽上传区 |
-| 模板可视化编辑 | API 完整 | ⚠️ Persona / Phase / Format 创建完成；format / persona 详情编辑仍缺 |
+| 模板可视化编辑 | API 完整 | ✅ Persona / Phase / Format 创建完成；Persona / Format 详情编辑完成 |
 | Limit 分层 | ✅ 单条 / 房间 / phase 轮次 / 账号日月预算 | ✅ LimitPanel 已可调整 |
 | Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
 | Trace | ✅ 写入完整 | — (v1 不做查询 UI) |
@@ -50,7 +50,7 @@
 
 ### 2.3 REST 端点（`backend/app/main.py`）
 
-模板 CRUD + export、房间 CRUD、`/turn`、`/verdicts`（含 revoke 与 dead_end）、`/masquerade`、`/messages/{id}/reveal`、`/facilitator`（on-demand）、`/phase/next` `/phase/continue` `/phase/insert`、`/limits` PATCH、`/freeze` `/unfreeze`、`/events` SSE、`/upload` + `/messages/from_upload`、`/subrooms` + `/merge_back`。
+模板 CRUD + export、房间 CRUD、`/turn`、`/verdicts`（含 revoke 与 dead_end）、`/masquerade`、`/messages/{id}/reveal`、`/facilitator`（on-demand）、`/phase/next` `/phase/continue` `/phase/insert`、`/limits` PATCH、`/freeze` `/unfreeze`、`/events` SSE、`/upload` + `/messages/from_upload`、`/subrooms` + `/merge_back`。Persona / Format 模板支持 PATCH：自定义模板原地更新并递增 version，内置模板保存时自动 fork。
 
 ### 2.4 内置数据（`seed.py`）
 
@@ -78,12 +78,13 @@
 - Markdown + KaTeX、暗色模式（Zustand 持久化）
 - 模板页 tag 筛选 + Format dnd-kit 顺序卡片编辑器（phase 库添加、拖拽排序、移除、保存 published）
 - Persona 创建表单：kind、model、temperature、system_prompt、config JSON、tags 可配置
+- Persona / Format 卡片详情编辑：复用右侧表单，保存内置模板时自动生成自定义副本
 - Phase 字段编辑器：allowed_speakers、ordering_rule、exit_conditions、role_constraints、prompt_template 可视化创建
 - 房间侧 LimitPanel 已支持单条 / 房间 / phase 轮次 / 账号日月 budget 调整
 
 ### 2.7 测试
 
-`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、断线重连 partial、parallel 多路 in-flight、deep thinking 参数路由。
+`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、断线重连 partial、parallel 多路 in-flight、模板 PATCH / fork、deep thinking 参数路由。
 
 ---
 
@@ -105,7 +106,7 @@
 - [x] **`message.cancelled` SSE** —— `hooks.ts` 在 cancelled 上 clearStream + invalidate query。
 - [x] **parallel 模式多气泡渲染**：后端 parallel ordering 为每个 persona 开独立 LLM stream / `InFlightCall`，`/state` 返回多个 partial；前端按 room + `message_id` 路由并同时显示多个 "正在发言" 气泡（§8.8）。
 - [x] **persona 创建 UI**：模板页可新建 discussant / scribe / facilitator，并配置 backing_model、temperature、system_prompt、config JSON、tags。
-- [ ] **format / persona 详情编辑 UI**：format、persona 已能创建，但还缺已有模板的详情编辑。
+- [x] **format / persona 详情编辑 UI**：Persona / Format 卡片可载入右侧表单编辑；自定义模板 PATCH 原地更新，内置模板保存为 fork 副本。
 - [x] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端 hydrate streaming 气泡并按 `chunk_index` dedupe（§8.4）。
 
 ### P3 · 打磨
@@ -130,7 +131,7 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Persona 创建、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。剩余 P2/P3 主要是 format/persona 详情编辑。
+**前端**：P1 / P2 / P3 已清；决议锁、代码高亮、tag 筛选、Persona 创建与编辑、Format 顺序卡片编辑与详情编辑、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。后续主要是 P4 测试覆盖补强。
 
 附加场景（自定义 phase + 导出）：列表筛选 + Phase 字段表单 + Format 顺序模板可走通。
 

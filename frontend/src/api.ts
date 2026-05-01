@@ -26,9 +26,13 @@ export const api = {
   ) => request<RoomState>(`/rooms/${roomId}/subrooms`, { method: "POST", body: JSON.stringify(body) }),
   personas: (kind?: string) => request<Persona[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
   createPersona: (body: unknown) => request<Persona>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
+  updatePersona: (personaId: string, body: unknown) =>
+    request<Persona>(`/templates/personas/${personaId}`, { method: "PATCH", body: JSON.stringify(body) }),
   phases: () => request<PhaseTemplate[]>("/templates/phases"),
   formats: () => request<DebateFormat[]>("/templates/formats"),
   createFormat: (body: unknown) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),
+  updateFormat: (formatId: string, body: unknown) =>
+    request<DebateFormat>(`/templates/formats/${formatId}`, { method: "PATCH", body: JSON.stringify(body) }),
   recipes: () => request<Recipe[]>("/templates/recipes"),
   createRecipe: (body: unknown) => request<Recipe>("/templates/recipes", { method: "POST", body: JSON.stringify(body) }),
   createPhase: (body: unknown) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),

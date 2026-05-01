@@ -46,6 +46,7 @@ from .schemas import (
     AddPersonasRequest,
     DebateFormatCreate,
     DebateFormatOut,
+    DebateFormatUpdate,
     DecisionLockUpdate,
     DecisionOut,
     FacilitatorSignalOut,
@@ -59,6 +60,7 @@ from .schemas import (
     MessageOut,
     PersonaCreate,
     PersonaOut,
+    PersonaUpdate,
     PhaseTemplateCreate,
     PhaseTemplateOut,
     PhaseTransitionRequest,
@@ -136,6 +138,42 @@ async def create_persona(body: PersonaCreate, session: AsyncSession = Depends(ge
     return persona
 
 
+@app.patch("/templates/personas/{persona_id}", response_model=PersonaOut)
+async def update_persona(persona_id: str, body: PersonaUpdate, session: AsyncSession = Depends(get_session)):
+    persona = await session.get(Persona, persona_id)
+    if not persona:
+        raise HTTPException(404, "persona not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if not changes:
+        return persona
+    if persona.is_builtin:
+        persona = Persona(
+            id=new_id(),
+            version=1,
+            schema_version=persona.schema_version,
+            status="published",
+            forked_from_id=persona.id,
+            forked_from_version=persona.version,
+            is_builtin=False,
+            kind=persona.kind,
+            name=persona.name,
+            description=persona.description,
+            backing_model=persona.backing_model,
+            system_prompt=persona.system_prompt,
+            temperature=persona.temperature,
+            config=persona.config,
+            tags=persona.tags,
+        )
+        session.add(persona)
+    else:
+        persona.version += 1
+    for key, value in changes.items():
+        setattr(persona, key, value)
+    await session.commit()
+    await session.refresh(persona)
+    return persona
+
+
 @app.get("/templates/phases", response_model=list[PhaseTemplateOut])
 async def list_phases(session: AsyncSession = Depends(get_session)):
     return (await session.scalars(select(PhaseTemplate).order_by(PhaseTemplate.is_builtin.desc(), PhaseTemplate.name))).all()
@@ -193,6 +231,38 @@ async def create_format(body: DebateFormatCreate, session: AsyncSession = Depend
         **body.model_dump(mode="json"),
     )
     session.add(debate_format)
+    await session.commit()
+    await session.refresh(debate_format)
+    return debate_format
+
+
+@app.patch("/templates/formats/{format_id}", response_model=DebateFormatOut)
+async def update_format(format_id: str, body: DebateFormatUpdate, session: AsyncSession = Depends(get_session)):
+    debate_format = await session.get(DebateFormat, format_id)
+    if not debate_format:
+        raise HTTPException(404, "format not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if not changes:
+        return debate_format
+    if debate_format.is_builtin:
+        debate_format = DebateFormat(
+            id=new_id(),
+            version=1,
+            schema_version=debate_format.schema_version,
+            status="published",
+            forked_from_id=debate_format.id,
+            forked_from_version=debate_format.version,
+            is_builtin=False,
+            name=debate_format.name,
+            description=debate_format.description,
+            phase_sequence=debate_format.phase_sequence,
+            tags=debate_format.tags,
+        )
+        session.add(debate_format)
+    else:
+        debate_format.version += 1
+    for key, value in changes.items():
+        setattr(debate_format, key, value)
     await session.commit()
     await session.refresh(debate_format)
     return debate_format

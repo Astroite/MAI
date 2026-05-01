@@ -139,6 +139,17 @@ class PersonaCreate(APIModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class PersonaUpdate(APIModel):
+    kind: Literal["discussant", "scribe", "facilitator"] | None = None
+    name: str | None = None
+    description: str | None = None
+    backing_model: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = None
+    config: dict[str, Any] | None = None
+    tags: list[str] | None = None
+
+
 class PhaseTemplateOut(APIModel):
     id: str
     version: int
@@ -195,6 +206,13 @@ class DebateFormatCreate(APIModel):
     description: str = ""
     phase_sequence: list[FormatPhaseSlot] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
+
+
+class DebateFormatUpdate(APIModel):
+    name: str | None = None
+    description: str | None = None
+    phase_sequence: list[FormatPhaseSlot] | None = None
+    tags: list[str] | None = None
 
 
 class RecipeOut(APIModel):
