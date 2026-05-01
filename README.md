@@ -2,6 +2,38 @@
 
 This repository contains a v1 development implementation following the product and technical design documents in `docs/`.
 
+## Current Status
+
+The app currently runs as a FastAPI backend plus a Vite React frontend. The default mode is deterministic `MOCK_LLM=true`, so the full room, phase, scribe, facilitator, verdict, masquerade, upload, and sub-room flow can be developed without provider API keys.
+
+Recent backend support includes:
+
+- LiteLLM-backed streaming responses when `MOCK_LLM=false`
+- structured tool-call outputs for scribe and facilitator roles
+- phase and ScribeState context injected into AI turns
+- facilitator signal cooldown plus a manual "ask facilitator" endpoint
+
+## Prerequisites
+
+- Python 3.12
+- Node.js 20+ with `pnpm`
+- PostgreSQL reachable at `DATABASE_URL`
+
+The development database used by `.env.example` is:
+
+```text
+postgresql+asyncpg://mai:mai_dev_password@localhost:5432/mai
+```
+
+If the database/user do not exist yet:
+
+```bash
+sudo -u postgres psql
+CREATE USER mai WITH PASSWORD 'mai_dev_password';
+CREATE DATABASE mai OWNER mai;
+\q
+```
+
 ## Local Development
 
 Backend:
@@ -24,11 +56,77 @@ pnpm install
 pnpm dev --host 0.0.0.0 --port 5173
 ```
 
-Default database URL:
+Open the frontend at:
 
 ```text
-postgresql+asyncpg://mai:mai_dev_password@localhost:5432/mai
+http://localhost:5173
 ```
 
-The backend defaults to `MOCK_LLM=true`, so the app can be developed without provider API keys. Set `MOCK_LLM=false` and use LiteLLM-compatible model/API key environment variables for real provider calls.
+The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
 
+## Real LLM Mode
+
+The backend calls real providers through LiteLLM. To switch out of mock mode:
+
+1. Edit `backend/.env`.
+2. Set `MOCK_LLM=false`.
+3. Set provider keys used by your personas, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`.
+4. Create or update personas so `backing_model` uses a LiteLLM-compatible model string, for example `openai/<model-name>`, `anthropic/<model-name>`, or `gemini/<model-name>`.
+5. Restart `uvicorn`.
+
+Built-in personas intentionally use `mock/...` backing models. Even when `MOCK_LLM=false`, a persona whose `backing_model` starts with `mock/` will still use deterministic local output. This lets you mix real and mock personas in the same development database.
+
+Create a real discussant persona with the API:
+
+```bash
+curl -X POST http://127.0.0.1:8000/templates/personas \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "kind": "discussant",
+    "name": "Real Model Reviewer",
+    "description": "Uses a real provider through LiteLLM.",
+    "backing_model": "openai/<model-name>",
+    "system_prompt": "You are a concise technical reviewer.",
+    "temperature": 0.4,
+    "tags": ["real-model"]
+  }'
+```
+
+Then create a room with that persona selected from the UI or via `POST /rooms`.
+
+## Verification
+
+Backend tests:
+
+```bash
+cd backend
+source .venv/bin/activate
+pytest -q
+```
+
+Frontend build:
+
+```bash
+cd frontend
+pnpm build
+```
+
+The frontend build currently emits a Vite chunk-size warning because the Markdown/KaTeX/Shiki bundle is large. It is not a build failure.
+
+## Runtime Data
+
+Local runtime files are written under the backend working directory:
+
+- `trace_payloads/` stores JSON payloads referenced by `trace_events`
+- `uploads/` stores uploaded MD/TXT/PDF files
+
+Both directories are ignored by Git.
+
+## Common Issues
+
+| Symptom | Check |
+|---|---|
+| `health` reports database failure | PostgreSQL is running and `DATABASE_URL` matches the created user/database |
+| Real model call still returns mock text | `MOCK_LLM=false` and the selected persona `backing_model` does not start with `mock/` |
+| Provider authentication error | The matching provider API key is present in `backend/.env` and the backend was restarted |
+| Browser cannot reach backend | Frontend is running on port 5173 and backend on port 8000, or `VITE_API_BASE` points to the deployed API |
