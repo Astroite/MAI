@@ -73,6 +73,7 @@
 - 子讨论创建 + merge-back 表单
 - 文件上传（md/txt/pdf）→ user_doc 消息，支持拖拽上传区
 - SSE useRoomEvents 处理 streaming / appended / scribe / facilitator / phase 事件
+- 断线重连：`/rooms/{id}/state` 返回 `in_flight_partial`，前端恢复 partial 并按 `chunk_index` 去重
 - Markdown + KaTeX、暗色模式（Zustand 持久化）
 - 模板页 tag 筛选 + Format dnd-kit 顺序卡片编辑器（phase 库添加、拖拽排序、移除、保存 published）
 - Persona 创建表单：kind、model、temperature、system_prompt、config JSON、tags 可配置
@@ -104,7 +105,7 @@
 - [ ] **parallel 模式多气泡渲染**：后端可并行 stream，前端目前只单流；按 §8.8 同时显示多个 "正在打字"。
 - [x] **persona 创建 UI**：模板页可新建 discussant / scribe / facilitator，并配置 backing_model、temperature、system_prompt、config JSON、tags。
 - [ ] **format / persona 详情编辑 UI**：format、persona 已能创建，但还缺已有模板的详情编辑。
-- [ ] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端按 `chunk_index` dedupe（§8.4）。
+- [x] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端 hydrate streaming 气泡并按 `chunk_index` dedupe（§8.4）。
 
 ### P3 · 打磨
 

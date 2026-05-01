@@ -36,8 +36,14 @@ export function RoomPage() {
   const [speakerId, setSpeakerId] = useState("");
   const [insertPhaseId, setInsertPhaseId] = useState("");
   const state = room.data;
+  const hydrateStream = useUIStore((store) => store.hydrateStream);
   const discussants = useMemo(() => state?.personas.filter((p) => p.kind === "discussant") ?? [], [state]);
   const currentPhaseTemplate = phases.data?.find((phase) => phase.id === state?.current_phase?.phase_template_id);
+  useEffect(() => {
+    for (const partial of state?.in_flight_partial ?? []) {
+      hydrateStream(partial.message_id, partial.persona_id, partial.content, partial.last_chunk_index);
+    }
+  }, [hydrateStream, state?.in_flight_partial]);
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", activeRoomId] });
   const runTurn = useMutation({ mutationFn: () => api.runTurn(activeRoomId!, speakerId || undefined), onSuccess: invalidate });

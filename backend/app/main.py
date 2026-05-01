@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from .config import get_settings
 from .db import create_schema, get_session
 from .engine import (
+    ACTIVE_CALLS,
     DEFAULT_SCRIBE_STATE,
     after_message_appended,
     append_verdict,
@@ -49,6 +50,7 @@ from .schemas import (
     DecisionOut,
     FacilitatorSignalOut,
     FromUploadRequest,
+    InFlightPartialOut,
     InsertPhaseRequest,
     LimitUpdate,
     MasqueradeCreate,
@@ -712,6 +714,18 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
     decisions = (
         await session.scalars(select(Decision).where(Decision.room_id == room_id).order_by(Decision.created_at))
     ).all()
+    active_call = ACTIVE_CALLS.get(room_id)
+    in_flight_partial = []
+    if active_call and active_call.partial_text:
+        in_flight_partial.append(
+            InFlightPartialOut(
+                message_id=active_call.message_id,
+                persona_id=active_call.persona_id,
+                content=active_call.partial_text,
+                last_chunk_index=active_call.last_chunk_index,
+                cumulative_tokens_estimate=max(1, len(active_call.partial_text) // 4),
+            )
+        )
     return RoomState(
         room=RoomOut.model_validate(room),
         runtime=RoomRuntimeOut.model_validate(runtime),
@@ -722,6 +736,7 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         scribe_state=ScribeStateOut.model_validate(scribe_state),
         facilitator_signals=[FacilitatorSignalOut.model_validate(s) for s in signals],
         decisions=[DecisionOut.model_validate(d) for d in decisions],
+        in_flight_partial=in_flight_partial,
     )
 
 

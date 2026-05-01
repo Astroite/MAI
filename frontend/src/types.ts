@@ -156,6 +156,15 @@ export interface RoomState {
   };
   facilitator_signals: FacilitatorSignal[];
   decisions: Decision[];
+  in_flight_partial: InFlightPartial[];
+}
+
+export interface InFlightPartial {
+  message_id: string;
+  persona_id: string;
+  content: string;
+  last_chunk_index: number;
+  cumulative_tokens_estimate: number;
 }
 
 export interface StreamingEvent {

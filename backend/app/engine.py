@@ -59,8 +59,15 @@ class NextSpeakerResult:
 class InFlightCall:
     room_id: str
     message_id: str
+    persona_id: str
     task: asyncio.Task
     cancel_reason: str | None = None
+    partial_text: str = ""
+    last_chunk_index: int = -1
+
+    def append_chunk(self, text: str, index: int) -> None:
+        self.partial_text += text
+        self.last_chunk_index = max(self.last_chunk_index, index)
 
     def cancel(self, reason: str) -> None:
         self.cancel_reason = reason
@@ -268,7 +275,7 @@ async def _stream_one_message(
     task = asyncio.current_task()
     if task is None:
         raise RuntimeError("streaming requires an asyncio task")
-    call = InFlightCall(room_id=room.id, message_id=tmp_message_id, task=task)
+    call = InFlightCall(room_id=room.id, message_id=tmp_message_id, persona_id=persona.id, task=task)
     ACTIVE_CALLS[room.id] = call
 
     await trace_record(
@@ -300,6 +307,7 @@ async def _stream_one_message(
                 break
             partial += chunk.text
             chunk_count += 1
+            call.append_chunk(chunk.text, chunk.index)
             await event_bus.publish(
                 room.id,
                 {

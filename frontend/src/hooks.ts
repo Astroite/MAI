@@ -21,7 +21,7 @@ export function useRoomEvents(roomId?: string) {
         if (!event.data) return;
         const payload = JSON.parse(event.data) as EventPayload;
         if (payload.type === "message.streaming" && payload.message_id && payload.persona_id && payload.chunk_text) {
-          appendChunk(payload.message_id, payload.persona_id, payload.chunk_text);
+          appendChunk(payload.message_id, payload.persona_id, payload.chunk_text, payload.chunk_index);
         }
         if (payload.type === "message.appended" || payload.type === "message.cancelled") {
           const id = payload.message_id ?? payload.message?.id;

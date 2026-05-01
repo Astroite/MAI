@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app import engine as engine_module
 from app.db import SessionLocal
-from app.engine import ACTIVE_CALLS
+from app.engine import ACTIVE_CALLS, InFlightCall
 from app.llm import llm_adapter
 from app.main import app
 from app.models import Decision
@@ -163,6 +163,37 @@ def test_room_message_and_mock_turn():
         assert merge.status_code == 200
         parent_state = client.get("/rooms/%s/state" % room_id).json()
         assert any("子讨论合并结论" in message["content"] for message in parent_state["messages"])
+
+
+def test_room_state_exposes_in_flight_partial():
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = personas[0]
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest reconnect", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        ).json()
+        room_id = room["room"]["id"]
+        ACTIVE_CALLS[room_id] = InFlightCall(
+            room_id=room_id,
+            message_id="msg-reconnect",
+            persona_id=speaker["id"],
+            task=object(),
+            partial_text="partial answer",
+            last_chunk_index=3,
+        )
+        try:
+            state = client.get(f"/rooms/{room_id}/state")
+            assert state.status_code == 200
+            partial = state.json()["in_flight_partial"][0]
+            assert partial["message_id"] == "msg-reconnect"
+            assert partial["persona_id"] == speaker["id"]
+            assert partial["content"] == "partial answer"
+            assert partial["last_chunk_index"] == 3
+        finally:
+            ACTIVE_CALLS.pop(room_id, None)
 
 
 def test_structured_scribe_and_facilitator_tools():

@@ -445,6 +445,14 @@ class MergeBackCreate(APIModel):
     artifacts_ref: dict[str, Any] = Field(default_factory=dict)
 
 
+class InFlightPartialOut(APIModel):
+    message_id: str
+    persona_id: str
+    content: str
+    last_chunk_index: int
+    cumulative_tokens_estimate: int
+
+
 class RoomState(APIModel):
     room: RoomOut
     runtime: RoomRuntimeOut
@@ -455,3 +463,4 @@ class RoomState(APIModel):
     scribe_state: ScribeStateOut
     facilitator_signals: list[FacilitatorSignalOut]
     decisions: list[DecisionOut] = Field(default_factory=list)
+    in_flight_partial: list[InFlightPartialOut] = Field(default_factory=list)
