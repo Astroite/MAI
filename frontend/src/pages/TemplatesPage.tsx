@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
 import { Download, GripVertical, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api";
-import type { DebateFormat, Persona, PhaseTemplate, Recipe } from "../types";
+import type { DebateFormat, Persona, PersonaKind, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
 
 export function TemplatesPage() {
@@ -35,30 +35,104 @@ function TemplateNav({ to, label }: { to: string; label: string }) {
 }
 
 function PersonasView() {
+  const queryClient = useQueryClient();
   const personas = useQuery({ queryKey: ["personas"], queryFn: () => api.personas() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(personas.data, selectedTags);
+  const [kind, setKind] = useState<PersonaKind>("discussant");
+  const [name, setName] = useState("自定义专家");
+  const [description, setDescription] = useState("从模板页创建的人设。");
+  const [backingModel, setBackingModel] = useState("mock/generalist");
+  const [temperature, setTemperature] = useState(0.4);
+  const [tags, setTags] = useState("custom");
+  const [systemPrompt, setSystemPrompt] = useState("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
+  const [configText, setConfigText] = useState("{}");
+  const configValue = parseJsonObject(configText);
+  const create = useMutation({
+    mutationFn: () =>
+      api.createPersona({
+        kind,
+        name,
+        description,
+        backing_model: backingModel,
+        system_prompt: systemPrompt,
+        temperature,
+        config: configValue.value,
+        tags: splitTags(tags)
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["personas"] })
+  });
   return (
-    <section className="space-y-3">
-      <Header title="人设模板" />
-      <TagFilterBar items={personas.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
-      <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
-        {items.map((persona: Persona) => (
-          <div key={persona.id} className="panel p-4">
-            <div className="flex items-center justify-between gap-2">
-              <h2 className="font-semibold">{persona.name}</h2>
-              <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
+    <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
+      <div className="space-y-3">
+        <Header title="人设模板" />
+        <TagFilterBar items={personas.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
+        <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
+          {items.map((persona: Persona) => (
+            <div key={persona.id} className="panel p-4">
+              <div className="flex items-center justify-between gap-2">
+                <h2 className="font-semibold">{persona.name}</h2>
+                <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
+              </div>
+              <p className="mt-2 text-sm text-muted">{persona.description}</p>
+              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+                <span>{persona.backing_model}</span>
+                {persona.tags.map((tag) => (
+                  <StatusPill key={tag}>{tag}</StatusPill>
+                ))}
+              </div>
             </div>
-            <p className="mt-2 text-sm text-muted">{persona.description}</p>
-            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
-              <span>{persona.backing_model}</span>
-              {persona.tags.map((tag) => (
-                <StatusPill key={tag}>{tag}</StatusPill>
-              ))}
-            </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
+      <aside className="panel p-4">
+        <h2 className="font-semibold">新建人设</h2>
+        <div className="mt-4 space-y-3">
+          <div className="grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="label">Kind</span>
+              <select className="input mt-1 w-full" value={kind} onChange={(event) => setKind(event.target.value as PersonaKind)}>
+                <option value="discussant">discussant</option>
+                <option value="scribe">scribe</option>
+                <option value="facilitator">facilitator</option>
+              </select>
+            </label>
+            <label className="block">
+              <span className="label">Temperature</span>
+              <input className="input mt-1 w-full" type="number" min={0} max={2} step={0.1} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
+            </label>
+          </div>
+          <label className="block">
+            <span className="label">名称</span>
+            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">描述</span>
+            <textarea className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Backing Model</span>
+            <input className="input mt-1 w-full" value={backingModel} onChange={(event) => setBackingModel(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Tags</span>
+            <input className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">System Prompt</span>
+            <textarea className="textarea mt-1 w-full" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} />
+          </label>
+          <label className="block">
+            <span className="label">Config JSON</span>
+            <textarea className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
+          </label>
+          {!configValue.ok && <div className="text-xs text-danger">Config 必须是 JSON object。</div>}
+          <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || !systemPrompt.trim() || !configValue.ok || create.isPending}>
+            <Save size={16} />
+            保存人设
+          </button>
+        </div>
+      </aside>
     </section>
   );
 }
@@ -552,6 +626,18 @@ function buildExitConditions(options: {
   if (options.tokenBudgetExit) conditions.push({ type: "token_budget", max: Math.max(1, options.tokenBudget) });
   if (options.facilitatorExit) conditions.push({ type: "facilitator_suggests", trigger_if: splitTags(options.facilitatorTags) });
   return conditions;
+}
+
+function parseJsonObject(value: string): { ok: true; value: Record<string, unknown> } | { ok: false; value: Record<string, unknown> } {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return { ok: true, value: parsed as Record<string, unknown> };
+    }
+  } catch {
+    return { ok: false, value: {} };
+  }
+  return { ok: false, value: {} };
 }
 
 function splitTags(value: string): string[] {

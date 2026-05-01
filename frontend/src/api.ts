@@ -25,6 +25,7 @@ export const api = {
     body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }
   ) => request<RoomState>(`/rooms/${roomId}/subrooms`, { method: "POST", body: JSON.stringify(body) }),
   personas: (kind?: string) => request<Persona[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
+  createPersona: (body: unknown) => request<Persona>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
   phases: () => request<PhaseTemplate[]>("/templates/phases"),
   formats: () => request<DebateFormat[]>("/templates/formats"),
   createFormat: (body: unknown) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),

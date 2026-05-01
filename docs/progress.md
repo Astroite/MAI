@@ -17,7 +17,7 @@
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
 | 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
 | 文档上传 | ✅ MD/TXT/PDF | ⚠️ 仅 input，无拖拽区 |
-| 模板可视化编辑 | API 完整 | ⚠️ Format / Phase 创建可视化完成；persona / format 详情编辑仍缺 |
+| 模板可视化编辑 | API 完整 | ⚠️ Persona / Phase / Format 创建完成；format 详情编辑仍缺 |
 | Limit 分层 | ✅ 单条 / 房间 / phase 轮次 / 账号日月预算 | ✅ LimitPanel 已可调整 |
 | Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
 | Trace | ✅ 写入完整 | — (v1 不做查询 UI) |
@@ -75,6 +75,7 @@
 - SSE useRoomEvents 处理 streaming / appended / scribe / facilitator / phase 事件
 - Markdown + KaTeX、暗色模式（Zustand 持久化）
 - 模板页 tag 筛选 + Format dnd-kit 顺序卡片编辑器（phase 库添加、拖拽排序、移除、保存 published）
+- Persona 创建表单：kind、model、temperature、system_prompt、config JSON、tags 可配置
 - Phase 字段编辑器：allowed_speakers、ordering_rule、exit_conditions、role_constraints、prompt_template 可视化创建
 - 房间侧 LimitPanel 已支持单条 / 房间 / phase 轮次 / 账号日月 budget 调整
 
@@ -93,7 +94,7 @@
 ### P1 · v1 验收剧本必经
 
 - [x] **Format 顺序卡片编辑器**：赛制页已支持从 phase 库添加、dnd-kit 拖拽排序、移除 phase，并通过 `POST /templates/formats` 保存为 published。
-- [x] **Phase 卡内完整字段编辑器**：新建 Phase 已可配置 allowed_speakers / ordering_rule / exit_conditions / role_constraints / prompt_template；persona 仍只读，归入 P2。
+- [x] **Phase 卡内完整字段编辑器**：新建 Phase 已可配置 allowed_speakers / ordering_rule / exit_conditions / role_constraints / prompt_template。
 - [x] **Limit 分层补齐**：`RoomRuntimeState` 补齐 `max_phase_rounds`、账号日 / 月 token budget；UI 可调；phase 轮次会触发退出建议，接近阈值时副手主动追加 `pacing_warning`。
 
 ### P2 · 完整体验
@@ -101,7 +102,8 @@
 - [x] **决议锁定 / 解锁 UI** —— 新增 `PATCH /rooms/{id}/decisions/{id}`、`DecisionsPanel`，锁定动作 append meta 消息保留审计；覆盖测试 `test_decision_lock_toggle_creates_audit_meta`。
 - [x] **`message.cancelled` SSE** —— `hooks.ts` 在 cancelled 上 clearStream + invalidate query。
 - [ ] **parallel 模式多气泡渲染**：后端可并行 stream，前端目前只单流；按 §8.8 同时显示多个 "正在打字"。
-- [ ] **persona 创建编辑 UI + format 详情编辑 UI**：format 已能创建顺序模板，但还缺已有 format 的详情编辑；persona 仍只能走 API。
+- [x] **persona 创建 UI**：模板页可新建 discussant / scribe / facilitator，并配置 backing_model、temperature、system_prompt、config JSON、tags。
+- [ ] **format / persona 详情编辑 UI**：format、persona 已能创建，但还缺已有模板的详情编辑。
 - [ ] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端按 `chunk_index` dedupe（§8.4）。
 
 ### P3 · 打磨
@@ -126,7 +128,7 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层已落地。剩余 P2/P3 主要是 parallel 多气泡、persona/format 详情编辑、断线重连和上传拖拽区。
+**前端**：P1 必经项已清；决议锁、代码高亮、tag 筛选、Persona 创建、Format 顺序卡片编辑器、Phase 字段编辑器、Limit 分层已落地。剩余 P2/P3 主要是 parallel 多气泡、format/persona 详情编辑、断线重连和上传拖拽区。
 
 附加场景（自定义 phase + 导出）：列表筛选 + Phase 字段表单 + Format 顺序模板可走通。
 
