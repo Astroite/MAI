@@ -12,12 +12,14 @@
 | 数据模型 / Schema | ✅ 完整 | ✅ 类型已镜像 |
 | 引擎调度 / Phase FSM | ✅ 完整 | — |
 | 系统级角色（书记官 / 副手） | ✅ 完整 | ✅ 面板已渲染 |
-| 流式 + SSE | ✅ 落库 + 取消 | ⚠️ 缺 `message.cancelled` 处理 |
+| 流式 + SSE | ✅ 含 30s 空闲超时 | ✅ 含 `message.cancelled` 处理 |
 | 冻结 + 快照 | ✅ 完整 | ✅ 完整 |
 | 子讨论 + merge-back | ✅ 完整 | ✅ 完整 |
+| 决议锁定 | ✅ PATCH + audit meta | ✅ DecisionsPanel |
 | 文档上传 | ✅ MD/TXT/PDF | ⚠️ 仅 input，无拖拽区 |
-| 模板可视化编辑 | API 完整 | ❌ 缺 dnd-kit 卡片编辑器 |
+| 模板可视化编辑 | API 完整 | ⚠️ 列表 + tag 筛选完成；仍缺 dnd-kit 卡片编辑器 |
 | Limit 分层 | ⚠️ 仅消息 / 房间两层 | ⚠️ 同上 |
+| Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
 | Trace | ✅ 写入完整 | — (v1 不做查询 UI) |
 
 代码量：后端 `app/*.py` ~3,260 行，前端 `src/**` ~1,520 行，测试 ~280 行；文档预估 ~15,800 行（前端尚未铺开）。
@@ -82,26 +84,26 @@
 
 ### P0 · 安全兜底
 
-- [ ] **30 秒 chunk 间隔超时**：当前仅 `truncated_reason="timeout"` 字面量，缺空闲检测。需要在 `engine.py` stream 循环里加 `asyncio.wait_for` 或基于 last_chunk_at 的检查（技术文档 §8.6）。
+- [x] **30 秒 chunk 间隔超时** —— `engine.py:CHUNK_IDLE_TIMEOUT_SECONDS` + `asyncio.wait_for` 包裹 `__anext__()`，超时落 `truncated_reason="timeout"`，覆盖测试 `test_chunk_idle_timeout_truncates_message`。
 
 ### P1 · v1 验收剧本必经
 
-- [ ] **模板可视化编辑器**：TemplatesPage 当前 phases / recipes 仅简易表单，persona / format 只读。按 §8.9 实现 dnd-kit 顺序卡片 + 卡内 form（allowed_speakers / ordering_rule / exit_conditions / prompt_template）。预计 ~150 行 UI + form 逻辑。
+- [ ] **模板可视化编辑器**：列表已加 tag 筛选 + 卡片展示，但 phase/recipe 仍是单一表单，persona / format 仍只读。按 §8.9 实现 dnd-kit 顺序卡片 + 卡内 form（allowed_speakers / ordering_rule / exit_conditions / prompt_template）。
 - [ ] **Limit 分层补齐**：UI 缺 per-phase 轮次、账户日 / 月 budget；副手 `pacing_warning` 在接近 limit 时的主动触发链路也未见。
 
 ### P2 · 完整体验
 
-- [ ] **决议锁定 / 解锁 UI**：后端 `Decision.is_locked` 已就位，前端缺操作按钮。
+- [x] **决议锁定 / 解锁 UI** —— 新增 `PATCH /rooms/{id}/decisions/{id}`、`DecisionsPanel`，锁定动作 append meta 消息保留审计；覆盖测试 `test_decision_lock_toggle_creates_audit_meta`。
+- [x] **`message.cancelled` SSE** —— `hooks.ts` 在 cancelled 上 clearStream + invalidate query。
 - [ ] **parallel 模式多气泡渲染**：后端可并行 stream，前端目前只单流；按 §8.8 同时显示多个 "正在打字"。
 - [ ] **persona / format 创建编辑 UI**：v1 必做范围，目前只能走 API。
 - [ ] **断线重连协议**：`GET /rooms/{id}/state` 返回 `in_flight_partial`，前端按 `chunk_index` dedupe（§8.4）。
-- [ ] **`message.cancelled` SSE**：后端会推，`hooks.ts` 缺 case。
 
 ### P3 · 打磨
 
-- [ ] **代码高亮（shiki）**：当前 `MarkdownBlock` 仅 react-markdown + remark-math + rehype-katex，缺代码块高亮（§12.6）。
+- [x] **代码高亮（shiki）** —— `MarkdownBlock` 通过 shiki `codeToHtml` 渲染 fenced code，主题随暗色模式切换。
+- [x] **Tag 筛选 UI** —— `TemplatesPage` 四个视图（personas / phases / formats / recipes）顶部加可点选 tag 过滤条，多 tag AND 过滤。
 - [ ] **拖拽上传区**：当前是 `<input type=file>`，需要拖入区域。
-- [ ] **Tag 筛选 UI**：模板卡片已显示 tag，缺筛选输入框。
 - [ ] **Extended thinking 参数路由**：`LLMAdapter._build_extra_params` 在跨家差异处的实现（thinking budget / reasoning_effort）尚未填充（§7.3）。
 
 ### P4 · 测试覆盖补强
@@ -119,9 +121,9 @@
 
 **后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
 
-**前端**：阻塞在 P1 两项（模板编辑器 + 限额分层）和 P2 决议锁 UI；其余均可走完。
+**前端**：阻塞在 P1 两项（dnd-kit 模板编辑器 + 限额分层）；决议锁、代码高亮、tag 筛选已落地，其余 v1 主线均可走完。
 
-附加场景（自定义 phase + 导出）：阻塞在 P1 模板编辑器。
+附加场景（自定义 phase + 导出）：列表筛选 + 简易表单可走通；完整 dnd-kit 卡片编辑器仍待补。
 
 ---
 

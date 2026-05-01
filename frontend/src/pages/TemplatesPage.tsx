@@ -34,18 +34,26 @@ function TemplateNav({ to, label }: { to: string; label: string }) {
 
 function PersonasView() {
   const personas = useQuery({ queryKey: ["personas"], queryFn: () => api.personas() });
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const items = filterByTags(personas.data, selectedTags);
   return (
     <section className="space-y-3">
       <Header title="人设模板" />
+      <TagFilterBar items={personas.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
       <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
-        {(personas.data ?? []).map((persona: Persona) => (
+        {items.map((persona: Persona) => (
           <div key={persona.id} className="panel p-4">
             <div className="flex items-center justify-between gap-2">
               <h2 className="font-semibold">{persona.name}</h2>
               <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
             </div>
             <p className="mt-2 text-sm text-muted">{persona.description}</p>
-            <div className="mt-3 text-xs text-muted">{persona.backing_model}</div>
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+              <span>{persona.backing_model}</span>
+              {persona.tags.map((tag) => (
+                <StatusPill key={tag}>{tag}</StatusPill>
+              ))}
+            </div>
           </div>
         ))}
       </div>
@@ -55,17 +63,27 @@ function PersonasView() {
 
 function FormatsView() {
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const items = filterByTags(formats.data, selectedTags);
   return (
     <section className="space-y-3">
       <Header title="赛制模板" />
+      <TagFilterBar items={formats.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
       <div className="space-y-3">
-        {(formats.data ?? []).map((format: DebateFormat) => (
+        {items.map((format: DebateFormat) => (
           <div key={format.id} className="panel p-4">
             <div className="flex items-center justify-between gap-2">
               <h2 className="font-semibold">{format.name}</h2>
               <StatusPill tone="brand">{format.phase_sequence.length} phases</StatusPill>
             </div>
             <p className="mt-2 text-sm text-muted">{format.description}</p>
+            {format.tags.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                {format.tags.map((tag) => (
+                  <StatusPill key={tag}>{tag}</StatusPill>
+                ))}
+              </div>
+            )}
           </div>
         ))}
       </div>
@@ -76,6 +94,8 @@ function FormatsView() {
 function PhasesView() {
   const queryClient = useQueryClient();
   const phases = useQuery({ queryKey: ["phases"], queryFn: api.phases });
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const items = filterByTags(phases.data, selectedTags);
   const [name, setName] = useState("快速投票");
   const [tags, setTags] = useState("vote,parallel");
   const create = useMutation({
@@ -100,7 +120,8 @@ function PhasesView() {
     <section className="grid grid-cols-[minmax(0,1fr)_340px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
         <Header title="Phase 模板" />
-        {(phases.data ?? []).map((phase: PhaseTemplate) => (
+        <TagFilterBar items={phases.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
+        {items.map((phase: PhaseTemplate) => (
           <div key={phase.id} className="panel p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -147,6 +168,8 @@ function RecipesView() {
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
   const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const items = filterByTags(recipes.data, selectedTags);
   const [name, setName] = useState("我的方案评审配方");
   const [formatId, setFormatId] = useState("");
   const [personaIds, setPersonaIds] = useState<string[]>([]);
@@ -167,7 +190,8 @@ function RecipesView() {
     <section className="grid grid-cols-[minmax(0,1fr)_360px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
         <Header title="配方模板" />
-        {(recipes.data ?? []).map((recipe: Recipe) => (
+        <TagFilterBar items={recipes.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
+        {items.map((recipe: Recipe) => (
           <div key={recipe.id} className="panel p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -230,6 +254,52 @@ function RecipesView() {
         </div>
       </aside>
     </section>
+  );
+}
+
+function filterByTags<T extends { tags?: string[] }>(items: T[] | undefined, selected: string[]): T[] {
+  if (!items) return [];
+  if (!selected.length) return items;
+  return items.filter((item) => selected.every((tag) => (item.tags ?? []).includes(tag)));
+}
+
+function TagFilterBar<T extends { tags?: string[] }>({
+  items,
+  selected,
+  onChange
+}: {
+  items: T[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const allTags = Array.from(new Set(items.flatMap((item) => item.tags ?? []))).sort();
+  if (!allTags.length) return null;
+  const toggle = (tag: string) =>
+    onChange(selected.includes(tag) ? selected.filter((value) => value !== tag) : [...selected, tag]);
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted">按 tag 过滤</span>
+      {allTags.map((tag) => {
+        const active = selected.includes(tag);
+        return (
+          <button
+            key={tag}
+            type="button"
+            className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+              active ? "border-brand bg-brand/10 text-brand" : "border-border text-muted hover:bg-surface"
+            }`}
+            onClick={() => toggle(tag)}
+          >
+            #{tag}
+          </button>
+        );
+      })}
+      {selected.length > 0 && (
+        <button type="button" className="text-xs text-muted underline" onClick={() => onChange([])}>
+          清空
+        </button>
+      )}
+    </div>
   );
 }
 
