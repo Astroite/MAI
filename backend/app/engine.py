@@ -355,7 +355,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
     )
     current = apply_scribe_update(current, update)
     state.current_state = current
-    state.last_event_message_id = latest_message_id
+    state.last_event_message_id = new_messages[-1].id if new_messages else state.last_event_message_id or latest_message_id
     await trace_record(session, room_id, "scribe_update", "ScribeState tool folded", {"update": update, "state": current})
     await session.flush()
     await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
@@ -507,6 +507,7 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
     if runtime is None:
         raise ValueError("runtime not found")
     current = await get_current_phase(session, runtime)
+    exiting_phase = current is not None
     if current:
         current.status = "completed"
         current.completed_at = now_utc()
@@ -522,6 +523,8 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
         runtime.phase_exit_suppressed_after_message_id = None
         await trace_record(session, room_id, "phase_transition", "no next phase", {"target_position": position})
         await session.flush()
+        if exiting_phase:
+            await run_phase_boundary_tasks(session, room_id)
         return None
     instance = RoomPhaseInstance(
         room_id=room_id,
@@ -548,11 +551,24 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
     session.add(marker)
     await trace_record(session, room_id, "phase_transition", f"entered phase {position}", {"phase_instance_id": instance.id})
     await session.flush()
+    if exiting_phase:
+        await run_phase_boundary_tasks(session, room_id)
     await event_bus.publish(
         room_id,
         {"type": "phase.transitioned", "phase_instance_id": instance.id, "plan_position": position},
     )
     return instance
+
+
+async def run_phase_boundary_tasks(session: AsyncSession, room_id: str) -> None:
+    latest_visible_message_id = await session.scalar(
+        select(Message.id)
+        .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
+        .order_by(Message.created_at.desc())
+    )
+    if latest_visible_message_id:
+        await run_scribe_update(session, room_id, latest_visible_message_id)
+        await run_facilitator_eval(session, room_id, latest_visible_message_id)
 
 
 async def freeze_room(session: AsyncSession, room_id: str) -> None:

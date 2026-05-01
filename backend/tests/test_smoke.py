@@ -112,3 +112,34 @@ def test_structured_scribe_and_facilitator_tools():
         assert turn.status_code == 200
         assert "已裁决" in turn.json()[0]["content"]
         assert "采用结构化 tool-call" in turn.json()[0]["content"]
+
+
+def test_phase_transition_forces_system_role_updates():
+    with TestClient(app) as client:
+        formats = client.get("/templates/formats").json()
+        personas = client.get("/templates/personas?kind=discussant").json()
+        review = next(item for item in formats if item["name"] == "方案评审")
+        speaker = next(item for item in personas if item["name"] == "架构师")
+        room = client.post(
+            "/rooms",
+            json={"title": "pytest phase boundary", "format_id": review["id"], "persona_ids": [speaker["id"]]},
+        )
+        assert room.status_code == 200
+        room_id = room.json()["room"]["id"]
+
+        for content in ["边界触发测试 1", "边界触发测试 2", "边界触发测试 3"]:
+            assert client.post("/rooms/%s/messages" % room_id, json={"content": content}).status_code == 200
+        verdict = client.post("/rooms/%s/verdicts" % room_id, json={"content": "阶段切换时也要整理裁决。"})
+        assert verdict.status_code == 200
+
+        before = client.get("/rooms/%s/state" % room_id).json()
+        assert before["scribe_state"]["current_state"]["decisions"] == []
+
+        transitioned = client.post("/rooms/%s/phase/next" % room_id, json={})
+        assert transitioned.status_code == 200
+        state = transitioned.json()
+        assert any(
+            item["message_id"] == verdict.json()["id"]
+            for item in state["scribe_state"]["current_state"]["decisions"]
+        )
+        assert state["facilitator_signals"]
