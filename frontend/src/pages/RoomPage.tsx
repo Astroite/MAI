@@ -116,7 +116,7 @@ export function RoomPage() {
             })}
           </ol>
           <div className="mt-4 flex gap-2">
-            <select className="input min-w-0 flex-1" value={insertPhaseId} onChange={(event) => setInsertPhaseId(event.target.value)}>
+            <select name="insert-phase" className="input min-w-0 flex-1" value={insertPhaseId} onChange={(event) => setInsertPhaseId(event.target.value)}>
               <option value="">插入 phase</option>
               {(phases.data ?? []).map((phase) => (
                 <option key={phase.id} value={phase.id}>
@@ -148,7 +148,7 @@ export function RoomPage() {
               <div className="text-xs text-muted">append-only 消息、裁决、伪装和系统信号</div>
             </div>
             <div className="flex items-center gap-2">
-              <select className="input" value={speakerId} onChange={(event) => setSpeakerId(event.target.value)}>
+              <select name="turn-speaker" className="input" value={speakerId} onChange={(event) => setSpeakerId(event.target.value)}>
                 <option value="">自动/等待用户</option>
                 {discussants.map((persona) => (
                   <option key={persona.id} value={persona.id}>
@@ -303,15 +303,15 @@ function SubroomPanel({
         <div className="mt-3 space-y-3">
           <label className="block">
             <span className="text-xs text-muted">结论</span>
-            <textarea className="textarea mt-1 w-full" value={conclusion} onChange={(event) => setConclusion(event.target.value)} />
+            <textarea name="merge-conclusion" className="textarea mt-1 w-full" value={conclusion} onChange={(event) => setConclusion(event.target.value)} />
           </label>
           <label className="block">
             <span className="text-xs text-muted">关键推理，每行一条</span>
-            <textarea className="textarea mt-1 w-full" value={keyReasoning} onChange={(event) => setKeyReasoning(event.target.value)} />
+            <textarea name="merge-key-reasoning" className="textarea mt-1 w-full" value={keyReasoning} onChange={(event) => setKeyReasoning(event.target.value)} />
           </label>
           <label className="block">
             <span className="text-xs text-muted">未解决问题，每行一条</span>
-            <textarea className="textarea mt-1 w-full" value={unresolved} onChange={(event) => setUnresolved(event.target.value)} />
+            <textarea name="merge-unresolved" className="textarea mt-1 w-full" value={unresolved} onChange={(event) => setUnresolved(event.target.value)} />
           </label>
           <button className="btn btn-primary w-full" disabled={!conclusion.trim() || merge.isPending} onClick={() => merge.mutate()}>
             <Merge size={16} />
@@ -335,7 +335,7 @@ function SubroomPanel({
         {!childRooms.length && <div className="text-sm text-muted">暂无子讨论</div>}
       </div>
       <div className="mt-4 space-y-2">
-        <input className="input w-full" value={subroomTitle} onChange={(event) => setSubroomTitle(event.target.value)} />
+        <input name="subroom-title" className="input w-full" value={subroomTitle} onChange={(event) => setSubroomTitle(event.target.value)} />
         <button className="btn w-full" disabled={!subroomTitle.trim() || create.isPending} onClick={() => create.mutate()}>
           <GitBranchPlus size={16} />
           开子讨论
@@ -381,6 +381,7 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
           <span className="text-xs text-muted">单条 tokens</span>
           <input
             className="input mt-1 w-full"
+            name="max-message-tokens"
             type="number"
             min={1}
             value={maxMessageTokens}
@@ -391,6 +392,7 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
           <span className="text-xs text-muted">房间 tokens</span>
           <input
             className="input mt-1 w-full"
+            name="max-room-tokens"
             type="number"
             min={1}
             value={maxRoomTokens}
@@ -401,6 +403,7 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
           <span className="text-xs text-muted">Phase 最大轮次</span>
           <input
             className="input mt-1 w-full"
+            name="max-phase-rounds"
             type="number"
             min={1}
             value={maxPhaseRounds}
@@ -411,6 +414,7 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
           <span className="text-xs text-muted">账号日 tokens</span>
           <input
             className="input mt-1 w-full"
+            name="max-account-daily-tokens"
             type="number"
             min={1}
             value={maxAccountDailyTokens}
@@ -421,6 +425,7 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
           <span className="text-xs text-muted">账号月 tokens</span>
           <input
             className="input mt-1 w-full"
+            name="max-account-monthly-tokens"
             type="number"
             min={1}
             value={maxAccountMonthlyTokens}
@@ -432,7 +437,7 @@ function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
         当前房间用量：{runtime.token_counter_total} / {runtime.max_room_tokens} tokens
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm">
-        <input type="checkbox" checked={autoTransition} onChange={(event) => setAutoTransition(event.target.checked)} />
+        <input name="auto-transition" type="checkbox" checked={autoTransition} onChange={(event) => setAutoTransition(event.target.checked)} />
         自动进入下一阶段
       </label>
       <button className="btn mt-3 w-full" onClick={() => update.mutate()} disabled={update.isPending}>
@@ -550,14 +555,14 @@ function Composer({ roomId, personas, frozen }: { roomId: string; personas: Pers
   return (
     <div className="border-t border-border p-3">
       <div className="mb-2 flex flex-wrap gap-2">
-        <select className="input" value={mode} onChange={(event) => setMode(event.target.value as "normal" | "judge" | "dead_end" | "masquerade")}>
+        <select name="message-mode" className="input" value={mode} onChange={(event) => setMode(event.target.value as "normal" | "judge" | "dead_end" | "masquerade")}>
           <option value="normal">普通发言</option>
           <option value="judge">裁决锁定</option>
           <option value="dead_end">标记死路</option>
           <option value="masquerade">伪装人设</option>
         </select>
         {mode === "masquerade" && (
-          <select className="input" value={personaId} onChange={(event) => setPersonaId(event.target.value)}>
+          <select name="masquerade-persona" className="input" value={personaId} onChange={(event) => setPersonaId(event.target.value)}>
             {personas.map((persona) => (
               <option key={persona.id} value={persona.id}>
                 {persona.name}
@@ -566,7 +571,7 @@ function Composer({ roomId, personas, frozen }: { roomId: string; personas: Pers
           </select>
         )}
       </div>
-      <textarea className="textarea w-full" value={content} onChange={(event) => setContent(event.target.value)} disabled={frozen} />
+      <textarea name="message-content" className="textarea w-full" value={content} onChange={(event) => setContent(event.target.value)} disabled={frozen} />
       <div className="mt-2 flex justify-end">
         <button className="btn btn-primary" disabled={frozen || !content.trim() || submit.isPending} onClick={() => submit.mutate()}>
           {mode === "judge" ? (
@@ -751,7 +756,7 @@ function UploadPanel({ roomId, frozen }: { roomId: string; frozen: boolean }) {
         <span className="mt-2 font-medium">{file?.name ?? "拖入或选择文档"}</span>
         <span className="mt-1 text-xs text-muted">md / txt / pdf</span>
       </label>
-      <input id={inputId} className="sr-only" type="file" accept=".md,.txt,.pdf" disabled={frozen} onChange={(event) => selectFile(event.target.files?.[0])} />
+      <input id={inputId} name="room-upload" className="sr-only" type="file" accept=".md,.txt,.pdf" disabled={frozen} onChange={(event) => selectFile(event.target.files?.[0])} />
       <button className="btn mt-3 w-full" disabled={!file || frozen || upload.isPending} onClick={() => upload.mutate()}>
         <FileUp size={16} />
         作为附件消息加入

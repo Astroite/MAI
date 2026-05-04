@@ -74,11 +74,11 @@ export function DashboardPage() {
         <div className="mt-4 space-y-4">
           <label className="block">
             <span className="label">标题</span>
-            <input className="input mt-1 w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
+            <input name="room-title" className="input mt-1 w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">配方</span>
-            <select className="input mt-1 w-full" value={recipeId} onChange={(event) => setRecipeId(event.target.value)}>
+            <select name="room-recipe" className="input mt-1 w-full" value={recipeId} onChange={(event) => setRecipeId(event.target.value)}>
               <option value="__default__">默认配方</option>
               <option value="__none__">不使用配方</option>
               {(recipes.data ?? []).map((recipe) => (
@@ -91,6 +91,7 @@ export function DashboardPage() {
           <label className="block">
             <span className="label">赛制</span>
             <select
+              name="room-format"
               className="input mt-1 w-full"
               value={formatId ?? effectiveRecipe?.format_id ?? solutionReview ?? ""}
               disabled={Boolean(effectiveRecipeId)}
@@ -111,6 +112,7 @@ export function DashboardPage() {
                 return (
                   <label key={persona.id} className="flex items-start gap-2 rounded-md border border-border p-2 text-sm">
                     <input
+                      name={`room-persona-${persona.id}`}
                       type="checkbox"
                       className="mt-1"
                       checked={checked}

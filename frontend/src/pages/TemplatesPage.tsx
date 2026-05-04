@@ -133,7 +133,7 @@ function PersonasView() {
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="label">Kind</span>
-              <select className="input mt-1 w-full" value={kind} onChange={(event) => setKind(event.target.value as PersonaKind)}>
+              <select name="persona-kind" className="input mt-1 w-full" value={kind} onChange={(event) => setKind(event.target.value as PersonaKind)}>
                 <option value="discussant">discussant</option>
                 <option value="scribe">scribe</option>
                 <option value="facilitator">facilitator</option>
@@ -141,32 +141,32 @@ function PersonasView() {
             </label>
             <label className="block">
               <span className="label">Temperature</span>
-              <input className="input mt-1 w-full" type="number" min={0} max={2} step={0.1} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
+              <input name="persona-temperature" className="input mt-1 w-full" type="number" min={0} max={2} step={0.1} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
             </label>
           </div>
           <label className="block">
             <span className="label">名称</span>
-            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+            <input name="persona-name" className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">描述</span>
-            <textarea className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <textarea name="persona-description" className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">Backing Model</span>
-            <input className="input mt-1 w-full" value={backingModel} onChange={(event) => setBackingModel(event.target.value)} />
+            <input name="persona-backing-model" className="input mt-1 w-full" value={backingModel} onChange={(event) => setBackingModel(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">Tags</span>
-            <input className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
+            <input name="persona-tags" className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">System Prompt</span>
-            <textarea className="textarea mt-1 w-full" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} />
+            <textarea name="persona-system-prompt" className="textarea mt-1 w-full" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">Config JSON</span>
-            <textarea className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
+            <textarea name="persona-config-json" className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
           </label>
           {!configValue.ok && <div className="text-xs text-danger">Config 必须是 JSON object。</div>}
           <button className="btn btn-primary w-full" onClick={() => save.mutate()} disabled={!name.trim() || !systemPrompt.trim() || !configValue.ok || save.isPending}>
@@ -315,20 +315,20 @@ function FormatsView() {
         <div className="mt-4 space-y-3">
           <label className="block">
             <span className="label">名称</span>
-            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+            <input name="format-name" className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">描述</span>
-            <textarea className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <textarea name="format-description" className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">Tags</span>
-            <input className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
+            <input name="format-tags" className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
           </label>
           <div>
             <span className="label">Phase 顺序</span>
             <div className="mt-2 flex gap-2">
-              <select className="input min-w-0 flex-1" value={phaseId} onChange={(event) => setPhaseId(event.target.value)}>
+              <select name="format-phase" className="input min-w-0 flex-1" value={phaseId} onChange={(event) => setPhaseId(event.target.value)}>
                 <option value="">选择 Phase</option>
                 {(phases.data ?? []).map((phase) => (
                   <option key={phase.id} value={phase.id}>
@@ -507,20 +507,20 @@ function PhasesView() {
         <div className="mt-4 space-y-3">
           <label className="block">
             <span className="label">名称</span>
-            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+            <input name="phase-name" className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">描述</span>
-            <textarea className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <textarea name="phase-description" className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">Tags</span>
-            <input className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
+            <input name="phase-tags" className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
           </label>
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="label">发言范围</span>
-              <select className="input mt-1 w-full" value={allowedType} onChange={(event) => setAllowedType(event.target.value as "all" | "variables" | "specific")}>
+              <select name="phase-allowed-type" className="input mt-1 w-full" value={allowedType} onChange={(event) => setAllowedType(event.target.value as "all" | "variables" | "specific")}>
                 <option value="all">all</option>
                 <option value="variables">variables</option>
                 <option value="specific">specific</option>
@@ -528,7 +528,7 @@ function PhasesView() {
             </label>
             <label className="block">
               <span className="label">排序规则</span>
-              <select className="input mt-1 w-full" value={orderingType} onChange={(event) => setOrderingType(event.target.value)}>
+              <select name="phase-ordering-type" className="input mt-1 w-full" value={orderingType} onChange={(event) => setOrderingType(event.target.value)}>
                 <option value="alternating">alternating</option>
                 <option value="round_robin">round_robin</option>
                 <option value="mention_driven">mention_driven</option>
@@ -541,49 +541,49 @@ function PhasesView() {
           {allowedType !== "all" && (
             <label className="block">
               <span className="label">{allowedType === "variables" ? "变量名" : "Persona IDs"}</span>
-              <input className="input mt-1 w-full" value={allowedValues} onChange={(event) => setAllowedValues(event.target.value)} />
+              <input name="phase-allowed-values" className="input mt-1 w-full" value={allowedValues} onChange={(event) => setAllowedValues(event.target.value)} />
             </label>
           )}
           <div>
             <div className="label">退出条件</div>
             <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
               <label className="flex items-center gap-2 rounded-md border border-border p-2">
-                <input type="checkbox" checked={roundsExit} onChange={(event) => setRoundsExit(event.target.checked)} />
+                <input name="phase-exit-rounds" type="checkbox" checked={roundsExit} onChange={(event) => setRoundsExit(event.target.checked)} />
                 rounds
               </label>
-              <input className="input w-full" type="number" min={1} value={roundsN} onChange={(event) => setRoundsN(Number(event.target.value))} />
+              <input name="phase-rounds-count" className="input w-full" type="number" min={1} value={roundsN} onChange={(event) => setRoundsN(Number(event.target.value))} />
               <label className="flex items-center gap-2 rounded-md border border-border p-2">
-                <input type="checkbox" checked={allSpokenExit} onChange={(event) => setAllSpokenExit(event.target.checked)} />
+                <input name="phase-exit-all-spoken" type="checkbox" checked={allSpokenExit} onChange={(event) => setAllSpokenExit(event.target.checked)} />
                 all_spoken
               </label>
-              <input className="input w-full" type="number" min={1} value={minEach} onChange={(event) => setMinEach(Number(event.target.value))} />
+              <input name="phase-min-each" className="input w-full" type="number" min={1} value={minEach} onChange={(event) => setMinEach(Number(event.target.value))} />
               <label className="flex items-center gap-2 rounded-md border border-border p-2">
-                <input type="checkbox" checked={allVotedExit} onChange={(event) => setAllVotedExit(event.target.checked)} />
+                <input name="phase-exit-all-voted" type="checkbox" checked={allVotedExit} onChange={(event) => setAllVotedExit(event.target.checked)} />
                 all_voted
               </label>
               <label className="flex items-center gap-2 rounded-md border border-border p-2">
-                <input type="checkbox" checked={manualExit} onChange={(event) => setManualExit(event.target.checked)} />
+                <input name="phase-exit-manual" type="checkbox" checked={manualExit} onChange={(event) => setManualExit(event.target.checked)} />
                 user_manual
               </label>
               <label className="flex items-center gap-2 rounded-md border border-border p-2">
-                <input type="checkbox" checked={tokenBudgetExit} onChange={(event) => setTokenBudgetExit(event.target.checked)} />
+                <input name="phase-exit-token-budget" type="checkbox" checked={tokenBudgetExit} onChange={(event) => setTokenBudgetExit(event.target.checked)} />
                 token_budget
               </label>
-              <input className="input w-full" type="number" min={1} value={tokenBudget} onChange={(event) => setTokenBudget(Number(event.target.value))} />
+              <input name="phase-token-budget" className="input w-full" type="number" min={1} value={tokenBudget} onChange={(event) => setTokenBudget(Number(event.target.value))} />
               <label className="flex items-center gap-2 rounded-md border border-border p-2">
-                <input type="checkbox" checked={facilitatorExit} onChange={(event) => setFacilitatorExit(event.target.checked)} />
+                <input name="phase-exit-facilitator" type="checkbox" checked={facilitatorExit} onChange={(event) => setFacilitatorExit(event.target.checked)} />
                 facilitator
               </label>
-              <input className="input w-full" value={facilitatorTags} onChange={(event) => setFacilitatorTags(event.target.value)} />
+              <input name="phase-facilitator-tags" className="input w-full" value={facilitatorTags} onChange={(event) => setFacilitatorTags(event.target.value)} />
             </div>
           </div>
           <label className="block">
             <span className="label">角色约束</span>
-            <textarea className="textarea mt-1 w-full" value={roleConstraints} onChange={(event) => setRoleConstraints(event.target.value)} />
+            <textarea name="phase-role-constraints" className="textarea mt-1 w-full" value={roleConstraints} onChange={(event) => setRoleConstraints(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">Prompt Template</span>
-            <textarea className="textarea mt-1 w-full" value={promptTemplate} onChange={(event) => setPromptTemplate(event.target.value)} />
+            <textarea name="phase-prompt-template" className="textarea mt-1 w-full" value={promptTemplate} onChange={(event) => setPromptTemplate(event.target.value)} />
           </label>
           <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!canSavePhase || create.isPending}>
             <Save size={16} />
@@ -649,11 +649,11 @@ function RecipesView() {
         <div className="mt-4 space-y-3">
           <label className="block">
             <span className="label">名称</span>
-            <input className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
+            <input name="recipe-name" className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
           </label>
           <label className="block">
             <span className="label">赛制</span>
-            <select className="input mt-1 w-full" value={formatId} onChange={(event) => setFormatId(event.target.value)}>
+            <select name="recipe-format" className="input mt-1 w-full" value={formatId} onChange={(event) => setFormatId(event.target.value)}>
               <option value="">默认第一个赛制</option>
               {(formats.data ?? []).map((format) => (
                 <option key={format.id} value={format.id}>
@@ -668,6 +668,7 @@ function RecipesView() {
               {(personas.data ?? []).map((persona) => (
                 <label key={persona.id} className="flex items-center gap-2 rounded-md border border-border p-2 text-sm">
                   <input
+                    name={`recipe-persona-${persona.id}`}
                     type="checkbox"
                     checked={personaIds.includes(persona.id)}
                     onChange={(event) =>
