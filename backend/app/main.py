@@ -40,7 +40,6 @@ from .models import (
     RoomRuntimeState,
     ScribeState,
     Upload,
-    now_utc,
 )
 from .schemas import (
     AddPersonasRequest,
@@ -502,10 +501,39 @@ async def reveal_masquerade(room_id: str, message_id: str, session: AsyncSession
         raise HTTPException(404, "message not found")
     if message.author_actual != "user_as_persona":
         raise HTTPException(400, "message is not a masquerade")
-    message.user_revealed_at = now_utc()
-    await trace_record(session, room_id, "masquerade_revealed", "masquerade revealed", {"message_id": message_id})
+    existing_reveal = await session.scalar(
+        select(Message)
+        .where(
+            Message.room_id == room_id,
+            Message.message_type == "masquerade_reveal",
+            Message.parent_message_id == message_id,
+        )
+        .order_by(Message.created_at)
+    )
+    revealed_at = existing_reveal.created_at if existing_reveal else None
+    reveal_event: dict | None = None
+    if existing_reveal is None:
+        reveal = Message(
+            room_id=room_id,
+            phase_instance_id=message.phase_instance_id,
+            parent_message_id=message_id,
+            message_type="masquerade_reveal",
+            author_actual="user",
+            visibility="observer_only",
+            visibility_to_models=False,
+            content=f"揭示伪装消息：{message_id}",
+        )
+        session.add(reveal)
+        await session.flush()
+        revealed_at = reveal.created_at
+        await trace_record(session, room_id, "masquerade_revealed", "masquerade revealed", {"message_id": message_id, "reveal_message_id": reveal.id})
+        reveal_event = MessageOut.model_validate(reveal).model_dump(mode="json")
     await session.commit()
-    return message
+    if reveal_event:
+        await event_bus.publish(room_id, {"type": "message.appended", "message": reveal_event})
+    response = MessageOut.model_validate(message)
+    response.user_revealed_at = revealed_at
+    return response
 
 
 @app.post("/rooms/{room_id}/turn", response_model=list[MessageOut])
@@ -656,6 +684,8 @@ async def message_from_upload(room_id: str, body: FromUploadRequest, session: As
     upload = await session.get(Upload, body.upload_id)
     if not upload:
         raise HTTPException(404, "upload not found")
+    if upload.room_id != room_id:
+        raise HTTPException(403, "upload does not belong to this room")
     message = Message(
         room_id=room_id,
         phase_instance_id=runtime.current_phase_instance_id,
@@ -797,13 +827,24 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
                 cumulative_tokens_estimate=max(1, len(active_call.partial_text) // 4),
             )
         )
+    revealed_at_by_message_id = {
+        message.parent_message_id: message.created_at
+        for message in messages
+        if message.message_type == "masquerade_reveal" and message.parent_message_id
+    }
+    message_outputs = []
+    for message in messages:
+        output = MessageOut.model_validate(message)
+        if message.author_actual == "user_as_persona" and message.id in revealed_at_by_message_id:
+            output.user_revealed_at = revealed_at_by_message_id[message.id]
+        message_outputs.append(output)
     return RoomState(
         room=RoomOut.model_validate(room),
         runtime=RoomRuntimeOut.model_validate(runtime),
         personas=[PersonaOut.model_validate(p) for p in personas],
         phase_plan=[RoomPhasePlanOut.model_validate(p) for p in phase_plan],
         current_phase=RoomPhaseInstanceOut.model_validate(current_phase) if current_phase else None,
-        messages=[MessageOut.model_validate(m) for m in messages],
+        messages=message_outputs,
         scribe_state=ScribeStateOut.model_validate(scribe_state),
         facilitator_signals=[FacilitatorSignalOut.model_validate(s) for s in signals],
         decisions=[DecisionOut.model_validate(d) for d in decisions],

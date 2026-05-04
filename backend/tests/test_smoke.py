@@ -437,10 +437,35 @@ def test_masquerade_reveal_flow():
         revealed = client.post(f"/rooms/{room_id}/messages/{masquerade_payload['id']}/reveal")
         assert revealed.status_code == 200
         assert revealed.json()["user_revealed_at"]
+        state = client.get(f"/rooms/{room_id}/state").json()
+        original = next(message for message in state["messages"] if message["id"] == masquerade_payload["id"])
+        reveal_meta = next(message for message in state["messages"] if message["message_type"] == "masquerade_reveal")
+        assert original["user_revealed_at"]
+        assert reveal_meta["parent_message_id"] == masquerade_payload["id"]
+        assert reveal_meta["visibility_to_models"] is False
 
         normal = client.post(f"/rooms/{room_id}/messages", json={"content": "普通用户消息。"}).json()
         rejected = client.post(f"/rooms/{room_id}/messages/{normal['id']}/reveal")
         assert rejected.status_code == 400
+
+
+def test_upload_is_bound_to_owning_room():
+    with TestClient(app) as client:
+        room_a = client.post("/rooms", json={"title": "pytest upload owner a", "persona_ids": []}).json()
+        room_b = client.post("/rooms", json={"title": "pytest upload owner b", "persona_ids": []}).json()
+        upload = client.post(
+            f"/upload?room_id={room_a['room']['id']}",
+            files={"file": ("note.md", b"# Owned by room A\n\ncontent", "text/markdown")},
+        )
+        assert upload.status_code == 200
+        upload_id = upload.json()["id"]
+
+        rejected = client.post(f"/rooms/{room_b['room']['id']}/messages/from_upload", json={"upload_id": upload_id})
+        assert rejected.status_code == 403
+
+        accepted = client.post(f"/rooms/{room_a['room']['id']}/messages/from_upload", json={"upload_id": upload_id})
+        assert accepted.status_code == 200
+        assert accepted.json()["message_type"] == "user_doc"
 
 
 def test_hidden_facilitator_messages_are_filtered_from_llm_context(monkeypatch):

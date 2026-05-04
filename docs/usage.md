@@ -50,6 +50,31 @@ docker run --name mai-postgres \
 
 ## 4. 本地开发运行
 
+### 4.0 一键启动
+
+Windows PowerShell：
+
+```powershell
+.\scripts\dev.ps1
+```
+
+这个脚本会：
+
+- 如果存在 Docker，则用 `infra/docker-compose.yml` 启动本地 PostgreSQL。
+- 如果 `backend/.env` 不存在，则从 `.env.example` 创建。
+- 创建后端 `.venv`，安装 Python 依赖，执行 `python -m app.init_db`。
+- 安装前端依赖。
+- 分别打开后端和前端开发服务窗口。
+
+常用参数：
+
+```powershell
+.\scripts\dev.ps1 -SkipPostgres
+.\scripts\dev.ps1 -SkipInstall
+.\scripts\dev.ps1 -SkipDbInit
+.\scripts\dev.ps1 -BackendPort 8001 -FrontendPort 5174
+```
+
 ### 4.1 后端
 
 ```bash
@@ -133,6 +158,30 @@ gemini/<model-name>
 ## 7. 打包
 
 建议把前端静态产物和后端应用代码分别打包，运行时再安装 Python 依赖并配置 `.env`。
+
+### 7.0 一键打包
+
+Windows PowerShell：
+
+```powershell
+.\scripts\package.ps1 -Version v0.1.0
+```
+
+脚本会安装前端依赖、执行 `pnpm build`，然后生成：
+
+```text
+release/mai-v0.1.0.zip
+release/mai-v0.1.0.zip.sha256
+release/mai-v0.1.0/
+```
+
+常用参数：
+
+```powershell
+.\scripts\package.ps1 -Version v0.1.0 -SkipInstall
+.\scripts\package.ps1 -Version v0.1.0 -SkipFrontendBuild
+.\scripts\package.ps1 -OutputDir artifacts
+```
 
 ### 7.1 前端打包
 
@@ -293,3 +342,63 @@ pytest -q
 | LiteLLM 认证失败 | 检查对应 provider API Key 是否写入 `backend/.env`，然后重启后端 |
 | 前端构建出现 chunk size warning | 当前 Markdown/KaTeX/Shiki 包较大，这是警告不是失败；需要优化时再做按需加载 |
 
+## 11. GitHub Release 发布
+
+仓库已提供 GitHub Actions 工作流：
+
+```text
+.github/workflows/release.yml
+```
+
+它会在发布时执行：
+
+1. 启动 PostgreSQL service。
+2. 安装后端依赖并运行 `python -m app.init_db` 与 `pytest -q`。
+3. 安装前端依赖并运行 `pnpm build`。
+4. 打包 `backend/app`、后端依赖文件、`frontend/dist`、`docs`、`README.md`。
+5. 生成 `.zip`、`.tar.gz` 和 `SHA256SUMS.txt`。
+6. 创建或更新 GitHub Release，并上传产物。
+
+### 11.1 用 tag 自动发布
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+推送匹配 `v*.*.*` 的 tag 后，GitHub Actions 会自动创建名为 `v0.1.0` 的 Release。
+
+### 11.2 手动发布
+
+1. 打开 GitHub 仓库页面。
+2. 进入 `Actions`。
+3. 选择 `Release` workflow。
+4. 点击 `Run workflow`。
+5. 填入版本号，例如 `v0.1.0`。
+
+### 11.3 权限要求
+
+`release.yml` 已声明：
+
+```yaml
+permissions:
+  contents: write
+```
+
+如果组织或仓库禁用了 Actions 写权限，需要在 GitHub 仓库中打开：
+
+```text
+Settings -> Actions -> General -> Workflow permissions -> Read and write permissions
+```
+
+### 11.4 发布产物
+
+Release 页面会出现：
+
+```text
+mai-v0.1.0.zip
+mai-v0.1.0.tar.gz
+SHA256SUMS.txt
+```
+
+下载后按第 8 节安装即可。

@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: mai-postgres
+    environment:
+      POSTGRES_USER: mai
+      POSTGRES_PASSWORD: mai_dev_password
+      POSTGRES_DB: mai
+    ports:
+      - "5432:5432"
+    volumes:
+      - mai-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mai -d mai"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  mai-postgres-data:
+
