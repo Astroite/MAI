@@ -132,8 +132,14 @@ async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
         return
     async with lock:
         try:
-            async with SessionLocal() as session:
-                await run_room_turn(session, room_id, None)
+            while True:
+                async with SessionLocal() as session:
+                    messages = await run_room_turn(session, room_id, None)
+                if not messages:
+                    break
+                async with SessionLocal() as session:
+                    if not await _should_auto_discuss(session, room_id):
+                        break
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — surface to user, never swallow
@@ -153,6 +159,41 @@ async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
                 room_id,
                 {"type": "system.error", "kind": "autodrive", "detail": str(exc)},
             )
+    # After chain completes, check if a user message arrived during the chain
+    asyncio.create_task(_maybe_handle_pending_user_turn(room_id))
+
+
+async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
+    """Return True if the engine should chain another AI turn."""
+    runtime = await session.get(RoomRuntimeState, room_id)
+    if runtime is None or runtime.frozen:
+        return False
+    phase = await get_current_phase(session, runtime)
+    template = await get_phase_template(session, phase)
+    if template is None or not template.auto_discuss:
+        return False
+    if runtime.consecutive_ai_turns >= runtime.max_consecutive_ai_turns:
+        return False
+    room = await session.get(Room, room_id)
+    if room and await check_phase_exit(session, room, runtime, emit=False):
+        return False
+    return True
+
+
+async def _maybe_handle_pending_user_turn(room_id: str) -> None:
+    """After an autodrive chain completes, re-trigger if a user message is pending."""
+    lock = _autodrive_lock(room_id)
+    if lock.locked():
+        return
+    async with SessionLocal() as session:
+        runtime = await session.get(RoomRuntimeState, room_id)
+        if runtime is None or runtime.frozen:
+            return
+        latest = await session.scalar(
+            select(Message).where(Message.room_id == room_id).order_by(Message.created_at.desc()).limit(1)
+        )
+        if latest and latest.author_actual in _AUTODRIVE_TRIGGER_AUTHORS:
+            asyncio.create_task(_autodrive_runner(room_id, lock))
 
 
 async def get_current_phase(session: AsyncSession, runtime: RoomRuntimeState) -> RoomPhaseInstance | None:
@@ -564,6 +605,7 @@ async def _stream_one_message(
         cost_usd=0,
     )
     runtime.token_counter_total += prompt_tokens + completion_tokens
+    runtime.consecutive_ai_turns += 1
     session.add(message)
     await session.flush()
     await trace_record(
@@ -599,6 +641,10 @@ async def _stream_one_message(
 
 
 async def after_message_appended(session: AsyncSession, room_id: str, message: Message) -> None:
+    if message.author_actual in _AUTODRIVE_TRIGGER_AUTHORS:
+        runtime = await session.get(RoomRuntimeState, room_id)
+        if runtime:
+            runtime.consecutive_ai_turns = 0
     count = await session.scalar(
         select(func.count(Message.id)).where(
             Message.room_id == room_id,
@@ -920,6 +966,7 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
         runtime.phase_exit_suggested = False
         runtime.phase_exit_matched_conditions = []
         runtime.phase_exit_suppressed_after_message_id = None
+        runtime.consecutive_ai_turns = 0
         await trace_record(session, room_id, "phase_transition", "no next phase", {"target_position": position})
         await session.flush()
         if exiting_phase:
@@ -938,6 +985,7 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
     runtime.phase_exit_suggested = False
     runtime.phase_exit_matched_conditions = []
     runtime.phase_exit_suppressed_after_message_id = None
+    runtime.consecutive_ai_turns = 0
     marker = Message(
         room_id=room_id,
         phase_instance_id=instance.id,

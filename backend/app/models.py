@@ -164,6 +164,7 @@ class PhaseTemplate(Base):
     allowed_speakers: Mapped[dict] = mapped_column(JSONType)
     ordering_rule: Mapped[dict] = mapped_column(JSONType)
     exit_conditions: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    auto_discuss: Mapped[bool] = mapped_column(Boolean, default=False)
     role_constraints: Mapped[str] = mapped_column(Text, default="")
     prompt_template: Mapped[str] = mapped_column(Text, default="")
     tags: Mapped[list[str]] = mapped_column(JSONType, default=list)
@@ -377,6 +378,8 @@ class RoomRuntimeState(Base):
     phase_exit_suggested: Mapped[bool] = mapped_column(Boolean, default=False)
     phase_exit_matched_conditions: Mapped[list[dict]] = mapped_column(JSONType, default=list)
     phase_exit_suppressed_after_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    consecutive_ai_turns: Mapped[int] = mapped_column(Integer, default=0)
+    max_consecutive_ai_turns: Mapped[int] = mapped_column(Integer, default=10)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 

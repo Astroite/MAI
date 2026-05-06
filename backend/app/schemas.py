@@ -351,6 +351,7 @@ class PhaseTemplateOut(APIModel):
     allowed_speakers: AllowedSpeakers
     ordering_rule: OrderingRule
     exit_conditions: list[ExitCondition] = Field(default_factory=list)
+    auto_discuss: bool = False
     role_constraints: str
     prompt_template: str
     tags: list[str] = Field(default_factory=list)
@@ -365,6 +366,7 @@ class PhaseTemplateCreate(APIModel):
     allowed_speakers: AllowedSpeakers = Field(default_factory=AllSpeakers)
     ordering_rule: OrderingRule = Field(default_factory=UserPicksRule)
     exit_conditions: list[ExitCondition] = Field(default_factory=lambda: [UserManualExit()])
+    auto_discuss: bool = False
     role_constraints: str = ""
     prompt_template: str = ""
     tags: list[str] = Field(default_factory=list)
@@ -461,6 +463,8 @@ class RoomRuntimeOut(APIModel):
     phase_exit_suggested: bool = False
     phase_exit_matched_conditions: list[dict[str, Any]] = Field(default_factory=list)
     phase_exit_suppressed_after_message_id: str | None = None
+    consecutive_ai_turns: int = 0
+    max_consecutive_ai_turns: int = 10
     updated_at: datetime
 
 
@@ -559,6 +563,7 @@ class LimitUpdate(APIModel):
     max_phase_rounds: int | None = Field(default=None, ge=1)
     max_account_daily_tokens: int | None = Field(default=None, ge=1)
     max_account_monthly_tokens: int | None = Field(default=None, ge=1)
+    max_consecutive_ai_turns: int | None = Field(default=None, ge=1)
     auto_transition: bool | None = None
 
 

@@ -7,7 +7,7 @@ import { useRoomEvents } from "../../hooks";
 import { useUIStore } from "../../store";
 import { StatusPill } from "../../components/StatusPill";
 import { RoomListSidebar } from "./RoomListSidebar";
-import { MembersSidebar } from "./MembersSidebar";
+import { RightPanel } from "./RightPanel";
 import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
@@ -58,7 +58,7 @@ export function RoomShell() {
   };
 
   return (
-    <div className="grid h-[calc(100vh-0px)] grid-cols-[260px_minmax(0,1fr)_280px] max-xl:grid-cols-[240px_minmax(0,1fr)] max-lg:grid-cols-1">
+    <div className="grid h-[calc(100vh-0px)] grid-cols-[260px_minmax(0,1fr)_320px] max-xl:grid-cols-[240px_minmax(0,1fr)] max-lg:grid-cols-1">
       <RoomListSidebar activeRoomId={activeRoomId} />
 
       <section className="flex min-w-0 flex-col overflow-hidden bg-panel">
@@ -153,7 +153,7 @@ export function RoomShell() {
 
       <div className="max-xl:hidden">
         {state ? (
-          <MembersSidebar roomId={activeRoomId!} personas={state.personas} />
+          <RightPanel state={state} childRooms={childRooms} />
         ) : (
           <aside className="h-full border-l border-border bg-panel" />
         )}
