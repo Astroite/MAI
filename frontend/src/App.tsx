@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes, useMatch } from "react-router-dom";
 import { Moon, PanelsTopLeft, Settings, Sun, Workflow } from "lucide-react";
 import { useUIStore } from "./store";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -11,10 +11,24 @@ import { SettingsPage } from "./pages/SettingsPage";
 export function App() {
   const dark = useUIStore((state) => state.dark);
   const toggleDark = useUIStore((state) => state.toggleDark);
+  // The room view is its own three-column shell with its own left nav, so we
+  // suppress the global top header there to give the chat the full viewport.
+  const inRoomView = useMatch({ path: "/rooms/:roomId/*", end: false });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
+
+  if (inRoomView) {
+    return (
+      <div className="min-h-screen bg-surface text-text">
+        <Routes>
+          <Route path="/rooms/:roomId" element={<RoomPage />} />
+          <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
+        </Routes>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface text-text">
@@ -41,8 +55,6 @@ export function App() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/rooms/:roomId" element={<RoomPage />} />
-          <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
           <Route path="/templates/:kind" element={<TemplatesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>

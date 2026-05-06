@@ -4,28 +4,30 @@ This repository contains a v1 development implementation following the product a
 
 ## Current Status
 
-The app currently runs as a FastAPI backend plus a Vite React frontend. The default mode is deterministic `MOCK_LLM=true`, so the full room, phase, scribe, facilitator, verdict, masquerade, upload, and sub-room flow can be developed without provider API keys.
+The app currently runs as a FastAPI backend plus a Vite React frontend. All LLM calls go through LiteLLM — provide credentials via `backend/.env` (e.g. `OPENAI_API_KEY`) or by creating an ApiProvider in the Settings page and binding it to a persona.
 
-Recent backend support includes:
+Recent support includes:
 
-- LiteLLM-backed streaming responses when `MOCK_LLM=false`
+- LiteLLM-backed streaming responses for any persona
 - structured tool-call outputs for scribe and facilitator roles
 - phase and ScribeState context injected into AI turns
 - facilitator signal cooldown plus a manual "ask facilitator" endpoint
+- autodrive after user-authored messages, including `mention_driven` @-mention resolution plus round-robin fallback
+- a three-column chat-first room UI with a right-side settings drawer
+- a Tauri v2 desktop shell that launches the FastAPI backend as a PyInstaller sidecar and builds an NSIS installer
 
 ## Prerequisites
 
-- Python 3.12
+- Python 3.12+ (verified on 3.13)
 - Node.js 20+ with `pnpm`
-- PostgreSQL reachable at `DATABASE_URL`
+- Optional desktop packaging: Rust/Cargo, Microsoft C++ Build Tools, and WebView2 Runtime. See `docs/desktop_tauri.md`.
 
-The development database used by `.env.example` is:
+Default storage is a local SQLite file — no PostgreSQL needed. The file lands at:
 
-```text
-postgresql+asyncpg://mai:mai_dev_password@localhost:5432/mai
-```
+- Dev mode: `backend/mai.sqlite3`
+- Packaged mode (`MAI_PACKAGED=1` or PyInstaller-frozen): `%APPDATA%\MAI\mai.sqlite3` (Windows), `~/Library/Application Support/MAI/mai.sqlite3` (macOS), `${XDG_DATA_HOME:-~/.local/share}/MAI/mai.sqlite3` (Linux)
 
-If the database/user do not exist yet:
+To opt into PostgreSQL instead, uncomment `DATABASE_URL` in `backend/.env` (point it at e.g. `postgresql+asyncpg://mai:mai_dev_password@localhost:5432/mai`) and ensure the database exists:
 
 ```bash
 sudo -u postgres psql
@@ -70,19 +72,28 @@ http://localhost:5173
 
 The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
 
-## Real LLM Mode
+### Single-process serve (no Vite)
 
-The backend calls real providers through LiteLLM. To switch out of mock mode:
+After `pnpm build`, the FastAPI process can host the built SPA itself — useful for production deployment, packaging, or kicking the tires without two terminals:
 
-1. Edit `backend/.env`.
-2. Set `MOCK_LLM=false`.
-3. Set provider keys used by your personas, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or `GEMINI_API_KEY`.
-4. Create or update personas so `backing_model` uses a LiteLLM-compatible model string, for example `openai/<model-name>`, `anthropic/<model-name>`, or `gemini/<model-name>`.
-5. Restart `uvicorn`.
+```bash
+cd frontend && pnpm build           # produces frontend/dist/
+cd ../backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
+# open http://127.0.0.1:8000
+```
 
-Built-in personas intentionally use `mock/...` backing models. Even when `MOCK_LLM=false`, a persona whose `backing_model` starts with `mock/` will still use deterministic local output. This lets you mix real and mock personas in the same development database.
+When `frontend/dist/index.html` exists (or `MAI_FRONTEND_DIST` points at one), the backend mounts it at `/` with SPA fallback. The same backend strips `/api` from incoming paths so the frontend's existing `/api/...` calls work without any rebuild.
 
-Create a real discussant persona with the API:
+## LLM Configuration
+
+All LLM traffic goes through LiteLLM. Two ways to provide credentials:
+
+1. Fill provider keys in `backend/.env` (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). These act as defaults for any persona without a bound `ApiProvider`.
+2. Open Settings → API 配置, create an `ApiProvider` with the key, then bind it to one or more personas. Provider-bound credentials override the env defaults at call time.
+
+Built-in personas default to `openai/gpt-4o-mini`. Edit a persona to switch models — any LiteLLM-compatible name works (`openai/<model>`, `anthropic/<model>`, `gemini/<model>`, …).
+
+Create a discussant persona via API:
 
 ```bash
 curl -X POST http://127.0.0.1:8000/templates/personas \
@@ -90,11 +101,11 @@ curl -X POST http://127.0.0.1:8000/templates/personas \
   -d '{
     "kind": "discussant",
     "name": "Real Model Reviewer",
-    "description": "Uses a real provider through LiteLLM.",
-    "backing_model": "openai/<model-name>",
+    "description": "Concise technical reviewer.",
+    "backing_model": "openai/gpt-4o-mini",
     "system_prompt": "You are a concise technical reviewer.",
     "temperature": 0.4,
-    "tags": ["real-model"]
+    "tags": ["custom"]
   }'
 ```
 
@@ -110,6 +121,8 @@ source .venv/bin/activate
 pytest -q
 ```
 
+Tests hit real LLM endpoints — put your provider key in `backend/tests/.env.test` (gitignored). Without a token, pytest exits early with a clear message.
+
 Frontend build:
 
 ```bash
@@ -121,13 +134,26 @@ The frontend build currently emits a Vite chunk-size warning because the Markdow
 
 ## Packaging
 
-Windows:
+Single-process bundle:
 
 ```powershell
 .\scripts\package.ps1 -Version v0.1.0
 ```
 
 The package is written under `release/`. GitHub Releases are generated by `.github/workflows/release.yml` when a `v*.*.*` tag is pushed.
+
+Desktop shell (Tauri):
+
+```powershell
+.\scripts\build-sidecar.ps1
+.\scripts\package-tauri.ps1
+```
+
+The Tauri package uses the built React app plus a PyInstaller sidecar for the FastAPI backend. It requires Rust/Cargo, Node.js/pnpm, WebView2, the Microsoft C++ build tools, and the backend Python environment. Full setup steps live in `docs/desktop_tauri.md`. If the target triple cannot be detected automatically, pass it explicitly, for example:
+
+```powershell
+.\scripts\package-tauri.ps1 -TargetTriple x86_64-pc-windows-msvc
+```
 
 ## Runtime Data
 
@@ -142,7 +168,9 @@ Both directories are ignored by Git.
 
 | Symptom | Check |
 |---|---|
-| `health` reports database failure | PostgreSQL is running and `DATABASE_URL` matches the created user/database |
-| Real model call still returns mock text | `MOCK_LLM=false` and the selected persona `backing_model` does not start with `mock/` |
-| Provider authentication error | The matching provider API key is present in `backend/.env` and the backend was restarted |
+| `health` reports database failure | SQLite: parent directory of `mai.sqlite3` is writable. Postgres: service is running and `DATABASE_URL` matches the created user/database |
+| Provider authentication error | The matching provider API key is present in `backend/.env` (or in the bound `ApiProvider`) and the backend was restarted |
 | Browser cannot reach backend | Frontend is running on port 5173 and backend on port 8000, or `VITE_API_BASE` points to the deployed API |
+| Single-process serve returns API JSON for `/` | `frontend/dist/index.html` is missing — run `pnpm build` first, or set `MAI_FRONTEND_DIST` to an existing built dir |
+| Tauri packaging says `rustc` is missing | Install Rust/Cargo, reopen PowerShell, then run `rustc --version` |
+| Tauri packaging says `link.exe` is missing | Install Visual Studio Build Tools with the C++ desktop workload |

@@ -1,6 +1,29 @@
-import type { DebateFormat, Decision, Message, Persona, PhaseTemplate, Recipe, Room, RoomState } from "./types";
+import type {
+  ApiProvider,
+  ApiProviderDetail,
+  DebateFormat,
+  Decision,
+  Message,
+  Persona,
+  PhaseTemplate,
+  Recipe,
+  Room,
+  RoomState
+} from "./types";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
+declare global {
+  interface Window {
+    /** Injected by the Tauri shell at startup to point the SPA at the
+     *  ephemeral-port sidecar backend. Falls back to VITE_API_BASE / "/api"
+     *  for the dev server / single-process serve cases. */
+    __MAI_API_BASE__?: string;
+  }
+}
+
+const API_BASE =
+  (typeof window !== "undefined" && window.__MAI_API_BASE__) ||
+  import.meta.env.VITE_API_BASE ||
+  "/api";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`, {
@@ -15,7 +38,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; database: string; mock_llm: boolean }>("/health"),
+  health: () => request<{ status: string; database: string }>("/health"),
   rooms: () => request<Room[]>("/rooms"),
   roomState: (roomId: string) => request<RoomState>(`/rooms/${roomId}/state`),
   createRoom: (body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }) =>
@@ -28,6 +51,29 @@ export const api = {
   createPersona: (body: unknown) => request<Persona>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
   updatePersona: (personaId: string, body: unknown) =>
     request<Persona>(`/templates/personas/${personaId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  apiProviders: () => request<ApiProvider[]>("/templates/api-providers"),
+  apiProviderDetail: (providerId: string) =>
+    request<ApiProviderDetail>(`/templates/api-providers/${providerId}`),
+  createApiProvider: (body: {
+    name: string;
+    provider_slug: string;
+    api_key: string;
+    api_base?: string | null;
+  }) =>
+    request<ApiProviderDetail>("/templates/api-providers", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  updateApiProvider: (
+    providerId: string,
+    body: { name?: string; provider_slug?: string; api_key?: string; api_base?: string | null }
+  ) =>
+    request<ApiProviderDetail>(`/templates/api-providers/${providerId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  deleteApiProvider: (providerId: string) =>
+    request<{ status: string }>(`/templates/api-providers/${providerId}`, { method: "DELETE" }),
   phases: () => request<PhaseTemplate[]>("/templates/phases"),
   formats: () => request<DebateFormat[]>("/templates/formats"),
   createFormat: (body: unknown) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),
@@ -48,10 +94,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ content, is_locked, ...(extra ?? {}) })
     }),
-  masquerade: (roomId: string, persona_id: string, content: string) =>
+  masquerade: (roomId: string, display_name: string, content: string, persona_id?: string | null) =>
     request<Message>(`/rooms/${roomId}/masquerade`, {
       method: "POST",
-      body: JSON.stringify({ persona_id, content })
+      body: JSON.stringify({ persona_id: persona_id || null, display_name, content })
     }),
   reveal: (roomId: string, messageId: string) =>
     request<Message>(`/rooms/${roomId}/messages/${messageId}/reveal`, { method: "POST" }),

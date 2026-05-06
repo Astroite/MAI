@@ -120,6 +120,7 @@ class PersonaOut(APIModel):
     name: str
     description: str
     backing_model: str
+    api_provider_id: str | None = None
     system_prompt: str
     temperature: float
     config: dict[str, Any] = Field(default_factory=dict)
@@ -132,7 +133,8 @@ class PersonaCreate(APIModel):
     kind: Literal["discussant", "scribe", "facilitator"] = "discussant"
     name: str
     description: str = ""
-    backing_model: str = "mock/generalist"
+    backing_model: str = "openai/gpt-4o-mini"
+    api_provider_id: str | None = None
     system_prompt: str
     temperature: float = 0.4
     config: dict[str, Any] = Field(default_factory=dict)
@@ -144,10 +146,74 @@ class PersonaUpdate(APIModel):
     name: str | None = None
     description: str | None = None
     backing_model: str | None = None
+    api_provider_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
     config: dict[str, Any] | None = None
     tags: list[str] | None = None
+
+
+def _mask_api_key(key: str) -> str:
+    if not key:
+        return ""
+    tail = key[-4:] if len(key) >= 4 else key
+    return f"...{tail}"
+
+
+class ApiProviderOut(APIModel):
+    id: str
+    name: str
+    provider_slug: str
+    api_key_preview: str
+    has_api_key: bool
+    api_base: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, provider: Any) -> "ApiProviderOut":
+        return cls(
+            id=provider.id,
+            name=provider.name,
+            provider_slug=provider.provider_slug,
+            api_key_preview=_mask_api_key(provider.api_key or ""),
+            has_api_key=bool(provider.api_key),
+            api_base=provider.api_base,
+            created_at=provider.created_at,
+            updated_at=provider.updated_at,
+        )
+
+
+class ApiProviderDetailOut(ApiProviderOut):
+    api_key: str = ""
+
+    @classmethod
+    def from_model(cls, provider: Any) -> "ApiProviderDetailOut":
+        return cls(
+            id=provider.id,
+            name=provider.name,
+            provider_slug=provider.provider_slug,
+            api_key_preview=_mask_api_key(provider.api_key or ""),
+            has_api_key=bool(provider.api_key),
+            api_base=provider.api_base,
+            api_key=provider.api_key or "",
+            created_at=provider.created_at,
+            updated_at=provider.updated_at,
+        )
+
+
+class ApiProviderCreate(APIModel):
+    name: str
+    provider_slug: str
+    api_key: str = ""
+    api_base: str | None = None
+
+
+class ApiProviderUpdate(APIModel):
+    name: str | None = None
+    provider_slug: str | None = None
+    api_key: str | None = None
+    api_base: str | None = None
 
 
 class PhaseTemplateOut(APIModel):
@@ -320,6 +386,7 @@ class MessageOut(APIModel):
     author_model: str | None = None
     author_actual: Literal["ai", "user", "user_as_judge", "user_as_persona", "system"]
     user_masquerade_persona_id: str | None = None
+    user_masquerade_name: str | None = None
     visibility: str
     visibility_to_models: bool
     content: str
@@ -346,7 +413,8 @@ class VerdictCreate(APIModel):
 
 
 class MasqueradeCreate(APIModel):
-    persona_id: str
+    persona_id: str | None = None
+    display_name: str | None = None
     content: str
     message_type: str = "speech"
 

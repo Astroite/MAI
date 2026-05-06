@@ -1,3 +1,4 @@
+aiosqlite==0.20.0
 asyncpg==0.30.0
 fastapi==0.115.12
 httpx==0.28.1
@@ -12,4 +13,5 @@ uvicorn[standard]==0.34.2
 uuid6==2024.7.10
 pytest==8.3.5
 pytest-asyncio==0.26.0
+pyinstaller==6.11.1
 

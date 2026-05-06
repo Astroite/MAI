@@ -3,7 +3,7 @@ import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { Download, GripVertical, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api";
 import type { DebateFormat, Persona, PersonaKind, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -17,11 +17,13 @@ export function TemplatesPage() {
         <TemplateNav to="/templates/phases" label="Phase" />
         <TemplateNav to="/templates/formats" label="赛制" />
         <TemplateNav to="/templates/recipes" label="配方" />
+        <TemplateNav to="/templates/api" label="API 配置" />
       </aside>
       {kind === "personas" && <PersonasView />}
       {kind === "formats" && <FormatsView />}
       {kind === "recipes" && <RecipesView />}
       {kind === "phases" && <PhasesView />}
+      {kind === "api" && <ApiProvidersView />}
     </div>
   );
 }
@@ -37,12 +39,14 @@ function TemplateNav({ to, label }: { to: string; label: string }) {
 function PersonasView() {
   const queryClient = useQueryClient();
   const personas = useQuery({ queryKey: ["personas"], queryFn: () => api.personas() });
+  const apiProviders = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(personas.data, selectedTags);
   const [kind, setKind] = useState<PersonaKind>("discussant");
   const [name, setName] = useState("自定义专家");
   const [description, setDescription] = useState("从模板页创建的人设。");
-  const [backingModel, setBackingModel] = useState("mock/generalist");
+  const [backingModel, setBackingModel] = useState("openai/gpt-4o-mini");
+  const [apiProviderId, setApiProviderId] = useState<string>("");
   const [temperature, setTemperature] = useState(0.4);
   const [tags, setTags] = useState("custom");
   const [systemPrompt, setSystemPrompt] = useState("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
@@ -55,6 +59,7 @@ function PersonasView() {
     name,
     description,
     backing_model: backingModel,
+    api_provider_id: apiProviderId || null,
     system_prompt: systemPrompt,
     temperature,
     config: configValue.value,
@@ -66,6 +71,7 @@ function PersonasView() {
     setName(persona.name);
     setDescription(persona.description);
     setBackingModel(persona.backing_model);
+    setApiProviderId(persona.api_provider_id ?? "");
     setTemperature(persona.temperature);
     setTags(persona.tags.join(","));
     setSystemPrompt(persona.system_prompt);
@@ -76,7 +82,8 @@ function PersonasView() {
     setKind("discussant");
     setName("自定义专家");
     setDescription("从模板页创建的人设。");
-    setBackingModel("mock/generalist");
+    setBackingModel("openai/gpt-4o-mini");
+    setApiProviderId("");
     setTemperature(0.4);
     setTags("custom");
     setSystemPrompt("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
@@ -155,6 +162,34 @@ function PersonasView() {
           <label className="block">
             <span className="label">Backing Model</span>
             <input name="persona-backing-model" className="input mt-1 w-full" value={backingModel} onChange={(event) => setBackingModel(event.target.value)} />
+            <p className="mt-1 text-xs text-muted">
+              LiteLLM 模型名，例如 <code>openai/gpt-4o-mini</code>、<code>anthropic/claude-sonnet-4-5</code>。
+            </p>
+          </label>
+          <label className="block">
+            <span className="label">API 配置</span>
+            <select
+              name="persona-api-provider"
+              className="input mt-1 w-full"
+              value={apiProviderId}
+              onChange={(event) => setApiProviderId(event.target.value)}
+            >
+              <option value="">默认（使用环境变量）</option>
+              {(apiProviders.data ?? []).map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name} · {provider.provider_slug}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-muted">
+              {(apiProviders.data?.length ?? 0) === 0 ? (
+                <>
+                  还没有 API 配置，<NavLink className="text-brand underline" to="/templates/api">前往新增</NavLink>
+                </>
+              ) : (
+                "选中后调用此人设时将覆盖默认凭据。"
+              )}
+            </p>
           </label>
           <label className="block">
             <span className="label">Tags</span>
@@ -683,6 +718,219 @@ function RecipesView() {
           <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
             <Save size={16} />
             保存配方
+          </button>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
+export function ApiProvidersView() {
+  const queryClient = useQueryClient();
+  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [providerSlug, setProviderSlug] = useState("openai");
+  const [apiKey, setApiKey] = useState("");
+  const [apiBase, setApiBase] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const editing = providers.data?.find((p) => p.id === editingId) ?? null;
+  const resetForm = () => {
+    setEditingId(null);
+    setName("");
+    setProviderSlug("openai");
+    setApiKey("");
+    setApiBase("");
+    setShowKey(false);
+    setPendingError(null);
+  };
+  const loadProvider = async (id: string) => {
+    setEditingId(id);
+    setPendingError(null);
+    try {
+      const detail = await api.apiProviderDetail(id);
+      setName(detail.name);
+      setProviderSlug(detail.provider_slug);
+      setApiKey(detail.api_key);
+      setApiBase(detail.api_base ?? "");
+      setShowKey(false);
+    } catch (err) {
+      setPendingError(err instanceof Error ? err.message : "无法加载 API 配置");
+    }
+  };
+  const save = useMutation({
+    mutationFn: () => {
+      const body = {
+        name: name.trim(),
+        provider_slug: providerSlug.trim(),
+        api_key: apiKey,
+        api_base: apiBase.trim() ? apiBase.trim() : null
+      };
+      return editingId ? api.updateApiProvider(editingId, body) : api.createApiProvider(body);
+    },
+    onSuccess: (saved) => {
+      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      setEditingId(saved.id);
+      setName(saved.name);
+      setProviderSlug(saved.provider_slug);
+      setApiKey(saved.api_key);
+      setApiBase(saved.api_base ?? "");
+      setPendingError(null);
+    },
+    onError: (err) => setPendingError(err instanceof Error ? err.message : "保存失败")
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteApiProvider(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      resetForm();
+    },
+    onError: (err) => setPendingError(err instanceof Error ? err.message : "删除失败")
+  });
+  const handleDelete = (id: string) => {
+    if (window.confirm("删除该 API 配置？引用它的人设会回退到默认凭据。")) {
+      remove.mutate(id);
+    }
+  };
+  return (
+    <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">API 配置</h1>
+            <p className="mt-1 text-sm text-muted">为人设指定外部 LLM 凭据。明文保存在本地数据库，不上传任何远端。</p>
+          </div>
+          <button className="btn" type="button" onClick={resetForm}>
+            <Plus size={16} />
+            新建
+          </button>
+        </div>
+        <div className="space-y-3">
+          {(providers.data ?? []).map((provider) => (
+            <div
+              key={provider.id}
+              className={`panel p-4 ${editingId === provider.id ? "ring-1 ring-brand" : ""}`}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <h2 className="truncate font-semibold">{provider.name}</h2>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                    <StatusPill tone="brand">{provider.provider_slug}</StatusPill>
+                    <span className="font-mono">{provider.api_key_preview || "(未设置)"}</span>
+                    {provider.api_base && <span>· {provider.api_base}</span>}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button className="btn h-8 px-2 text-xs" type="button" onClick={() => void loadProvider(provider.id)}>
+                    <Pencil size={14} />
+                    编辑
+                  </button>
+                  <button
+                    className="btn h-8 px-2 text-xs text-danger"
+                    type="button"
+                    onClick={() => handleDelete(provider.id)}
+                    disabled={remove.isPending && remove.variables === provider.id}
+                  >
+                    <Trash2 size={14} />
+                    删除
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+          {(providers.data ?? []).length === 0 && (
+            <div className="panel p-6 text-sm text-muted">尚未创建任何 API 配置。</div>
+          )}
+        </div>
+      </div>
+      <aside className="panel p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">{editingId ? "编辑 API 配置" : "新建 API 配置"}</h2>
+          {editingId && (
+            <button className="btn h-8 px-2 text-xs" type="button" onClick={resetForm}>
+              <Plus size={14} />
+              新建
+            </button>
+          )}
+        </div>
+        <div className="mt-4 space-y-3">
+          <label className="block">
+            <span className="label">名称</span>
+            <input
+              name="api-provider-name"
+              className="input mt-1 w-full"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如 我的 OpenAI"
+            />
+          </label>
+          <label className="block">
+            <span className="label">Provider Slug</span>
+            <select
+              name="api-provider-slug"
+              className="input mt-1 w-full"
+              value={providerSlug}
+              onChange={(event) => setProviderSlug(event.target.value)}
+            >
+              <option value="openai">openai</option>
+              <option value="anthropic">anthropic</option>
+              <option value="gemini">gemini</option>
+              <option value="openrouter">openrouter</option>
+              <option value="azure">azure</option>
+              <option value="custom">custom</option>
+            </select>
+            <p className="mt-1 text-xs text-muted">
+              用于在 UI 上区分；具体 LiteLLM 路由仍由人设的 Backing Model 决定。
+            </p>
+          </label>
+          <label className="block">
+            <span className="label">API Key</span>
+            <div className="mt-1 flex items-stretch gap-2">
+              <input
+                name="api-provider-key"
+                className="input flex-1"
+                type={showKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="sk-..."
+              />
+              <button
+                type="button"
+                className="btn px-2"
+                onClick={() => setShowKey((value) => !value)}
+                aria-label={showKey ? "隐藏" : "显示"}
+              >
+                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            {editing && !apiKey && (
+              <p className="mt-1 text-xs text-muted">当前密钥：{editing.api_key_preview}（修改时请重新填入完整密钥）</p>
+            )}
+          </label>
+          <label className="block">
+            <span className="label">API Base（可选）</span>
+            <input
+              name="api-provider-base"
+              className="input mt-1 w-full"
+              value={apiBase}
+              onChange={(event) => setApiBase(event.target.value)}
+              placeholder="https://api.example.com/v1"
+            />
+            <p className="mt-1 text-xs text-muted">
+              用于 OpenAI 兼容代理或自部署网关；空表示走 LiteLLM 默认地址。
+            </p>
+          </label>
+          {pendingError && <div className="text-xs text-danger">{pendingError}</div>}
+          <button
+            className="btn btn-primary w-full"
+            onClick={() => save.mutate()}
+            disabled={!name.trim() || !providerSlug.trim() || save.isPending}
+          >
+            <Save size={16} />
+            {editingId ? "保存修改" : "保存配置"}
           </button>
         </div>
       </aside>

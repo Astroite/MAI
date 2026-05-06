@@ -1,12 +1,16 @@
+import os
+import sys
 from pathlib import Path
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import get_settings
 from .db import create_schema, get_session
@@ -25,6 +29,7 @@ from .engine import (
 from .event_bus import event_bus
 from .ids import new_id
 from .models import (
+    ApiProvider,
     DebateFormat,
     Decision,
     FacilitatorSignal,
@@ -43,6 +48,10 @@ from .models import (
 )
 from .schemas import (
     AddPersonasRequest,
+    ApiProviderCreate,
+    ApiProviderDetailOut,
+    ApiProviderOut,
+    ApiProviderUpdate,
     DebateFormatCreate,
     DebateFormatOut,
     DebateFormatUpdate,
@@ -107,10 +116,28 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _strip_api_prefix(request, call_next):
+    """Let the frontend keep using `/api/*` in single-process / packaged mode.
+
+    Backend routes are declared at root; in dev Vite's proxy already strips
+    `/api`, so requests arrive without it. In packaged mode there is no
+    proxy, so we strip it here. Tests hit root paths directly and bypass
+    this entirely.
+    """
+    path = request.scope.get("path", "")
+    if path.startswith("/api/") or path == "/api":
+        new_path = path[len("/api"):] or "/"
+        request.scope["path"] = new_path
+        if "raw_path" in request.scope and request.scope["raw_path"] is not None:
+            request.scope["raw_path"] = new_path.encode()
+    return await call_next(request)
+
+
 @app.get("/health")
 async def health(session: AsyncSession = Depends(get_session)) -> dict:
     await session.scalar(select(func.count(Persona.id)))
-    return {"status": "ok", "database": "ok", "mock_llm": settings.mock_llm}
+    return {"status": "ok", "database": "ok"}
 
 
 @app.get("/templates/personas", response_model=list[PersonaOut])
@@ -158,6 +185,7 @@ async def update_persona(persona_id: str, body: PersonaUpdate, session: AsyncSes
             name=persona.name,
             description=persona.description,
             backing_model=persona.backing_model,
+            api_provider_id=persona.api_provider_id,
             system_prompt=persona.system_prompt,
             temperature=persona.temperature,
             config=persona.config,
@@ -171,6 +199,65 @@ async def update_persona(persona_id: str, body: PersonaUpdate, session: AsyncSes
     await session.commit()
     await session.refresh(persona)
     return persona
+
+
+@app.get("/templates/api-providers", response_model=list[ApiProviderOut])
+async def list_api_providers(session: AsyncSession = Depends(get_session)):
+    rows = (await session.scalars(select(ApiProvider).order_by(ApiProvider.created_at))).all()
+    return [ApiProviderOut.from_model(row) for row in rows]
+
+
+@app.post("/templates/api-providers", response_model=ApiProviderDetailOut)
+async def create_api_provider(body: ApiProviderCreate, session: AsyncSession = Depends(get_session)):
+    provider = ApiProvider(
+        id=new_id(),
+        name=body.name,
+        provider_slug=body.provider_slug.strip(),
+        api_key=body.api_key,
+        api_base=body.api_base or None,
+    )
+    session.add(provider)
+    await session.commit()
+    await session.refresh(provider)
+    return ApiProviderDetailOut.from_model(provider)
+
+
+@app.get("/templates/api-providers/{provider_id}", response_model=ApiProviderDetailOut)
+async def get_api_provider(provider_id: str, session: AsyncSession = Depends(get_session)):
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    return ApiProviderDetailOut.from_model(provider)
+
+
+@app.patch("/templates/api-providers/{provider_id}", response_model=ApiProviderDetailOut)
+async def update_api_provider(
+    provider_id: str, body: ApiProviderUpdate, session: AsyncSession = Depends(get_session)
+):
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for key, value in changes.items():
+        if key == "provider_slug" and isinstance(value, str):
+            value = value.strip()
+        setattr(provider, key, value)
+    await session.commit()
+    await session.refresh(provider)
+    return ApiProviderDetailOut.from_model(provider)
+
+
+@app.delete("/templates/api-providers/{provider_id}")
+async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(get_session)):
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    await session.execute(
+        update(Persona).where(Persona.api_provider_id == provider_id).values(api_provider_id=None)
+    )
+    await session.delete(provider)
+    await session.commit()
+    return {"status": "deleted"}
 
 
 @app.get("/templates/phases", response_model=list[PhaseTemplateOut])
@@ -467,17 +554,21 @@ async def update_decision_lock(
 async def create_masquerade(room_id: str, body: MasqueradeCreate, session: AsyncSession = Depends(get_session)):
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
-    persona = await session.get(Persona, body.persona_id)
-    if not persona or persona.kind != "discussant":
+    persona = await session.get(Persona, body.persona_id) if body.persona_id else None
+    if body.persona_id and (not persona or persona.kind != "discussant"):
         raise HTTPException(400, "masquerade persona must be a discussant")
+    display_name = (body.display_name or "").strip()
+    if not display_name:
+        display_name = persona.name if persona else "群友"
     message = Message(
         room_id=room_id,
         phase_instance_id=runtime.current_phase_instance_id,
         message_type=body.message_type,
-        author_persona_id=persona.id,
-        author_model=persona.backing_model,
+        author_persona_id=persona.id if persona else None,
+        author_model=persona.backing_model if persona else None,
         author_actual="user_as_persona",
-        user_masquerade_persona_id=persona.id,
+        user_masquerade_persona_id=persona.id if persona else None,
+        user_masquerade_name=display_name,
         visibility="public",
         visibility_to_models=True,
         content=body.content,
@@ -869,3 +960,39 @@ def _extract_text(path: Path, suffix: str, raw: bytes) -> str:
         reader = PdfReader(str(path))
         return "\n\n".join(page.extract_text() or "" for page in reader.pages).strip()
     return raw.decode("utf-8", errors="replace")
+
+
+def _resolve_frontend_dist() -> Path | None:
+    override = os.environ.get("MAI_FRONTEND_DIST")
+    if override:
+        path = Path(override)
+        return path if path.exists() else None
+    here = Path(__file__).resolve().parent  # backend/app
+    pyinstaller_base = Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "frozen", False) else None
+    candidates = [
+        pyinstaller_base / "frontend-dist" if pyinstaller_base else None,
+        here.parent.parent / "frontend" / "dist",  # repo dev layout
+        here.parent / "frontend_dist",             # bundled next to backend/
+        here / "frontend_dist",                    # bundled inside app/ (PyInstaller)
+    ]
+    for candidate in candidates:
+        if candidate and candidate.is_dir() and (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles with SPA fallback: any 404 is served as index.html."""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
+_frontend_dist = _resolve_frontend_dist()
+if _frontend_dist is not None:
+    app.mount("/", SPAStaticFiles(directory=_frontend_dist, html=True), name="frontend")

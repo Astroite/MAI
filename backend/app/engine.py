@@ -10,6 +10,7 @@ from .event_bus import event_bus
 from .ids import new_id
 from .llm import llm_adapter
 from .models import (
+    ApiProvider,
     Decision,
     FacilitatorSignal,
     Message,
@@ -95,6 +96,65 @@ def _unregister_active_call(call: InFlightCall) -> None:
         ACTIVE_CALLS.pop(call.room_id, None)
 
 
+# Per-room locks guarding auto-drive dispatch. A held lock means an autodrive
+# task is already streaming a persona reply; further user messages skip
+# scheduling rather than queueing. Users can still POST /turn manually.
+_AUTODRIVE_LOCKS: dict[str, asyncio.Lock] = {}
+_AUTODRIVE_TRIGGER_AUTHORS = {"user", "user_as_persona", "user_as_judge"}
+_AUTODRIVE_TRIGGER_TYPES = {"speech", "question", "answer", "user_doc"}
+
+
+def _autodrive_lock(room_id: str) -> asyncio.Lock:
+    return _AUTODRIVE_LOCKS.setdefault(room_id, asyncio.Lock())
+
+
+async def maybe_autodrive_after(room_id: str, just_appended: Message) -> None:
+    """Schedule a persona reply if the just-appended message is user-driven.
+
+    The recursion guard hinges on `author_actual`: persona replies have
+    `author_actual == "ai"` and never re-trigger autodrive, even though
+    `_stream_one_message` calls `after_message_appended` on its tail.
+    """
+    if just_appended.author_actual not in _AUTODRIVE_TRIGGER_AUTHORS:
+        return
+    if just_appended.message_type not in _AUTODRIVE_TRIGGER_TYPES:
+        return
+    lock = _autodrive_lock(room_id)
+    if lock.locked():
+        return
+    if active_calls_for_room(room_id):
+        return
+    asyncio.create_task(_autodrive_runner(room_id, lock))
+
+
+async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
+    if lock.locked():
+        return
+    async with lock:
+        try:
+            async with SessionLocal() as session:
+                await run_room_turn(session, room_id, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — surface to user, never swallow
+            try:
+                async with SessionLocal() as session:
+                    await trace_record(
+                        session,
+                        room_id,
+                        "autodrive_error",
+                        f"autodrive failed: {exc!r}",
+                        {"error": repr(exc)},
+                    )
+                    await session.commit()
+            except Exception:  # noqa: BLE001
+                pass
+            await event_bus.publish(
+                room_id,
+                {"type": "system.error", "kind": "autodrive", "detail": str(exc)},
+            )
+
+
 async def get_current_phase(session: AsyncSession, runtime: RoomRuntimeState) -> RoomPhaseInstance | None:
     if not runtime.current_phase_instance_id:
         return None
@@ -105,6 +165,12 @@ async def get_phase_template(session: AsyncSession, phase_instance: RoomPhaseIns
     if phase_instance is None:
         return None
     return await session.get(PhaseTemplate, phase_instance.phase_template_id)
+
+
+async def resolve_api_provider(session: AsyncSession, persona: Persona) -> ApiProvider | None:
+    if not persona.api_provider_id:
+        return None
+    return await session.get(ApiProvider, persona.api_provider_id)
 
 
 async def get_room_discussants(session: AsyncSession, room_id: str) -> list[Persona]:
@@ -183,8 +249,13 @@ async def pick_next_speaker(
         if requested_persona_id not in allowed:
             return NextSpeakerResult("wait", [], "requested persona not allowed in current phase")
         return NextSpeakerResult("single", [requested_persona_id], "user picked speaker")
-    if ordering in {"mention_driven", "user_picks"}:
-        return NextSpeakerResult("wait", [], f"{ordering} waits for user")
+    if ordering == "user_picks":
+        return NextSpeakerResult("wait", [], "user_picks waits for user")
+    if ordering == "mention_driven":
+        mentioned = await _resolve_at_mention(session, room.id, allowed)
+        if mentioned is not None:
+            return NextSpeakerResult("single", [mentioned], "mention_driven matched @-mention")
+        # fall through to round-robin so auto-drive still moves the room forward
     if ordering == "parallel":
         spoken = await _spoken_counts(session, room.id, phase.id)
         remaining = [pid for pid in allowed if spoken.get(pid, 0) == 0]
@@ -192,10 +263,45 @@ async def pick_next_speaker(
 
     spoken = await _spoken_counts(session, room.id, phase.id)
     total = sum(spoken.values())
-    if ordering in {"round_robin", "alternating", "question_paired"}:
+    if ordering in {"round_robin", "alternating", "question_paired", "mention_driven"}:
         next_id = allowed[total % len(allowed)]
-        return NextSpeakerResult("single", [next_id], ordering)
+        reason = "mention_driven fallback to round-robin" if ordering == "mention_driven" else ordering
+        return NextSpeakerResult("single", [next_id], reason)
     return NextSpeakerResult("wait", [], "unknown ordering")
+
+
+async def _resolve_at_mention(
+    session: AsyncSession, room_id: str, allowed_ids: list[str]
+) -> str | None:
+    """Scan the most recent visible user message for `@<persona-name>` tokens.
+
+    Returns the matched persona id (must be in `allowed_ids`) or None.
+    """
+    if not allowed_ids:
+        return None
+    last_user_message = await session.scalar(
+        select(Message)
+        .where(
+            Message.room_id == room_id,
+            Message.visibility_to_models.is_(True),
+            Message.author_actual.in_(["user", "user_as_persona", "user_as_judge"]),
+            Message.message_type.in_(["speech", "question", "answer", "user_doc"]),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    if last_user_message is None or "@" not in (last_user_message.content or ""):
+        return None
+    personas = (
+        await session.scalars(select(Persona).where(Persona.id.in_(allowed_ids)))
+    ).all()
+    content = last_user_message.content
+    for persona in personas:
+        if not persona.name:
+            continue
+        if f"@{persona.name}" in content:
+            return persona.id
+    return None
 
 
 async def _spoken_counts(session: AsyncSession, room_id: str, phase_instance_id: str) -> dict[str, int]:
@@ -325,8 +431,9 @@ async def _stream_one_message(
     await session.commit()
 
     truncated_reason = None
+    api_provider = await resolve_api_provider(session, persona)
     stream_iter = llm_adapter.stream(
-        persona, context, template, runtime.max_message_tokens, scribe_state
+        persona, context, template, runtime.max_message_tokens, scribe_state, api_provider=api_provider
     ).__aiter__()
     try:
         while True:
@@ -459,6 +566,7 @@ async def after_message_appended(session: AsyncSession, room_id: str, message: M
     if room and runtime:
         await check_phase_exit(session, room, runtime, emit=True)
     await session.commit()
+    await maybe_autodrive_after(room_id, message)
 
 
 async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_id: str) -> None:
@@ -485,6 +593,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
                 break
     new_messages = messages[start_index:]
     scribe = await get_room_system_persona(session, room_id, "scribe")
+    scribe_provider = await resolve_api_provider(session, scribe)
     update = await llm_adapter.complete_tool(
         scribe,
         "scribe_update",
@@ -495,6 +604,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
             "latest_message_id": latest_message_id,
             "messages": [message_to_tool_payload(message) for message in new_messages],
         },
+        api_provider=scribe_provider,
     )
     current = apply_scribe_update(current, update)
     state.current_state = current
@@ -541,6 +651,7 @@ async def run_facilitator_eval(
             )
         ).all()
     )
+    facilitator_provider = await resolve_api_provider(session, facilitator)
     evaluation = await llm_adapter.complete_tool(
         facilitator,
         "facilitator_evaluation",
@@ -553,6 +664,7 @@ async def run_facilitator_eval(
             "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
             "manual_request": force,
         },
+        api_provider=facilitator_provider,
     )
     signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
     signals = (await limit_facilitator_signals(session, runtime, phase, template, latest_message_id)) + signals
@@ -1076,6 +1188,7 @@ def message_to_event(message: Message) -> dict:
         "author_model": message.author_model,
         "author_actual": message.author_actual,
         "user_masquerade_persona_id": message.user_masquerade_persona_id,
+        "user_masquerade_name": message.user_masquerade_name,
         "visibility": message.visibility,
         "visibility_to_models": message.visibility_to_models,
         "content": message.content,

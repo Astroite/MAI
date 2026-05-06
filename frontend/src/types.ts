@@ -7,11 +7,27 @@ export interface Persona {
   name: string;
   description: string;
   backing_model: string;
+  api_provider_id?: string | null;
   system_prompt: string;
   temperature: number;
   config: Record<string, unknown>;
   tags: string[];
   is_builtin: boolean;
+}
+
+export interface ApiProvider {
+  id: string;
+  name: string;
+  provider_slug: string;
+  api_key_preview: string;
+  has_api_key: boolean;
+  api_base?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ApiProviderDetail extends ApiProvider {
+  api_key: string;
 }
 
 export interface PhaseTemplate {
@@ -109,6 +125,7 @@ export interface Message {
   author_model?: string | null;
   author_actual: "ai" | "user" | "user_as_judge" | "user_as_persona" | "system";
   user_masquerade_persona_id?: string | null;
+  user_masquerade_name?: string | null;
   visibility: string;
   visibility_to_models: boolean;
   content: string;
