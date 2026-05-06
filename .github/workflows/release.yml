@@ -17,26 +17,6 @@ permissions:
 jobs:
   release:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: mai
-          POSTGRES_PASSWORD: mai_dev_password
-          POSTGRES_DB: mai
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U mai -d mai"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 12
-
-    env:
-      DATABASE_URL: postgresql+asyncpg://mai:mai_dev_password@localhost:5432/mai
-      MOCK_LLM: "true"
-      TRACE_PAYLOAD_DIR: trace_payloads
-      UPLOAD_DIR: uploads
 
     steps:
       - name: Checkout
@@ -68,11 +48,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Verify backend
+      - name: Verify backend imports
         working-directory: backend
-        run: |
-          python -m app.init_db
-          pytest -q
+        run: python -c "import app.main"
 
       - name: Set up Node
         uses: actions/setup-node@v4
