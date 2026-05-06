@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Save, X } from "lucide-react";
+import { Pencil, Save, Users, X } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
 import type { PersonaInstance } from "../../types";
@@ -22,10 +22,12 @@ function personaInitial(name?: string | null): string {
 
 export function MembersSidebar({
   roomId,
-  personas
+  personas,
+  compact = false
 }: {
   roomId: string;
   personas: PersonaInstance[];
+  compact?: boolean;
 }) {
   const streaming = useUIStore((state) => state.streaming);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -36,6 +38,40 @@ export function MembersSidebar({
   );
   const discussants = personas.filter((p) => p.kind === "discussant");
   const systemPersonas = personas.filter((p) => p.kind !== "discussant");
+
+  if (compact) {
+    return (
+      <div className="border-b border-border px-3 py-2">
+        <div className="mb-1 flex items-center gap-1 text-xs font-semibold text-muted">
+          <Users size={12} />
+          成员 · {discussants.length}
+        </div>
+        <div className="flex flex-wrap gap-1">
+          {discussants.map((persona) => (
+            <span
+              key={persona.id}
+              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ${
+                activePersonaIds.has(persona.id) ? "bg-brand/10 text-brand" : "bg-surface text-muted"
+              }`}
+              title={persona.name}
+            >
+              <span
+                className="inline-block h-3.5 w-3.5 rounded-full text-[8px] font-semibold leading-3.5 text-white text-center"
+                style={{ background: personaColor(persona.id) }}
+              >
+                {personaInitial(persona.name).slice(0, 1)}
+              </span>
+              {persona.name}
+              {activePersonaIds.has(persona.id) && (
+                <span className="h-1.5 w-1.5 rounded-full bg-brand" style={{ animation: "pulse-ring 1.4s ease-out infinite" }} />
+              )}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <aside className="flex h-full min-h-0 flex-col border-l border-border bg-panel">
       <div className="border-b border-border px-3 py-3 text-sm font-semibold">

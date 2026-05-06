@@ -11,6 +11,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
   const [maxAccountDailyTokens, setMaxAccountDailyTokens] = useState(runtime.max_account_daily_tokens);
   const [maxAccountMonthlyTokens, setMaxAccountMonthlyTokens] = useState(runtime.max_account_monthly_tokens);
   const [autoTransition, setAutoTransition] = useState(runtime.auto_transition);
+  const [maxConsecutiveAiTurns, setMaxConsecutiveAiTurns] = useState(runtime.max_consecutive_ai_turns ?? 10);
   useEffect(() => {
     setMaxMessageTokens(runtime.max_message_tokens);
     setMaxRoomTokens(runtime.max_room_tokens);
@@ -18,6 +19,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
     setMaxAccountDailyTokens(runtime.max_account_daily_tokens);
     setMaxAccountMonthlyTokens(runtime.max_account_monthly_tokens);
     setAutoTransition(runtime.auto_transition);
+    setMaxConsecutiveAiTurns(runtime.max_consecutive_ai_turns ?? 10);
   }, [runtime]);
   const update = useMutation({
     mutationFn: () =>
@@ -27,6 +29,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
         max_phase_rounds: maxPhaseRounds,
         max_account_daily_tokens: maxAccountDailyTokens,
         max_account_monthly_tokens: maxAccountMonthlyTokens,
+        max_consecutive_ai_turns: maxConsecutiveAiTurns,
         auto_transition: autoTransition
       }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
@@ -91,8 +94,22 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           />
         </label>
       </div>
+      <label className="mt-3 block">
+        <span className="text-xs text-muted">AI 连续发言上限</span>
+        <input
+          className="input mt-1 w-full"
+          name="max-consecutive-ai-turns"
+          type="number"
+          min={1}
+          value={maxConsecutiveAiTurns}
+          onChange={(event) => setMaxConsecutiveAiTurns(Number(event.target.value))}
+        />
+      </label>
       <div className="mt-3 rounded-md border border-border p-3 text-xs text-muted">
         当前房间用量：{runtime.token_counter_total} / {runtime.max_room_tokens} tokens
+        {runtime.consecutive_ai_turns != null && (
+          <span className="ml-3">AI 连续轮次：{runtime.consecutive_ai_turns} / {runtime.max_consecutive_ai_turns}</span>
+        )}
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm">
         <input

@@ -74,6 +74,7 @@ export interface PhaseTemplate {
   allowed_speakers: Record<string, unknown>;
   ordering_rule: { type: string };
   exit_conditions: Array<Record<string, unknown>>;
+  auto_discuss?: boolean;
   role_constraints: string;
   prompt_template: string;
   tags: string[];
@@ -132,6 +133,8 @@ export interface Runtime {
   phase_exit_suggested: boolean;
   phase_exit_matched_conditions: Array<Record<string, unknown>>;
   phase_exit_suppressed_after_message_id?: string | null;
+  consecutive_ai_turns?: number;
+  max_consecutive_ai_turns?: number;
 }
 
 export interface PhasePlan {

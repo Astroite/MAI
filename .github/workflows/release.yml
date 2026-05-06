@@ -180,17 +180,59 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
 
+      - name: Generate updater manifest
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
+          NSIS_DIR="frontend/src-tauri/target/release/bundle/nsis"
+
+          # Find the main installer exe
+          INSTALLER=$(find "$NSIS_DIR" -maxdepth 1 -name "*setup.exe" | head -1)
+          if [ -z "$INSTALLER" ]; then
+            echo "::error::No setup.exe found in $NSIS_DIR"
+            exit 1
+          fi
+          INSTALLER_NAME=$(basename "$INSTALLER")
+          DOWNLOAD_URL="https://github.com/Astroite/MAI/releases/download/${VERSION}/${INSTALLER_NAME}"
+
+          # Read the signature from the .sig file
+          SIG_FILE=$(find "$NSIS_DIR" -maxdepth 1 -name "*.exe.sig" | head -1)
+          if [ -z "$SIG_FILE" ]; then
+            echo "::error::No .exe.sig file found. Ensure TAURI_SIGNING_PRIVATE_KEY is set."
+            exit 1
+          fi
+          SIGNATURE=$(cat "$SIG_FILE")
+
+          jq -n \
+            --arg ver "$VERSION_NUMBER" \
+            --arg notes "MAI $VERSION" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg sig "$SIGNATURE" \
+            --arg url "$DOWNLOAD_URL" \
+            '{version:$ver, notes:$notes, pub_date:$date, platforms:{"windows-x86_64":{signature:$sig, url:$url}}}' \
+            > "$NSIS_DIR/latest.json"
+          echo "Generated latest.json:"
+          cat "$NSIS_DIR/latest.json"
+
       - name: Publish installer to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           VERSION="${{ steps.version.outputs.version }}"
-          find frontend/src-tauri/target/release/bundle/nsis -name "*.exe" -exec echo "Found installer: {}" \;
+          NSIS_DIR="frontend/src-tauri/target/release/bundle/nsis"
+          echo "=== Installer artifacts ==="
+          find "$NSIS_DIR" -maxdepth 1 \( -name "*.exe" -o -name "*.sig" -o -name "*.zip" -o -name "latest.json" \) -exec echo "  {}" \;
+          UPLOAD_FILES=$(find "$NSIS_DIR" -maxdepth 1 \( -name "*setup.exe" -o -name "*.exe.sig" -o -name "*.nsis.zip" -o -name "*.nsis.zip.sig" -o -name "latest.json" \) | sort)
+          if [ -z "$UPLOAD_FILES" ]; then
+            echo "::error::No artifacts found to upload"
+            exit 1
+          fi
           if gh release view "$VERSION" >/dev/null 2>&1; then
-            gh release upload "$VERSION" frontend/src-tauri/target/release/bundle/nsis/*.exe --clobber
+            echo "$UPLOAD_FILES" | xargs gh release upload "$VERSION" --clobber
           else
-            gh release create "$VERSION" frontend/src-tauri/target/release/bundle/nsis/*.exe \
+            echo "$UPLOAD_FILES" | xargs gh release create "$VERSION" \
               --target "$GITHUB_SHA" \
               --title "MAI $VERSION" \
               --generate-notes

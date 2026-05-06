@@ -513,6 +513,7 @@ function PhasesView() {
   const [tokenBudget, setTokenBudget] = useState(12000);
   const [facilitatorExit, setFacilitatorExit] = useState(false);
   const [facilitatorTags, setFacilitatorTags] = useState("phase_exhausted");
+  const [autoDiscuss, setAutoDiscuss] = useState(false);
   const allowedItems = splitTags(allowedValues);
   const exitConditions = buildExitConditions({
     roundsExit,
@@ -544,6 +545,7 @@ function PhasesView() {
               : { type: "all" },
         ordering_rule: { type: orderingType },
         exit_conditions: exitConditions,
+        auto_discuss: autoDiscuss,
         role_constraints: roleConstraints,
         prompt_template: promptTemplate,
         tags: splitTags(tags)
@@ -570,6 +572,7 @@ function PhasesView() {
             <div className="mt-3 flex flex-wrap gap-2">
               <StatusPill tone="brand">{phase.ordering_rule.type}</StatusPill>
               <StatusPill tone="accent">{String(phase.allowed_speakers.type ?? "allowed")}</StatusPill>
+              {phase.auto_discuss && <StatusPill tone="accent">auto_discuss</StatusPill>}
               {phase.exit_conditions.slice(0, 3).map((condition, index) => (
                 <StatusPill key={`${phase.id}-exit-${index}`}>{String(condition.type ?? "exit")}</StatusPill>
               ))}
@@ -655,6 +658,15 @@ function PhasesView() {
               <input name="phase-facilitator-tags" className="input w-full" value={facilitatorTags} onChange={(event) => setFacilitatorTags(event.target.value)} />
             </div>
           </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              name="phase-auto-discuss"
+              type="checkbox"
+              checked={autoDiscuss}
+              onChange={(event) => setAutoDiscuss(event.target.checked)}
+            />
+            自动讨论（AI 持续发言直到退出条件）
+          </label>
           <label className="block">
             <span className="label">角色约束</span>
             <textarea name="phase-role-constraints" className="textarea mt-1 w-full" value={roleConstraints} onChange={(event) => setRoleConstraints(event.target.value)} />

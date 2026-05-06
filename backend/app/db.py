@@ -75,6 +75,8 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
         ("max_phase_rounds", "integer DEFAULT 3 NOT NULL", "INTEGER DEFAULT 3 NOT NULL"),
         ("max_account_daily_tokens", "integer DEFAULT 250000 NOT NULL", "INTEGER DEFAULT 250000 NOT NULL"),
         ("max_account_monthly_tokens", "integer DEFAULT 3000000 NOT NULL", "INTEGER DEFAULT 3000000 NOT NULL"),
+        ("consecutive_ai_turns", "integer DEFAULT 0 NOT NULL", "INTEGER DEFAULT 0 NOT NULL"),
+        ("max_consecutive_ai_turns", "integer DEFAULT 10 NOT NULL", "INTEGER DEFAULT 10 NOT NULL"),
     ],
     "personas": [
         ("api_provider_id", "varchar(36)", "VARCHAR(36)"),
@@ -86,6 +88,9 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "messages": [
         ("user_masquerade_name", "varchar(120)", "VARCHAR(120)"),
+    ],
+    "phase_templates": [
+        ("auto_discuss", "boolean DEFAULT false NOT NULL", "BOOLEAN DEFAULT 0 NOT NULL"),
     ],
 }
 
