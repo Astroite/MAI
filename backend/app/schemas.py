@@ -153,6 +153,98 @@ class PersonaUpdate(APIModel):
     tags: list[str] | None = None
 
 
+# ---- New persona model (template + room-scoped instance) -------------------
+
+
+class PersonaTemplateOut(APIModel):
+    id: str
+    version: int
+    schema_version: int
+    status: Literal["draft", "published"]
+    forked_from_id: str | None = None
+    forked_from_version: int | None = None
+    owner_user_id: str | None = None
+    is_builtin: bool
+    kind: Literal["discussant", "scribe", "facilitator"]
+    name: str
+    description: str
+    backing_model: str
+    api_provider_id: str | None = None
+    system_prompt: str
+    temperature: float
+    config: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class PersonaTemplateCreate(APIModel):
+    kind: Literal["discussant", "scribe", "facilitator"] = "discussant"
+    name: str
+    description: str = ""
+    backing_model: str = "openai/gpt-4o-mini"
+    api_provider_id: str | None = None
+    system_prompt: str
+    temperature: float = 0.4
+    config: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+
+
+class PersonaTemplateUpdate(APIModel):
+    """Patch a user-owned template. Builtin templates reject mutation at the
+    route layer with 403 — duplicate then edit the copy."""
+
+    name: str | None = None
+    description: str | None = None
+    backing_model: str | None = None
+    api_provider_id: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = None
+    config: dict[str, Any] | None = None
+    tags: list[str] | None = None
+
+
+class PersonaInstanceOut(APIModel):
+    id: str
+    room_id: str
+    template_id: str
+    template_version: int
+    position: int
+    kind: Literal["discussant", "scribe", "facilitator"]
+    name: str
+    description: str
+    backing_model: str
+    api_provider_id: str | None = None
+    system_prompt: str
+    temperature: float
+    config: dict[str, Any] = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class PersonaInstanceUpdate(APIModel):
+    """Per-room edits. `name` and `kind` are immutable post-create — sent in
+    the payload they trigger a 422 via `extra='forbid'`."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    description: str | None = None
+    backing_model: str | None = None
+    api_provider_id: str | None = None
+    system_prompt: str | None = None
+    temperature: float | None = None
+    config: dict[str, Any] | None = None
+    tags: list[str] | None = None
+
+
+class AddPersonaInstancesRequest(APIModel):
+    template_ids: list[str]
+
+
+# ----------------------------------------------------------------------------
+
+
 def _mask_api_key(key: str) -> str:
     if not key:
         return ""
@@ -542,7 +634,7 @@ class InFlightPartialOut(APIModel):
 class RoomState(APIModel):
     room: RoomOut
     runtime: RoomRuntimeOut
-    personas: list[PersonaOut]
+    personas: list[PersonaInstanceOut]
     phase_plan: list[RoomPhasePlanOut]
     current_phase: RoomPhaseInstanceOut | None
     messages: list[MessageOut]

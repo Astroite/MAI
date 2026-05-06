@@ -24,6 +24,12 @@ class User(Base):
 
 
 class Persona(Base):
+    """Legacy table; superseded by PersonaTemplate + PersonaInstance.
+
+    Kept temporarily so the persona-split migration can read the old rows.
+    Removed once all consumers (engine, main, seed, schemas) switch over.
+    """
+
     __tablename__ = "personas"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -45,6 +51,72 @@ class Persona(Base):
     tags: Mapped[list[str]] = mapped_column(JSONType, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class PersonaTemplate(Base):
+    __tablename__ = "persona_templates"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(32), default="published")
+    forked_from_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    forked_from_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
+    kind: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    backing_model: Mapped[str] = mapped_column(String(160))
+    api_provider_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True
+    )
+    system_prompt: Mapped[str] = mapped_column(Text)
+    temperature: Mapped[float] = mapped_column(default=0.4)
+    config: Mapped[dict] = mapped_column(JSONType, default=dict)
+    tags: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class PersonaInstance(Base):
+    __tablename__ = "persona_instances"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    room_id: Mapped[str] = mapped_column(String(36), ForeignKey("rooms.id", ondelete="CASCADE"), index=True)
+    template_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("persona_templates.id", ondelete="RESTRICT"), index=True
+    )
+    template_version: Mapped[int] = mapped_column(Integer, default=1)
+    position: Mapped[int] = mapped_column(Integer, default=0)
+    # Snapshot — copied from template at instance creation. name + kind are
+    # immutable post-create (enforced by PersonaInstanceUpdate's field whitelist).
+    kind: Mapped[str] = mapped_column(String(32))
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    backing_model: Mapped[str] = mapped_column(String(160))
+    api_provider_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True
+    )
+    system_prompt: Mapped[str] = mapped_column(Text)
+    temperature: Mapped[float] = mapped_column(default=0.4)
+    config: Mapped[dict] = mapped_column(JSONType, default=dict)
+    tags: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        Index("ix_persona_instances_room_template", "room_id", "template_id"),
+    )
+
+
+class MigrationRecord(Base):
+    """Tracks which one-shot data migrations have been applied."""
+
+    __tablename__ = "_migrations"
+
+    name: Mapped[str] = mapped_column(String(120), primary_key=True)
+    applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class ApiProvider(Base):

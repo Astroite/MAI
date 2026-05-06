@@ -1,20 +1,22 @@
-def test_masquerade_reveal_flow(client, review_format, discussant_personas):
+def test_masquerade_reveal_flow(client, review_format, discussant_personas, instance_for_template):
     speaker = discussant_personas[0]
     room = client.post(
         "/rooms",
         json={"title": "pytest masquerade reveal", "format_id": review_format["id"], "persona_ids": [speaker["id"]]},
     ).json()
     room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
 
     masquerade = client.post(
         f"/rooms/{room_id}/masquerade",
+        # Masquerade body carries a TEMPLATE id; backend resolves to the room's instance.
         json={"persona_id": speaker["id"], "content": "我以该人设补充一个受控观点。"},
     )
     assert masquerade.status_code == 200
     masquerade_payload = masquerade.json()
     assert masquerade_payload["author_actual"] == "user_as_persona"
-    assert masquerade_payload["author_persona_id"] == speaker["id"]
-    assert masquerade_payload["user_masquerade_persona_id"] == speaker["id"]
+    assert masquerade_payload["author_persona_id"] == speaker_instance_id
+    assert masquerade_payload["user_masquerade_persona_id"] == speaker_instance_id
     assert masquerade_payload["user_masquerade_name"] == speaker["name"]
     assert masquerade_payload["user_revealed_at"] is None
 

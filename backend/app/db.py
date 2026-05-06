@@ -102,7 +102,9 @@ def _ensure_added_columns(sync_conn: Connection) -> None:
 
 async def create_schema() -> None:
     from . import models  # noqa: F401
+    from . import migrate_personas
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_ensure_added_columns)
+        await conn.run_sync(migrate_personas.run)

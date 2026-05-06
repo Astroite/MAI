@@ -14,10 +14,9 @@ from .models import (
     Decision,
     FacilitatorSignal,
     Message,
-    Persona,
+    PersonaInstance,
     PhaseTemplate,
     Room,
-    RoomPersona,
     RoomPhaseInstance,
     RoomPhasePlan,
     RoomRuntimeState,
@@ -167,37 +166,33 @@ async def get_phase_template(session: AsyncSession, phase_instance: RoomPhaseIns
     return await session.get(PhaseTemplate, phase_instance.phase_template_id)
 
 
-async def resolve_api_provider(session: AsyncSession, persona: Persona) -> ApiProvider | None:
+async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) -> ApiProvider | None:
     if not persona.api_provider_id:
         return None
     return await session.get(ApiProvider, persona.api_provider_id)
 
 
-async def get_room_discussants(session: AsyncSession, room_id: str) -> list[Persona]:
+async def get_room_discussants(session: AsyncSession, room_id: str) -> list[PersonaInstance]:
     stmt = (
-        select(Persona)
-        .join(RoomPersona, RoomPersona.persona_id == Persona.id)
-        .where(and_(RoomPersona.room_id == room_id, Persona.kind == "discussant"))
-        .order_by(Persona.name)
+        select(PersonaInstance)
+        .where(and_(PersonaInstance.room_id == room_id, PersonaInstance.kind == "discussant"))
+        .order_by(PersonaInstance.position, PersonaInstance.name)
     )
     return list((await session.scalars(stmt)).all())
 
 
-async def get_room_system_persona(session: AsyncSession, room_id: str, kind: Literal["scribe", "facilitator"]) -> Persona:
-    room_stmt = (
-        select(Persona)
-        .join(RoomPersona, RoomPersona.persona_id == Persona.id)
-        .where(and_(RoomPersona.room_id == room_id, Persona.kind == kind))
-        .order_by(Persona.is_builtin, Persona.name)
+async def get_room_system_persona(
+    session: AsyncSession, room_id: str, kind: Literal["scribe", "facilitator"]
+) -> PersonaInstance:
+    stmt = (
+        select(PersonaInstance)
+        .where(and_(PersonaInstance.room_id == room_id, PersonaInstance.kind == kind))
+        .order_by(PersonaInstance.position, PersonaInstance.name)
         .limit(1)
     )
-    persona = await session.scalar(room_stmt)
-    if persona:
-        return persona
-    fallback_stmt = select(Persona).where(and_(Persona.kind == kind, Persona.is_builtin.is_(True))).order_by(Persona.name).limit(1)
-    persona = await session.scalar(fallback_stmt)
+    persona = await session.scalar(stmt)
     if persona is None:
-        raise ValueError(f"{kind} persona not found")
+        raise ValueError(f"{kind} persona instance not found for room {room_id}")
     return persona
 
 
@@ -207,6 +202,12 @@ async def allowed_persona_ids(
     phase_template: PhaseTemplate | None,
     plan: RoomPhasePlan | None,
 ) -> list[str]:
+    """Return *instance ids* of discussants allowed in the current phase.
+
+    Phase templates store **template ids** in `allowed_speakers.persona_ids`
+    and `variable_bindings`. We resolve those to the room's instances by
+    matching `instance.template_id`.
+    """
     discussants = await get_room_discussants(session, room_id)
     if not phase_template:
         return [p.id for p in discussants]
@@ -214,14 +215,14 @@ async def allowed_persona_ids(
     if allowed["type"] == "all":
         return [p.id for p in discussants]
     if allowed["type"] == "specific":
-        room_ids = {p.id for p in discussants}
-        return [pid for pid in allowed.get("persona_ids", []) if pid in room_ids]
+        allowed_template_ids = set(allowed.get("persona_ids", []))
+        return [p.id for p in discussants if p.template_id in allowed_template_ids]
     bindings = (plan.variable_bindings if plan else {}) or {}
-    ids: list[str] = []
+    template_ids: list[str] = []
     for variable_name in allowed.get("variable_names", []):
-        ids.extend(bindings.get(variable_name, []))
-    room_ids = {p.id for p in discussants}
-    return [pid for pid in ids if pid in room_ids]
+        template_ids.extend(bindings.get(variable_name, []))
+    template_id_set = set(template_ids)
+    return [p.id for p in discussants if p.template_id in template_id_set]
 
 
 async def pick_next_speaker(
@@ -293,7 +294,7 @@ async def _resolve_at_mention(
     if last_user_message is None or "@" not in (last_user_message.content or ""):
         return None
     personas = (
-        await session.scalars(select(Persona).where(Persona.id.in_(allowed_ids)))
+        await session.scalars(select(PersonaInstance).where(PersonaInstance.id.in_(allowed_ids)))
     ).all()
     content = last_user_message.content
     for persona in personas:
@@ -394,9 +395,11 @@ async def _stream_one_message(
     runtime: RoomRuntimeState,
     persona_id: str,
 ) -> Message:
-    persona = await session.get(Persona, persona_id)
+    # `persona_id` is a PersonaInstance.id (room-scoped); the engine never
+    # consumes raw template ids past pick_next_speaker.
+    persona = await session.get(PersonaInstance, persona_id)
     if persona is None:
-        raise ValueError("persona not found")
+        raise ValueError("persona instance not found")
     phase = await get_current_phase(session, runtime)
     template = await get_phase_template(session, phase)
     context = list(

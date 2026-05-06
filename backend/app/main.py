@@ -35,11 +35,11 @@ from .models import (
     FacilitatorSignal,
     Message,
     MergeBack,
-    Persona,
+    PersonaInstance,
+    PersonaTemplate,
     PhaseTemplate,
     Recipe,
     Room,
-    RoomPersona,
     RoomPhaseInstance,
     RoomPhasePlan,
     RoomRuntimeState,
@@ -47,7 +47,7 @@ from .models import (
     Upload,
 )
 from .schemas import (
-    AddPersonasRequest,
+    AddPersonaInstancesRequest,
     ApiProviderCreate,
     ApiProviderDetailOut,
     ApiProviderOut,
@@ -66,9 +66,11 @@ from .schemas import (
     MergeBackCreate,
     MessageCreate,
     MessageOut,
-    PersonaCreate,
-    PersonaOut,
-    PersonaUpdate,
+    PersonaInstanceOut,
+    PersonaInstanceUpdate,
+    PersonaTemplateCreate,
+    PersonaTemplateOut,
+    PersonaTemplateUpdate,
     PhaseTemplateCreate,
     PhaseTemplateOut,
     PhaseTransitionRequest,
@@ -136,21 +138,21 @@ async def _strip_api_prefix(request, call_next):
 
 @app.get("/health")
 async def health(session: AsyncSession = Depends(get_session)) -> dict:
-    await session.scalar(select(func.count(Persona.id)))
+    await session.scalar(select(func.count(PersonaTemplate.id)))
     return {"status": "ok", "database": "ok"}
 
 
-@app.get("/templates/personas", response_model=list[PersonaOut])
-async def list_personas(kind: str | None = None, session: AsyncSession = Depends(get_session)):
-    stmt = select(Persona).order_by(Persona.is_builtin.desc(), Persona.name)
+@app.get("/templates/personas", response_model=list[PersonaTemplateOut])
+async def list_persona_templates(kind: str | None = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(PersonaTemplate).order_by(PersonaTemplate.is_builtin.desc(), PersonaTemplate.name)
     if kind:
-        stmt = stmt.where(Persona.kind == kind)
+        stmt = stmt.where(PersonaTemplate.kind == kind)
     return (await session.scalars(stmt)).all()
 
 
-@app.post("/templates/personas", response_model=PersonaOut)
-async def create_persona(body: PersonaCreate, session: AsyncSession = Depends(get_session)):
-    persona = Persona(
+@app.post("/templates/personas", response_model=PersonaTemplateOut)
+async def create_persona_template(body: PersonaTemplateCreate, session: AsyncSession = Depends(get_session)):
+    template = PersonaTemplate(
         id=new_id(),
         version=1,
         schema_version=1,
@@ -158,47 +160,59 @@ async def create_persona(body: PersonaCreate, session: AsyncSession = Depends(ge
         is_builtin=False,
         **body.model_dump(),
     )
-    session.add(persona)
+    session.add(template)
     await session.commit()
-    await session.refresh(persona)
-    return persona
+    await session.refresh(template)
+    return template
 
 
-@app.patch("/templates/personas/{persona_id}", response_model=PersonaOut)
-async def update_persona(persona_id: str, body: PersonaUpdate, session: AsyncSession = Depends(get_session)):
-    persona = await session.get(Persona, persona_id)
-    if not persona:
-        raise HTTPException(404, "persona not found")
+@app.patch("/templates/personas/{template_id}", response_model=PersonaTemplateOut)
+async def update_persona_template(
+    template_id: str, body: PersonaTemplateUpdate, session: AsyncSession = Depends(get_session)
+):
+    template = await session.get(PersonaTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "persona template not found")
+    if template.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only; duplicate to customize")
     changes = body.model_dump(mode="json", exclude_unset=True)
     if not changes:
-        return persona
-    if persona.is_builtin:
-        persona = Persona(
-            id=new_id(),
-            version=1,
-            schema_version=persona.schema_version,
-            status="published",
-            forked_from_id=persona.id,
-            forked_from_version=persona.version,
-            is_builtin=False,
-            kind=persona.kind,
-            name=persona.name,
-            description=persona.description,
-            backing_model=persona.backing_model,
-            api_provider_id=persona.api_provider_id,
-            system_prompt=persona.system_prompt,
-            temperature=persona.temperature,
-            config=persona.config,
-            tags=persona.tags,
-        )
-        session.add(persona)
-    else:
-        persona.version += 1
+        return template
+    template.version += 1
     for key, value in changes.items():
-        setattr(persona, key, value)
+        setattr(template, key, value)
     await session.commit()
-    await session.refresh(persona)
-    return persona
+    await session.refresh(template)
+    return template
+
+
+@app.post("/templates/personas/{template_id}/duplicate", response_model=PersonaTemplateOut)
+async def duplicate_persona_template(template_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(PersonaTemplate, template_id)
+    if not source:
+        raise HTTPException(404, "persona template not found")
+    copy = PersonaTemplate(
+        id=new_id(),
+        version=1,
+        schema_version=source.schema_version,
+        status="published",
+        forked_from_id=source.id,
+        forked_from_version=source.version,
+        is_builtin=False,
+        kind=source.kind,
+        name=f"{source.name} 副本",
+        description=source.description,
+        backing_model=source.backing_model,
+        api_provider_id=source.api_provider_id,
+        system_prompt=source.system_prompt,
+        temperature=source.temperature,
+        config=source.config,
+        tags=source.tags,
+    )
+    session.add(copy)
+    await session.commit()
+    await session.refresh(copy)
+    return copy
 
 
 @app.get("/templates/api-providers", response_model=list[ApiProviderOut])
@@ -253,7 +267,10 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     if not provider:
         raise HTTPException(404, "api provider not found")
     await session.execute(
-        update(Persona).where(Persona.api_provider_id == provider_id).values(api_provider_id=None)
+        update(PersonaTemplate).where(PersonaTemplate.api_provider_id == provider_id).values(api_provider_id=None)
+    )
+    await session.execute(
+        update(PersonaInstance).where(PersonaInstance.api_provider_id == provider_id).values(api_provider_id=None)
     )
     await session.delete(provider)
     await session.commit()
@@ -423,8 +440,7 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
     )
     scribe = ScribeState(room_id=room.id, current_state=DEFAULT_SCRIBE_STATE.copy())
     session.add_all([runtime, scribe])
-    for persona_id in dict.fromkeys(persona_ids + system_ids):
-        session.add(RoomPersona(room_id=room.id, persona_id=persona_id))
+    await _create_persona_instances(session, room.id, list(dict.fromkeys(persona_ids + system_ids)))
 
     phase_sequence = selected_format.phase_sequence if selected_format else []
     if not phase_sequence:
@@ -454,21 +470,76 @@ async def get_room_state(room_id: str, session: AsyncSession = Depends(get_sessi
 
 
 @app.post("/rooms/{room_id}/personas", response_model=RoomState)
-async def add_room_personas(room_id: str, body: AddPersonasRequest, session: AsyncSession = Depends(get_session)):
+async def add_room_personas(
+    room_id: str, body: AddPersonaInstancesRequest, session: AsyncSession = Depends(get_session)
+):
     room = await session.get(Room, room_id)
     if not room:
         raise HTTPException(404, "room not found")
-    existing = set(
+    existing_template_ids = set(
         (
-            await session.scalars(select(RoomPersona.persona_id).where(RoomPersona.room_id == room_id))
+            await session.scalars(
+                select(PersonaInstance.template_id).where(PersonaInstance.room_id == room_id)
+            )
         ).all()
     )
-    for persona_id in body.persona_ids:
-        if persona_id not in existing:
-            session.add(RoomPersona(room_id=room_id, persona_id=persona_id))
-    await trace_record(session, room_id, "state_mutation", "personas added", {"persona_ids": body.persona_ids})
+    new_template_ids = [tid for tid in body.template_ids if tid not in existing_template_ids]
+    await _create_persona_instances(session, room_id, new_template_ids)
+    await trace_record(
+        session,
+        room_id,
+        "state_mutation",
+        "persona instances added",
+        {"template_ids": new_template_ids, "skipped_existing": sorted(existing_template_ids & set(body.template_ids))},
+    )
     await session.commit()
     return await _room_state(session, room_id)
+
+
+@app.patch("/rooms/{room_id}/persona-instances/{instance_id}", response_model=PersonaInstanceOut)
+async def update_persona_instance(
+    room_id: str,
+    instance_id: str,
+    body: PersonaInstanceUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    instance = await session.get(PersonaInstance, instance_id)
+    if not instance or instance.room_id != room_id:
+        raise HTTPException(404, "persona instance not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for key, value in changes.items():
+        setattr(instance, key, value)
+    await trace_record(
+        session,
+        room_id,
+        "state_mutation",
+        "persona instance updated",
+        {"instance_id": instance_id, "changes": list(changes.keys())},
+    )
+    await session.commit()
+    await session.refresh(instance)
+    out = PersonaInstanceOut.model_validate(instance)
+    await event_bus.publish(
+        room_id,
+        {"type": "persona.instance.updated", "instance_id": instance_id, "instance": out.model_dump(mode="json")},
+    )
+    return out
+
+
+@app.delete("/rooms/{room_id}/persona-instances/{instance_id}")
+async def delete_persona_instance(
+    room_id: str, instance_id: str, session: AsyncSession = Depends(get_session)
+):
+    instance = await session.get(PersonaInstance, instance_id)
+    if not instance or instance.room_id != room_id:
+        raise HTTPException(404, "persona instance not found")
+    await session.delete(instance)
+    await trace_record(
+        session, room_id, "state_mutation", "persona instance removed", {"instance_id": instance_id}
+    )
+    await session.commit()
+    await event_bus.publish(room_id, {"type": "persona.instance.removed", "instance_id": instance_id})
+    return {"status": "deleted"}
 
 
 @app.post("/rooms/{room_id}/messages", response_model=MessageOut)
@@ -554,20 +625,28 @@ async def update_decision_lock(
 async def create_masquerade(room_id: str, body: MasqueradeCreate, session: AsyncSession = Depends(get_session)):
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
-    persona = await session.get(Persona, body.persona_id) if body.persona_id else None
-    if body.persona_id and (not persona or persona.kind != "discussant"):
-        raise HTTPException(400, "masquerade persona must be a discussant")
+    # body.persona_id is a TEMPLATE id; resolve to the room's instance.
+    instance: PersonaInstance | None = None
+    if body.persona_id:
+        instance = await session.scalar(
+            select(PersonaInstance).where(
+                PersonaInstance.room_id == room_id,
+                PersonaInstance.template_id == body.persona_id,
+            )
+        )
+        if not instance or instance.kind != "discussant":
+            raise HTTPException(400, "masquerade persona must be a discussant present in this room")
     display_name = (body.display_name or "").strip()
     if not display_name:
-        display_name = persona.name if persona else "群友"
+        display_name = instance.name if instance else "群友"
     message = Message(
         room_id=room_id,
         phase_instance_id=runtime.current_phase_instance_id,
         message_type=body.message_type,
-        author_persona_id=persona.id if persona else None,
-        author_model=persona.backing_model if persona else None,
+        author_persona_id=instance.id if instance else None,
+        author_model=instance.backing_model if instance else None,
         author_actual="user_as_persona",
-        user_masquerade_persona_id=persona.id if persona else None,
+        user_masquerade_persona_id=instance.id if instance else None,
         user_masquerade_name=display_name,
         visibility="public",
         visibility_to_models=True,
@@ -860,16 +939,73 @@ async def _select_recipe(session: AsyncSession, recipe_id: str | None) -> Recipe
 async def _default_discussant_ids(session: AsyncSession) -> list[str]:
     rows = (
         await session.scalars(
-            select(Persona.id)
-            .where(Persona.kind == "discussant", Persona.name.in_(["架构师", "性能批评者", "维护者", "反方律师"]))
-            .order_by(Persona.name)
+            select(PersonaTemplate.id)
+            .where(
+                PersonaTemplate.kind == "discussant",
+                PersonaTemplate.name.in_(["架构师", "性能批评者", "维护者", "反方律师"]),
+            )
+            .order_by(PersonaTemplate.name)
         )
     ).all()
     return list(rows)
 
 
 async def _system_persona_ids(session: AsyncSession) -> list[str]:
-    return list((await session.scalars(select(Persona.id).where(Persona.kind.in_(["scribe", "facilitator"])))).all())
+    return list(
+        (
+            await session.scalars(
+                select(PersonaTemplate.id).where(
+                    PersonaTemplate.kind.in_(["scribe", "facilitator"])
+                )
+            )
+        ).all()
+    )
+
+
+async def _create_persona_instances(
+    session: AsyncSession, room_id: str, template_ids: list[str]
+) -> list[PersonaInstance]:
+    """Snapshot each template into a fresh PersonaInstance scoped to the room.
+
+    Skips template ids that don't resolve. Position is assigned per-room based
+    on existing count so repeat calls keep ordering stable.
+    """
+    if not template_ids:
+        return []
+    next_position = (
+        await session.scalar(
+            select(func.coalesce(func.max(PersonaInstance.position), -1) + 1).where(
+                PersonaInstance.room_id == room_id
+            )
+        )
+    ) or 0
+    created: list[PersonaInstance] = []
+    for template_id in template_ids:
+        template = await session.get(PersonaTemplate, template_id)
+        if template is None:
+            continue
+        instance = PersonaInstance(
+            id=new_id(),
+            room_id=room_id,
+            template_id=template.id,
+            template_version=template.version,
+            position=int(next_position),
+            kind=template.kind,
+            name=template.name,
+            description=template.description,
+            backing_model=template.backing_model,
+            api_provider_id=template.api_provider_id,
+            system_prompt=template.system_prompt,
+            temperature=template.temperature,
+            config=dict(template.config or {}),
+            tags=list(template.tags or []),
+        )
+        session.add(instance)
+        created.append(instance)
+        next_position = int(next_position) + 1
+    if created:
+        await session.flush()
+    return created
 
 
 async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
@@ -879,10 +1015,9 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         raise HTTPException(404, "room not found")
     personas = (
         await session.scalars(
-            select(Persona)
-            .join(RoomPersona, RoomPersona.persona_id == Persona.id)
-            .where(RoomPersona.room_id == room_id)
-            .order_by(Persona.kind, Persona.name)
+            select(PersonaInstance)
+            .where(PersonaInstance.room_id == room_id)
+            .order_by(PersonaInstance.kind, PersonaInstance.position, PersonaInstance.name)
         )
     ).all()
     phase_plan = (
@@ -932,7 +1067,7 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
     return RoomState(
         room=RoomOut.model_validate(room),
         runtime=RoomRuntimeOut.model_validate(runtime),
-        personas=[PersonaOut.model_validate(p) for p in personas],
+        personas=[PersonaInstanceOut.model_validate(p) for p in personas],
         phase_plan=[RoomPhasePlanOut.model_validate(p) for p in phase_plan],
         current_phase=RoomPhaseInstanceOut.model_validate(current_phase) if current_phase else None,
         messages=message_outputs,

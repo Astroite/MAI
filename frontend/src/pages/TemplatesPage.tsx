@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
 import { Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../api";
-import type { DebateFormat, Persona, PersonaKind, PhaseTemplate, Recipe } from "../types";
+import type { DebateFormat, PersonaKind, PersonaTemplate, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
 
 export function TemplatesPage() {
@@ -38,7 +38,7 @@ function TemplateNav({ to, label }: { to: string; label: string }) {
 
 function PersonasView() {
   const queryClient = useQueryClient();
-  const personas = useQuery({ queryKey: ["personas"], queryFn: () => api.personas() });
+  const personas = useQuery({ queryKey: ["persona-templates"], queryFn: () => api.personaTemplates() });
   const apiProviders = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(personas.data, selectedTags);
@@ -65,7 +65,11 @@ function PersonasView() {
     config: configValue.value,
     tags: splitTags(tags)
   });
-  const loadPersona = (persona: Persona) => {
+  const updatePayload = () => {
+    const { kind: _kind, ...rest } = personaPayload();
+    return rest;
+  };
+  const loadPersona = (persona: PersonaTemplate) => {
     setEditingPersonaId(persona.id);
     setKind(persona.kind);
     setName(persona.name);
@@ -91,28 +95,52 @@ function PersonasView() {
   };
   const save = useMutation({
     mutationFn: () =>
-      editingPersonaId ? api.updatePersona(editingPersonaId, personaPayload()) : api.createPersona(personaPayload()),
+      editingPersonaId
+        ? api.updatePersonaTemplate(editingPersonaId, updatePayload())
+        : api.createPersonaTemplate(personaPayload()),
     onSuccess: (saved) => {
       loadPersona(saved);
-      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
     }
   });
+  const duplicate = useMutation({
+    mutationFn: (templateId: string) => api.duplicatePersonaTemplate(templateId),
+    onSuccess: (copy) => {
+      loadPersona(copy);
+      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+    }
+  });
+  const editingIsBuiltin = editingPersona?.is_builtin ?? false;
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
         <Header title="人设模板" />
+        <p className="text-xs text-muted">
+          模板是“蓝本”，加入房间时会派生为该房间专属的实例。在房间侧栏可对实例做局部调整，不影响模板。
+        </p>
         <TagFilterBar items={personas.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
         <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
-          {items.map((persona: Persona) => (
+          {items.map((persona: PersonaTemplate) => (
             <div key={persona.id} className="panel p-4">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-semibold">{persona.name}</h2>
                 <div className="flex items-center gap-2">
                   <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
-                  <button className="btn h-8 px-2 text-xs" type="button" onClick={() => loadPersona(persona)}>
-                    <Pencil size={14} />
-                    编辑
-                  </button>
+                  {persona.is_builtin ? (
+                    <button
+                      className="btn h-8 px-2 text-xs"
+                      type="button"
+                      onClick={() => duplicate.mutate(persona.id)}
+                      disabled={duplicate.isPending}
+                    >
+                      <Plus size={14} /> 复制为我的模板
+                    </button>
+                  ) : (
+                    <button className="btn h-8 px-2 text-xs" type="button" onClick={() => loadPersona(persona)}>
+                      <Pencil size={14} />
+                      编辑
+                    </button>
+                  )}
                 </div>
               </div>
               <p className="mt-2 text-sm text-muted">{persona.description}</p>
@@ -128,7 +156,7 @@ function PersonasView() {
       </div>
       <aside className="panel p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold">{editingPersonaId ? "编辑人设" : "新建人设"}</h2>
+          <h2 className="font-semibold">{editingPersonaId ? "编辑模板" : "新建模板"}</h2>
           {editingPersonaId && (
             <button className="btn h-8 px-2 text-xs" type="button" onClick={resetPersonaForm}>
               <Plus size={14} />
@@ -136,11 +164,22 @@ function PersonasView() {
             </button>
           )}
         </div>
+        {editingIsBuiltin && (
+          <p className="mt-2 rounded-md border border-border bg-surface p-2 text-xs text-muted">
+            内建模板只读。请使用“复制为我的模板”创建可编辑副本。
+          </p>
+        )}
         <div className="mt-4 space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="label">Kind</span>
-              <select name="persona-kind" className="input mt-1 w-full" value={kind} onChange={(event) => setKind(event.target.value as PersonaKind)}>
+              <select
+                name="persona-kind"
+                className="input mt-1 w-full"
+                value={kind}
+                onChange={(event) => setKind(event.target.value as PersonaKind)}
+                disabled={Boolean(editingPersonaId)}
+              >
                 <option value="discussant">discussant</option>
                 <option value="scribe">scribe</option>
                 <option value="facilitator">facilitator</option>
@@ -204,9 +243,13 @@ function PersonasView() {
             <textarea name="persona-config-json" className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
           </label>
           {!configValue.ok && <div className="text-xs text-danger">Config 必须是 JSON object。</div>}
-          <button className="btn btn-primary w-full" onClick={() => save.mutate()} disabled={!name.trim() || !systemPrompt.trim() || !configValue.ok || save.isPending}>
+          <button
+            className="btn btn-primary w-full"
+            onClick={() => save.mutate()}
+            disabled={editingIsBuiltin || !name.trim() || !systemPrompt.trim() || !configValue.ok || save.isPending}
+          >
             <Save size={16} />
-            {editingPersona?.is_builtin ? "保存为副本" : editingPersonaId ? "保存修改" : "保存人设"}
+            {editingPersonaId ? "保存修改" : "保存模板"}
           </button>
         </div>
       </aside>
@@ -634,7 +677,10 @@ function RecipesView() {
   const queryClient = useQueryClient();
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
-  const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
+  const personas = useQuery({
+    queryKey: ["persona-templates", "discussant"],
+    queryFn: () => api.personaTemplates("discussant")
+  });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(recipes.data, selectedTags);
   const [name, setName] = useState("我的方案评审配方");

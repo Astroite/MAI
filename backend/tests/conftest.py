@@ -54,3 +54,23 @@ def discussant_personas(client):
 @pytest.fixture
 def architect_persona(discussant_personas):
     return next(item for item in discussant_personas if item["name"] == "架构师")
+
+
+def room_instance_id_for_template(client, room_id: str, template_id: str) -> str:
+    """Resolve a room's PersonaInstance id from the template id it was
+    spawned from. Tests that pass `template_id` into room creation use this
+    to assert against `author_persona_id` / `speaker_persona_id` which carry
+    instance ids post-refactor."""
+    state = client.get(f"/rooms/{room_id}/state").json()
+    for persona in state["personas"]:
+        if persona["template_id"] == template_id:
+            return persona["id"]
+    raise KeyError(f"no instance for template {template_id} in room {room_id}")
+
+
+@pytest.fixture
+def instance_for_template(client):
+    def _resolver(room_id: str, template_id: str) -> str:
+        return room_instance_id_for_template(client, room_id, template_id)
+
+    return _resolver

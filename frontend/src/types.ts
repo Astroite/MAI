@@ -1,6 +1,6 @@
 export type PersonaKind = "discussant" | "scribe" | "facilitator";
 
-export interface Persona {
+export interface PersonaTemplate {
   id: string;
   version: number;
   kind: PersonaKind;
@@ -13,6 +13,25 @@ export interface Persona {
   config: Record<string, unknown>;
   tags: string[];
   is_builtin: boolean;
+  owner_user_id?: string | null;
+  forked_from_id?: string | null;
+}
+
+export interface PersonaInstance {
+  id: string;
+  room_id: string;
+  template_id: string;
+  template_version: number;
+  position: number;
+  kind: PersonaKind;
+  name: string;
+  description: string;
+  backing_model: string;
+  api_provider_id?: string | null;
+  system_prompt: string;
+  temperature: number;
+  config: Record<string, unknown>;
+  tags: string[];
 }
 
 export interface ApiProvider {
@@ -166,7 +185,7 @@ export interface Decision {
 export interface RoomState {
   room: Room;
   runtime: Runtime;
-  personas: Persona[];
+  personas: PersonaInstance[];
   phase_plan: PhasePlan[];
   current_phase?: PhaseInstance | null;
   messages: Message[];

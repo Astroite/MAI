@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { RotateCcw } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
-import type { Message, Persona } from "../../types";
+import type { Message, PersonaInstance } from "../../types";
 import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
 
@@ -31,7 +31,7 @@ export function MessageList({
   roomId: string;
   frozen: boolean;
   messages: Message[];
-  personas: Persona[];
+  personas: PersonaInstance[];
 }) {
   const streaming = useUIStore((state) => state.streaming);
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -106,7 +106,7 @@ function MessageRow({
   roomId: string;
   frozen: boolean;
   message: Message;
-  persona?: Persona;
+  persona?: PersonaInstance;
   revoked: boolean;
 }) {
   const queryClient = useQueryClient();

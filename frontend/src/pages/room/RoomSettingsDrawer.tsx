@@ -60,7 +60,12 @@ export function RoomSettingsDrawer({
 
   if (!open) return null;
 
-  const discussantIds = state.personas.filter((p) => p.kind === "discussant").map((p) => p.id);
+  // Subrooms spawn fresh PersonaInstances from templates, so cloning into a
+  // child must hand over template ids — instance ids are room-scoped and
+  // would not resolve in the subroom.
+  const discussantIds = state.personas
+    .filter((p) => p.kind === "discussant")
+    .map((p) => p.template_id);
 
   return (
     <div className="fixed inset-0 z-30 flex">

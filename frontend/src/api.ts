@@ -4,7 +4,8 @@ import type {
   DebateFormat,
   Decision,
   Message,
-  Persona,
+  PersonaInstance,
+  PersonaTemplate,
   PhaseTemplate,
   Recipe,
   Room,
@@ -47,10 +48,26 @@ export const api = {
     roomId: string,
     body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }
   ) => request<RoomState>(`/rooms/${roomId}/subrooms`, { method: "POST", body: JSON.stringify(body) }),
-  personas: (kind?: string) => request<Persona[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
-  createPersona: (body: unknown) => request<Persona>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
-  updatePersona: (personaId: string, body: unknown) =>
-    request<Persona>(`/templates/personas/${personaId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  personaTemplates: (kind?: string) =>
+    request<PersonaTemplate[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
+  createPersonaTemplate: (body: unknown) =>
+    request<PersonaTemplate>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
+  updatePersonaTemplate: (templateId: string, body: unknown) =>
+    request<PersonaTemplate>(`/templates/personas/${templateId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  duplicatePersonaTemplate: (templateId: string) =>
+    request<PersonaTemplate>(`/templates/personas/${templateId}/duplicate`, { method: "POST" }),
+  addRoomPersonaInstances: (roomId: string, template_ids: string[]) =>
+    request<RoomState>(`/rooms/${roomId}/personas`, {
+      method: "POST",
+      body: JSON.stringify({ template_ids })
+    }),
+  updatePersonaInstance: (roomId: string, instanceId: string, body: unknown) =>
+    request<PersonaInstance>(`/rooms/${roomId}/persona-instances/${instanceId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  removePersonaInstance: (roomId: string, instanceId: string) =>
+    request<{ status: string }>(`/rooms/${roomId}/persona-instances/${instanceId}`, { method: "DELETE" }),
   apiProviders: () => request<ApiProvider[]>("/templates/api-providers"),
   apiProviderDetail: (providerId: string) =>
     request<ApiProviderDetail>(`/templates/api-providers/${providerId}`),

@@ -12,7 +12,10 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
-  const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
+  const personas = useQuery({
+    queryKey: ["persona-templates", "discussant"],
+    queryFn: () => api.personaTemplates("discussant")
+  });
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState("新讨论");
 

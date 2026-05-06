@@ -59,13 +59,15 @@ def test_update_persona_and_format_templates(client):
     assert persona_payload["config"]["deep_thinking"] is True
 
     builtin_persona = next(item for item in client.get("/templates/personas").json() if item["is_builtin"])
-    forked_persona = client.patch(
+    rejected = client.patch(
         f"/templates/personas/{builtin_persona['id']}",
         json={"name": "pytest forked builtin persona", "tags": ["pytest", "fork"]},
-    ).json()
-    assert forked_persona["id"] != builtin_persona["id"]
-    assert forked_persona["forked_from_id"] == builtin_persona["id"]
-    assert forked_persona["is_builtin"] is False
+    )
+    assert rejected.status_code == 403
+    duplicated = client.post(f"/templates/personas/{builtin_persona['id']}/duplicate").json()
+    assert duplicated["id"] != builtin_persona["id"]
+    assert duplicated["forked_from_id"] == builtin_persona["id"]
+    assert duplicated["is_builtin"] is False
 
     phases = client.get("/templates/phases").json()
     debate_format = client.post(
@@ -156,7 +158,7 @@ def test_api_provider_crud_and_persona_link(client):
     assert client.get(f"/templates/api-providers/{provider_id}").status_code == 404
 
 
-def test_api_provider_credentials_reach_llm_adapter(client, review_format, monkeypatch):
+def test_api_provider_credentials_reach_llm_adapter(client, review_format, instance_for_template, monkeypatch):
     """Bound ApiProvider credentials must flow into LLMAdapter.stream."""
     captured: dict = {}
 
@@ -195,10 +197,13 @@ def test_api_provider_credentials_reach_llm_adapter(client, review_format, monke
         },
     ).json()
     room_id = room["room"]["id"]
+    persona_instance_id = instance_for_template(room_id, persona["id"])
     assert client.post(f"/rooms/{room_id}/messages", json={"content": "测试凭据注入。"}).status_code == 200
 
-    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": persona["id"]})
+    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": persona_instance_id})
     assert turn.status_code == 200
-    assert captured["persona_id"] == persona["id"]
+    # Engine passes the room-scoped PersonaInstance to llm_adapter, so
+    # captured persona.id is the instance id, not the template id.
+    assert captured["persona_id"] == persona_instance_id
     assert captured["api_provider"] is not None
     assert captured["api_provider"].api_key == "sk-credential-test"

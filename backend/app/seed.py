@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .ids import builtin_id
-from .models import DebateFormat, Persona, PhaseTemplate, Recipe
+from .models import DebateFormat, PersonaTemplate, PhaseTemplate, Recipe
 
 
 def _transition() -> list[dict]:
@@ -329,13 +329,13 @@ RECIPE_DEFS: list[dict] = [
 
 
 async def seed_builtins(session: AsyncSession) -> None:
-    existing_persona = await session.scalar(select(Persona.id).limit(1))
+    existing_persona = await session.scalar(select(PersonaTemplate.id).limit(1))
     if existing_persona is None:
         for data in BUILTIN_PERSONAS:
             item = data.copy()
             key = item.pop("key")
             session.add(
-                Persona(
+                PersonaTemplate(
                     id=builtin_id("persona", key),
                     version=1,
                     schema_version=1,

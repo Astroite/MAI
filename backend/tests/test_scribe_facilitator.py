@@ -13,7 +13,7 @@ KNOWN_FACILITATOR_TAGS = {
 }
 
 
-def test_scribe_folds_verdicts_into_decisions(client, review_format, architect_persona):
+def test_scribe_folds_verdicts_into_decisions(client, review_format, architect_persona, instance_for_template):
     """A verdict must end up in scribe_state.decisions referencing the verdict message id."""
     room = client.post(
         "/rooms",
@@ -21,6 +21,7 @@ def test_scribe_folds_verdicts_into_decisions(client, review_format, architect_p
     )
     assert room.status_code == 200
     room_id = room.json()["room"]["id"]
+    architect_instance_id = instance_for_template(room_id, architect_persona["id"])
 
     for content in [
         "目标是评审结构化工具调用。",
@@ -44,7 +45,7 @@ def test_scribe_folds_verdicts_into_decisions(client, review_format, architect_p
     assert first_batch, "facilitator batch must contain at least one signal"
     assert all(signal["tag"] in KNOWN_FACILITATOR_TAGS for signal in first_batch)
 
-    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": architect_persona["id"]})
+    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": architect_instance_id})
     assert turn.status_code == 200
     payload = turn.json()
     assert payload[0]["author_actual"] == "ai"

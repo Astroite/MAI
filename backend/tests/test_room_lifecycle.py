@@ -1,4 +1,4 @@
-def test_layered_limit_update_and_phase_round_exit(client, discussant_personas):
+def test_layered_limit_update_and_phase_round_exit(client, discussant_personas, instance_for_template):
     speaker = discussant_personas[0]
     phase = client.post(
         "/templates/phases",
@@ -27,6 +27,7 @@ def test_layered_limit_update_and_phase_round_exit(client, discussant_personas):
         json={"title": "pytest layered limits", "format_id": debate_format["id"], "persona_ids": [speaker["id"]]},
     ).json()
     room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
 
     limits = client.patch(
         f"/rooms/{room_id}/limits",
@@ -44,14 +45,14 @@ def test_layered_limit_update_and_phase_round_exit(client, discussant_personas):
     assert runtime["max_account_daily_tokens"] == 5000
     assert runtime["max_account_monthly_tokens"] == 50000
 
-    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": speaker["id"]})
+    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": speaker_instance_id})
     assert turn.status_code == 200
     state = client.get(f"/rooms/{room_id}/state").json()
     assert state["runtime"]["phase_exit_suggested"] is True
     assert any(item["type"] == "phase_round_limit" for item in state["runtime"]["phase_exit_matched_conditions"])
 
 
-def test_room_full_lifecycle(client, review_format, architect_persona):
+def test_room_full_lifecycle(client, review_format, architect_persona, instance_for_template):
     """Smoke: room create -> user msg -> turn -> phase continue -> subroom -> merge_back."""
     room = client.post(
         "/rooms",
@@ -59,16 +60,17 @@ def test_room_full_lifecycle(client, review_format, architect_persona):
     )
     assert room.status_code == 200
     room_id = room.json()["room"]["id"]
+    architect_instance_id = instance_for_template(room_id, architect_persona["id"])
 
     message = client.post(f"/rooms/{room_id}/messages", json={"content": "请评审 SSE + append-only 的方案。"})
     assert message.status_code == 200
 
-    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": architect_persona["id"]})
+    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": architect_instance_id})
     assert turn.status_code == 200
     payload = turn.json()
     assert payload
     assert payload[0]["author_actual"] == "ai"
-    assert payload[0]["author_persona_id"] == architect_persona["id"]
+    assert payload[0]["author_persona_id"] == architect_instance_id
 
     state = client.get(f"/rooms/{room_id}/state").json()
     assert state["runtime"]["phase_exit_suggested"] is True

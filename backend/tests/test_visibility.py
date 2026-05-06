@@ -4,7 +4,7 @@ from app.llm import llm_adapter
 
 
 def test_hidden_facilitator_messages_are_filtered_from_llm_context(
-    client, review_format, discussant_personas, monkeypatch
+    client, review_format, discussant_personas, instance_for_template, monkeypatch
 ):
     captured = {}
 
@@ -21,6 +21,7 @@ def test_hidden_facilitator_messages_are_filtered_from_llm_context(
         json={"title": "pytest visibility filtering", "format_id": review_format["id"], "persona_ids": [speaker["id"]]},
     ).json()
     room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
 
     for index in range(5):
         assert client.post(f"/rooms/{room_id}/messages", json={"content": f"可见讨论消息 {index}"}).status_code == 200
@@ -28,7 +29,7 @@ def test_hidden_facilitator_messages_are_filtered_from_llm_context(
     hidden_messages = [message for message in state["messages"] if message["visibility_to_models"] is False]
     assert hidden_messages, "facilitator output should produce visibility_to_models=False messages"
 
-    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": speaker["id"]})
+    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": speaker_instance_id})
     assert turn.status_code == 200
     assert "contents" in captured
     assert any("可见讨论消息" in content for content in captured["contents"])

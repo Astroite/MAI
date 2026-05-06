@@ -22,6 +22,13 @@ def _wait_for_ai_message(client, room_id, *, after_count: int, timeout: float = 
     ]
 
 
+def _instance_ids_by_template(client, room_id: str) -> dict[str, str]:
+    return {
+        p["template_id"]: p["id"]
+        for p in client.get(f"/rooms/{room_id}/state").json()["personas"]
+    }
+
+
 def test_pick_next_speaker_ordering_rules(client, discussant_personas):
     async def pick(room_id: str):
         async with SessionLocal() as session:
@@ -33,8 +40,9 @@ def test_pick_next_speaker_ordering_rules(client, discussant_personas):
             return result.kind, result.persona_ids, result.reason
 
     personas = discussant_personas[:2]
-    persona_ids = {persona["id"] for persona in personas}
+    template_ids = [persona["id"] for persona in personas]
     results = {}
+    instance_ids_by_ordering = {}
     for ordering in ["mention_driven", "user_picks", "parallel", "round_robin", "alternating", "question_paired"]:
         phase = client.post(
             "/templates/phases",
@@ -63,26 +71,30 @@ def test_pick_next_speaker_ordering_rules(client, discussant_personas):
             json={
                 "title": f"pytest ordering room {ordering}",
                 "format_id": debate_format["id"],
-                "persona_ids": list(persona_ids),
+                "persona_ids": template_ids,
             },
         ).json()
-        results[ordering] = asyncio.run(pick(room["room"]["id"]))
+        room_id = room["room"]["id"]
+        instance_map = _instance_ids_by_template(client, room_id)
+        instance_ids_by_ordering[ordering] = {instance_map[t] for t in template_ids}
+        results[ordering] = asyncio.run(pick(room_id))
 
     # mention_driven falls back to round-robin when no @-mention exists so
-    # auto-drive can keep moving the room forward.
+    # auto-drive can keep moving the room forward. pick_next_speaker returns
+    # PersonaInstance ids — match against the per-room instance map.
     assert results["mention_driven"][0] == "single"
     assert "round-robin" in results["mention_driven"][2]
     assert len(results["mention_driven"][1]) == 1
-    assert results["mention_driven"][1][0] in persona_ids
+    assert results["mention_driven"][1][0] in instance_ids_by_ordering["mention_driven"]
     assert results["user_picks"][0] == "wait"
     assert results["parallel"][0] == "parallel"
-    assert set(results["parallel"][1]) == persona_ids
+    assert set(results["parallel"][1]) == instance_ids_by_ordering["parallel"]
     for ordering in ["round_robin", "alternating", "question_paired"]:
         kind, picked, reason = results[ordering]
         assert kind == "single"
         assert reason == ordering
         assert len(picked) == 1
-        assert picked[0] in persona_ids
+        assert picked[0] in instance_ids_by_ordering[ordering]
 
 
 def test_freeze_cancels_active_turn(client, review_format, architect_persona):
@@ -140,6 +152,11 @@ def test_autodrive_user_message_triggers_persona_reply(
         },
     ).json()
     room_id = room["room"]["id"]
+    speaker_instance_ids = {
+        instance["id"]
+        for instance in room["personas"]
+        if instance["template_id"] in {p["id"] for p in speakers}
+    }
 
     before = len([m for m in room["messages"] if m["author_actual"] == "ai"])
     post = client.post(f"/rooms/{room_id}/messages", json={"content": "请大家自我介绍一下当前关注点。"})
@@ -147,7 +164,7 @@ def test_autodrive_user_message_triggers_persona_reply(
 
     ai_messages = _wait_for_ai_message(client, room_id, after_count=before)
     assert len(ai_messages) > before, "autodrive should produce at least one persona reply"
-    assert ai_messages[-1]["author_persona_id"] in {p["id"] for p in speakers}
+    assert ai_messages[-1]["author_persona_id"] in speaker_instance_ids
 
 
 def test_autodrive_does_not_recurse_on_persona_reply(
@@ -197,6 +214,7 @@ def test_autodrive_mention_driven_fallback(client, discussant_personas):
         },
     ).json()
     room_id = room["room"]["id"]
+    instance_map = {p["template_id"]: p["id"] for p in room["personas"]}
 
     before = len([m for m in room["messages"] if m["author_actual"] == "ai"])
     # No @-mention: should still produce a reply via round-robin fallback.
@@ -212,6 +230,7 @@ def test_autodrive_mention_driven_fallback(client, discussant_personas):
 
     # @-mentioned: the named persona must be the next speaker.
     target = speakers[1]
+    target_instance_id = instance_map[target["id"]]
     before2 = len(ai_messages)
     assert client.post(
         f"/rooms/{room_id}/messages",
@@ -219,7 +238,7 @@ def test_autodrive_mention_driven_fallback(client, discussant_personas):
     ).status_code == 200
     ai_messages2 = _wait_for_ai_message(client, room_id, after_count=before2)
     assert len(ai_messages2) > before2
-    assert ai_messages2[-1]["author_persona_id"] == target["id"], (
+    assert ai_messages2[-1]["author_persona_id"] == target_instance_id, (
         f"expected @{target['name']} to speak, got persona {ai_messages2[-1]['author_persona_id']}"
     )
 
