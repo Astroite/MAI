@@ -1,12 +1,18 @@
+import os
+import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from .config import get_settings
 from .db import create_schema, get_session
@@ -25,16 +31,18 @@ from .engine import (
 from .event_bus import event_bus
 from .ids import new_id
 from .models import (
+    ApiProvider,
+    AppSettings,
     DebateFormat,
     Decision,
     FacilitatorSignal,
     Message,
     MergeBack,
-    Persona,
+    PersonaInstance,
+    PersonaTemplate,
     PhaseTemplate,
     Recipe,
     Room,
-    RoomPersona,
     RoomPhaseInstance,
     RoomPhasePlan,
     RoomRuntimeState,
@@ -42,7 +50,14 @@ from .models import (
     Upload,
 )
 from .schemas import (
-    AddPersonasRequest,
+    AddPersonaInstancesRequest,
+    ApiProviderCreate,
+    ApiProviderDetailOut,
+    ApiProviderOut,
+    ApiProviderTestResult,
+    ApiProviderUpdate,
+    AppSettingsOut,
+    AppSettingsUpdate,
     DebateFormatCreate,
     DebateFormatOut,
     DebateFormatUpdate,
@@ -57,9 +72,11 @@ from .schemas import (
     MergeBackCreate,
     MessageCreate,
     MessageOut,
-    PersonaCreate,
-    PersonaOut,
-    PersonaUpdate,
+    PersonaInstanceOut,
+    PersonaInstanceUpdate,
+    PersonaTemplateCreate,
+    PersonaTemplateOut,
+    PersonaTemplateUpdate,
     PhaseTemplateCreate,
     PhaseTemplateOut,
     PhaseTransitionRequest,
@@ -107,23 +124,86 @@ app.add_middleware(
 )
 
 
+@app.middleware("http")
+async def _strip_api_prefix(request, call_next):
+    """Let the frontend keep using `/api/*` in single-process / packaged mode.
+
+    Backend routes are declared at root; in dev Vite's proxy already strips
+    `/api`, so requests arrive without it. In packaged mode there is no
+    proxy, so we strip it here. Tests hit root paths directly and bypass
+    this entirely.
+    """
+    path = request.scope.get("path", "")
+    if path.startswith("/api/") or path == "/api":
+        new_path = path[len("/api"):] or "/"
+        request.scope["path"] = new_path
+        if "raw_path" in request.scope and request.scope["raw_path"] is not None:
+            request.scope["raw_path"] = new_path.encode()
+    return await call_next(request)
+
+
 @app.get("/health")
 async def health(session: AsyncSession = Depends(get_session)) -> dict:
-    await session.scalar(select(func.count(Persona.id)))
-    return {"status": "ok", "database": "ok", "mock_llm": settings.mock_llm}
+    await session.scalar(select(func.count(PersonaTemplate.id)))
+    settings_row = await _get_or_create_app_settings(session)
+    setup_complete = bool(
+        settings_row.default_backing_model and settings_row.default_api_provider_id
+    )
+    return {"status": "ok", "database": "ok", "setup_complete": setup_complete}
 
 
-@app.get("/templates/personas", response_model=list[PersonaOut])
-async def list_personas(kind: str | None = None, session: AsyncSession = Depends(get_session)):
-    stmt = select(Persona).order_by(Persona.is_builtin.desc(), Persona.name)
+async def _get_or_create_app_settings(session: AsyncSession) -> AppSettings:
+    row = await session.get(AppSettings, 1)
+    if row is None:
+        row = AppSettings(id=1)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+@app.get("/settings", response_model=AppSettingsOut)
+async def get_app_settings(session: AsyncSession = Depends(get_session)):
+    row = await _get_or_create_app_settings(session)
+    return AppSettingsOut(
+        default_backing_model=row.default_backing_model,
+        default_api_provider_id=row.default_api_provider_id,
+        setup_complete=bool(row.default_backing_model and row.default_api_provider_id),
+        updated_at=row.updated_at,
+    )
+
+
+@app.patch("/settings", response_model=AppSettingsOut)
+async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = Depends(get_session)):
+    row = await _get_or_create_app_settings(session)
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "default_api_provider_id" in changes and changes["default_api_provider_id"]:
+        provider = await session.get(ApiProvider, changes["default_api_provider_id"])
+        if not provider:
+            raise HTTPException(404, "api provider not found")
+    for key, value in changes.items():
+        setattr(row, key, value or None)
+    await session.commit()
+    await session.refresh(row)
+    return AppSettingsOut(
+        default_backing_model=row.default_backing_model,
+        default_api_provider_id=row.default_api_provider_id,
+        setup_complete=bool(row.default_backing_model and row.default_api_provider_id),
+        updated_at=row.updated_at,
+    )
+
+
+@app.get("/templates/personas", response_model=list[PersonaTemplateOut])
+async def list_persona_templates(kind: str | None = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(PersonaTemplate).order_by(PersonaTemplate.is_builtin.desc(), PersonaTemplate.name)
     if kind:
-        stmt = stmt.where(Persona.kind == kind)
+        stmt = stmt.where(PersonaTemplate.kind == kind)
     return (await session.scalars(stmt)).all()
 
 
-@app.post("/templates/personas", response_model=PersonaOut)
-async def create_persona(body: PersonaCreate, session: AsyncSession = Depends(get_session)):
-    persona = Persona(
+@app.post("/templates/personas", response_model=PersonaTemplateOut)
+async def create_persona_template(body: PersonaTemplateCreate, session: AsyncSession = Depends(get_session)):
+    template = PersonaTemplate(
         id=new_id(),
         version=1,
         schema_version=1,
@@ -131,46 +211,218 @@ async def create_persona(body: PersonaCreate, session: AsyncSession = Depends(ge
         is_builtin=False,
         **body.model_dump(),
     )
-    session.add(persona)
+    session.add(template)
     await session.commit()
-    await session.refresh(persona)
-    return persona
+    await session.refresh(template)
+    return template
 
 
-@app.patch("/templates/personas/{persona_id}", response_model=PersonaOut)
-async def update_persona(persona_id: str, body: PersonaUpdate, session: AsyncSession = Depends(get_session)):
-    persona = await session.get(Persona, persona_id)
-    if not persona:
-        raise HTTPException(404, "persona not found")
+@app.patch("/templates/personas/{template_id}", response_model=PersonaTemplateOut)
+async def update_persona_template(
+    template_id: str, body: PersonaTemplateUpdate, session: AsyncSession = Depends(get_session)
+):
+    template = await session.get(PersonaTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "persona template not found")
+    if template.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only; duplicate to customize")
     changes = body.model_dump(mode="json", exclude_unset=True)
     if not changes:
-        return persona
-    if persona.is_builtin:
-        persona = Persona(
-            id=new_id(),
-            version=1,
-            schema_version=persona.schema_version,
-            status="published",
-            forked_from_id=persona.id,
-            forked_from_version=persona.version,
-            is_builtin=False,
-            kind=persona.kind,
-            name=persona.name,
-            description=persona.description,
-            backing_model=persona.backing_model,
-            system_prompt=persona.system_prompt,
-            temperature=persona.temperature,
-            config=persona.config,
-            tags=persona.tags,
-        )
-        session.add(persona)
-    else:
-        persona.version += 1
+        return template
+    template.version += 1
     for key, value in changes.items():
-        setattr(persona, key, value)
+        setattr(template, key, value)
     await session.commit()
-    await session.refresh(persona)
-    return persona
+    await session.refresh(template)
+    return template
+
+
+@app.post("/templates/personas/{template_id}/duplicate", response_model=PersonaTemplateOut)
+async def duplicate_persona_template(template_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(PersonaTemplate, template_id)
+    if not source:
+        raise HTTPException(404, "persona template not found")
+    copy = PersonaTemplate(
+        id=new_id(),
+        version=1,
+        schema_version=source.schema_version,
+        status="published",
+        forked_from_id=source.id,
+        forked_from_version=source.version,
+        is_builtin=False,
+        kind=source.kind,
+        name=f"{source.name} 副本",
+        description=source.description,
+        backing_model=source.backing_model,
+        api_provider_id=source.api_provider_id,
+        system_prompt=source.system_prompt,
+        temperature=source.temperature,
+        config=source.config,
+        tags=source.tags,
+    )
+    session.add(copy)
+    await session.commit()
+    await session.refresh(copy)
+    return copy
+
+
+@app.get("/templates/api-providers", response_model=list[ApiProviderOut])
+async def list_api_providers(session: AsyncSession = Depends(get_session)):
+    rows = (await session.scalars(select(ApiProvider).order_by(ApiProvider.created_at))).all()
+    return [ApiProviderOut.from_model(row) for row in rows]
+
+
+@app.post("/templates/api-providers", response_model=ApiProviderDetailOut)
+async def create_api_provider(body: ApiProviderCreate, session: AsyncSession = Depends(get_session)):
+    provider = ApiProvider(
+        id=new_id(),
+        name=body.name,
+        provider_slug=body.provider_slug.strip(),
+        api_key=body.api_key,
+        api_base=body.api_base or None,
+    )
+    session.add(provider)
+    await session.commit()
+    await session.refresh(provider)
+    return ApiProviderDetailOut.from_model(provider)
+
+
+@app.get("/templates/api-providers/{provider_id}", response_model=ApiProviderDetailOut)
+async def get_api_provider(provider_id: str, session: AsyncSession = Depends(get_session)):
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    return ApiProviderDetailOut.from_model(provider)
+
+
+@app.patch("/templates/api-providers/{provider_id}", response_model=ApiProviderDetailOut)
+async def update_api_provider(
+    provider_id: str, body: ApiProviderUpdate, session: AsyncSession = Depends(get_session)
+):
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    creds_touched = any(key in changes for key in ("api_key", "api_base"))
+    for key, value in changes.items():
+        if key == "provider_slug" and isinstance(value, str):
+            value = value.strip()
+        setattr(provider, key, value)
+    if creds_touched:
+        # Stale green dot would lie about new key/base; force a re-test.
+        provider.last_tested_ok = None
+        provider.last_tested_at = None
+        provider.last_tested_error = None
+    await session.commit()
+    await session.refresh(provider)
+    return ApiProviderDetailOut.from_model(provider)
+
+
+@app.delete("/templates/api-providers/{provider_id}")
+async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(get_session)):
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    await session.execute(
+        update(PersonaTemplate).where(PersonaTemplate.api_provider_id == provider_id).values(api_provider_id=None)
+    )
+    await session.execute(
+        update(PersonaInstance).where(PersonaInstance.api_provider_id == provider_id).values(api_provider_id=None)
+    )
+    await session.delete(provider)
+    await session.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/templates/api-providers/{provider_id}/test", response_model=ApiProviderTestResult)
+async def test_api_provider(
+    provider_id: str,
+    model: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Test an API provider. Two modes:
+
+    - Without `?model=`: cheap GET `{base}/models` ping. Validates that the
+      key + base URL reach a server that exposes the OpenAI-compat surface,
+      no token spend.
+    - With `?model=`: real `litellm.acompletion(max_tokens=1)`. Validates the
+      full path including litellm's provider routing, so a green dot here
+      truly means "ready to use". Costs ~1 token.
+
+    Persists the result on the ApiProvider row so the UI can show a status
+    dot.
+    """
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    tested_at = datetime.now(timezone.utc)
+    ok = False
+    status_code: int | None = None
+    error: str | None = None
+
+    if model:
+        from litellm import acompletion
+
+        try:
+            response = await acompletion(
+                model=model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                api_key=provider.api_key,
+                api_base=provider.api_base or None,
+            )
+            # Any well-formed completion counts as success.
+            if response and getattr(response, "choices", None):
+                ok = True
+            else:
+                error = "litellm 返回空响应"
+        except Exception as exc:  # noqa: BLE001 — surface to user
+            error = _summarize_litellm_error(exc)
+    else:
+        base = (provider.api_base or "https://api.openai.com/v1").rstrip("/")
+        url = f"{base}/models"
+        headers = {"Authorization": f"Bearer {provider.api_key}"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                response = await http.get(url, headers=headers)
+            status_code = response.status_code
+            if response.status_code == 200:
+                ok = True
+            elif response.status_code in (401, 403):
+                error = "鉴权失败：API Key 无效或权限不足"
+            elif response.status_code == 404:
+                error = "地址不通：请检查 API Base 是否正确（应包含 /v1）"
+            else:
+                error = f"HTTP {response.status_code}: {response.text[:200]}"
+        except httpx.ConnectError as exc:
+            error = f"无法连接：{exc}"
+        except httpx.TimeoutException:
+            error = "请求超时（10s）"
+        except Exception as exc:  # noqa: BLE001 — surface message
+            error = f"请求失败：{type(exc).__name__}: {exc}"
+
+    provider.last_tested_ok = ok
+    provider.last_tested_at = tested_at
+    provider.last_tested_error = None if ok else error
+    await session.commit()
+    return ApiProviderTestResult(ok=ok, status_code=status_code, error=error, tested_at=tested_at)
+
+
+def _summarize_litellm_error(exc: Exception) -> str:
+    """litellm appends a verbose 'Provider List: https://docs...' footer plus
+    sometimes a request_id. Strip both so the UI gets the actionable line."""
+    text = str(exc).strip()
+    # Drop the verbose footers litellm appends to routing failures.
+    for marker in ("Provider List:", "\nLearn more", " Learn more:", "Pass model as E.g."):
+        idx = text.find(marker)
+        if idx != -1:
+            text = text[:idx].rstrip()
+    # Drop request_id parens
+    import re as _re
+
+    text = _re.sub(r"\s*\(request_id:[^)]*\)", "", text)
+    text = text[:300].strip()
+    return text or f"{type(exc).__name__}"
 
 
 @app.get("/templates/phases", response_model=list[PhaseTemplateOut])
@@ -336,8 +588,7 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
     )
     scribe = ScribeState(room_id=room.id, current_state=DEFAULT_SCRIBE_STATE.copy())
     session.add_all([runtime, scribe])
-    for persona_id in dict.fromkeys(persona_ids + system_ids):
-        session.add(RoomPersona(room_id=room.id, persona_id=persona_id))
+    await _create_persona_instances(session, room.id, list(dict.fromkeys(persona_ids + system_ids)))
 
     phase_sequence = selected_format.phase_sequence if selected_format else []
     if not phase_sequence:
@@ -367,21 +618,76 @@ async def get_room_state(room_id: str, session: AsyncSession = Depends(get_sessi
 
 
 @app.post("/rooms/{room_id}/personas", response_model=RoomState)
-async def add_room_personas(room_id: str, body: AddPersonasRequest, session: AsyncSession = Depends(get_session)):
+async def add_room_personas(
+    room_id: str, body: AddPersonaInstancesRequest, session: AsyncSession = Depends(get_session)
+):
     room = await session.get(Room, room_id)
     if not room:
         raise HTTPException(404, "room not found")
-    existing = set(
+    existing_template_ids = set(
         (
-            await session.scalars(select(RoomPersona.persona_id).where(RoomPersona.room_id == room_id))
+            await session.scalars(
+                select(PersonaInstance.template_id).where(PersonaInstance.room_id == room_id)
+            )
         ).all()
     )
-    for persona_id in body.persona_ids:
-        if persona_id not in existing:
-            session.add(RoomPersona(room_id=room_id, persona_id=persona_id))
-    await trace_record(session, room_id, "state_mutation", "personas added", {"persona_ids": body.persona_ids})
+    new_template_ids = [tid for tid in body.template_ids if tid not in existing_template_ids]
+    await _create_persona_instances(session, room_id, new_template_ids)
+    await trace_record(
+        session,
+        room_id,
+        "state_mutation",
+        "persona instances added",
+        {"template_ids": new_template_ids, "skipped_existing": sorted(existing_template_ids & set(body.template_ids))},
+    )
     await session.commit()
     return await _room_state(session, room_id)
+
+
+@app.patch("/rooms/{room_id}/persona-instances/{instance_id}", response_model=PersonaInstanceOut)
+async def update_persona_instance(
+    room_id: str,
+    instance_id: str,
+    body: PersonaInstanceUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    instance = await session.get(PersonaInstance, instance_id)
+    if not instance or instance.room_id != room_id:
+        raise HTTPException(404, "persona instance not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for key, value in changes.items():
+        setattr(instance, key, value)
+    await trace_record(
+        session,
+        room_id,
+        "state_mutation",
+        "persona instance updated",
+        {"instance_id": instance_id, "changes": list(changes.keys())},
+    )
+    await session.commit()
+    await session.refresh(instance)
+    out = PersonaInstanceOut.model_validate(instance)
+    await event_bus.publish(
+        room_id,
+        {"type": "persona.instance.updated", "instance_id": instance_id, "instance": out.model_dump(mode="json")},
+    )
+    return out
+
+
+@app.delete("/rooms/{room_id}/persona-instances/{instance_id}")
+async def delete_persona_instance(
+    room_id: str, instance_id: str, session: AsyncSession = Depends(get_session)
+):
+    instance = await session.get(PersonaInstance, instance_id)
+    if not instance or instance.room_id != room_id:
+        raise HTTPException(404, "persona instance not found")
+    await session.delete(instance)
+    await trace_record(
+        session, room_id, "state_mutation", "persona instance removed", {"instance_id": instance_id}
+    )
+    await session.commit()
+    await event_bus.publish(room_id, {"type": "persona.instance.removed", "instance_id": instance_id})
+    return {"status": "deleted"}
 
 
 @app.post("/rooms/{room_id}/messages", response_model=MessageOut)
@@ -467,17 +773,29 @@ async def update_decision_lock(
 async def create_masquerade(room_id: str, body: MasqueradeCreate, session: AsyncSession = Depends(get_session)):
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
-    persona = await session.get(Persona, body.persona_id)
-    if not persona or persona.kind != "discussant":
-        raise HTTPException(400, "masquerade persona must be a discussant")
+    # body.persona_id is a TEMPLATE id; resolve to the room's instance.
+    instance: PersonaInstance | None = None
+    if body.persona_id:
+        instance = await session.scalar(
+            select(PersonaInstance).where(
+                PersonaInstance.room_id == room_id,
+                PersonaInstance.template_id == body.persona_id,
+            )
+        )
+        if not instance or instance.kind != "discussant":
+            raise HTTPException(400, "masquerade persona must be a discussant present in this room")
+    display_name = (body.display_name or "").strip()
+    if not display_name:
+        display_name = instance.name if instance else "群友"
     message = Message(
         room_id=room_id,
         phase_instance_id=runtime.current_phase_instance_id,
         message_type=body.message_type,
-        author_persona_id=persona.id,
-        author_model=persona.backing_model,
+        author_persona_id=instance.id if instance else None,
+        author_model=instance.backing_model if instance else None,
         author_actual="user_as_persona",
-        user_masquerade_persona_id=persona.id,
+        user_masquerade_persona_id=instance.id if instance else None,
+        user_masquerade_name=display_name,
         visibility="public",
         visibility_to_models=True,
         content=body.content,
@@ -639,6 +957,52 @@ async def freeze(room_id: str, session: AsyncSession = Depends(get_session)):
     return await _room_state(session, room_id)
 
 
+@app.delete("/rooms/{room_id}")
+async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Hard-delete a room and all of its dependents. Cancels any in-flight
+    streams first so background tasks don't write to a vanished row."""
+    room = await session.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "room not found")
+    for active_call in active_calls_for_room(room_id):
+        active_call.cancel("room_deleted")
+    # Order matters: clear children before parents to satisfy FKs even when
+    # ON DELETE CASCADE isn't declared.
+    from .models import (
+        Decision as _Decision,
+        FacilitatorSignal as _FacilitatorSignal,
+        MergeBack as _MergeBack,
+        RoomPhaseInstance as _RoomPhaseInstance,
+        RoomPhasePlan as _RoomPhasePlan,
+        RoomSnapshot as _RoomSnapshot,
+        ScribeState as _ScribeState,
+        TraceEvent as _TraceEvent,
+    )
+    await session.execute(delete(Message).where(Message.room_id == room_id))
+    await session.execute(delete(_Decision).where(_Decision.room_id == room_id))
+    await session.execute(delete(_FacilitatorSignal).where(_FacilitatorSignal.room_id == room_id))
+    await session.execute(delete(_RoomPhaseInstance).where(_RoomPhaseInstance.room_id == room_id))
+    await session.execute(delete(_RoomPhasePlan).where(_RoomPhasePlan.room_id == room_id))
+    await session.execute(delete(_ScribeState).where(_ScribeState.room_id == room_id))
+    await session.execute(delete(RoomRuntimeState).where(RoomRuntimeState.room_id == room_id))
+    await session.execute(delete(PersonaInstance).where(PersonaInstance.room_id == room_id))
+    await session.execute(delete(_RoomSnapshot).where(_RoomSnapshot.room_id == room_id))
+    await session.execute(delete(_TraceEvent).where(_TraceEvent.room_id == room_id))
+    # MergeBack rows reference room as parent or sub-room; drop any pointing here.
+    await session.execute(
+        delete(_MergeBack).where(
+            (_MergeBack.parent_room_id == room_id) | (_MergeBack.sub_room_id == room_id)
+        )
+    )
+    # Uploads are tied loosely (nullable room_id) — keep the file row, null out
+    # the link so the upload library survives.
+    await session.execute(update(Upload).where(Upload.room_id == room_id).values(room_id=None))
+    await session.delete(room)
+    await session.commit()
+    await event_bus.publish(room_id, {"type": "room.deleted"})
+    return {"status": "deleted", "room_id": room_id}
+
+
 @app.post("/rooms/{room_id}/unfreeze", response_model=RoomState)
 async def unfreeze(room_id: str, session: AsyncSession = Depends(get_session)):
     await unfreeze_room(session, room_id)
@@ -769,16 +1133,73 @@ async def _select_recipe(session: AsyncSession, recipe_id: str | None) -> Recipe
 async def _default_discussant_ids(session: AsyncSession) -> list[str]:
     rows = (
         await session.scalars(
-            select(Persona.id)
-            .where(Persona.kind == "discussant", Persona.name.in_(["架构师", "性能批评者", "维护者", "反方律师"]))
-            .order_by(Persona.name)
+            select(PersonaTemplate.id)
+            .where(
+                PersonaTemplate.kind == "discussant",
+                PersonaTemplate.name.in_(["架构师", "性能批评者", "维护者", "反方律师"]),
+            )
+            .order_by(PersonaTemplate.name)
         )
     ).all()
     return list(rows)
 
 
 async def _system_persona_ids(session: AsyncSession) -> list[str]:
-    return list((await session.scalars(select(Persona.id).where(Persona.kind.in_(["scribe", "facilitator"])))).all())
+    return list(
+        (
+            await session.scalars(
+                select(PersonaTemplate.id).where(
+                    PersonaTemplate.kind.in_(["scribe", "facilitator"])
+                )
+            )
+        ).all()
+    )
+
+
+async def _create_persona_instances(
+    session: AsyncSession, room_id: str, template_ids: list[str]
+) -> list[PersonaInstance]:
+    """Snapshot each template into a fresh PersonaInstance scoped to the room.
+
+    Skips template ids that don't resolve. Position is assigned per-room based
+    on existing count so repeat calls keep ordering stable.
+    """
+    if not template_ids:
+        return []
+    next_position = (
+        await session.scalar(
+            select(func.coalesce(func.max(PersonaInstance.position), -1) + 1).where(
+                PersonaInstance.room_id == room_id
+            )
+        )
+    ) or 0
+    created: list[PersonaInstance] = []
+    for template_id in template_ids:
+        template = await session.get(PersonaTemplate, template_id)
+        if template is None:
+            continue
+        instance = PersonaInstance(
+            id=new_id(),
+            room_id=room_id,
+            template_id=template.id,
+            template_version=template.version,
+            position=int(next_position),
+            kind=template.kind,
+            name=template.name,
+            description=template.description,
+            backing_model=template.backing_model,
+            api_provider_id=template.api_provider_id,
+            system_prompt=template.system_prompt,
+            temperature=template.temperature,
+            config=dict(template.config or {}),
+            tags=list(template.tags or []),
+        )
+        session.add(instance)
+        created.append(instance)
+        next_position = int(next_position) + 1
+    if created:
+        await session.flush()
+    return created
 
 
 async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
@@ -788,10 +1209,9 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         raise HTTPException(404, "room not found")
     personas = (
         await session.scalars(
-            select(Persona)
-            .join(RoomPersona, RoomPersona.persona_id == Persona.id)
-            .where(RoomPersona.room_id == room_id)
-            .order_by(Persona.kind, Persona.name)
+            select(PersonaInstance)
+            .where(PersonaInstance.room_id == room_id)
+            .order_by(PersonaInstance.kind, PersonaInstance.position, PersonaInstance.name)
         )
     ).all()
     phase_plan = (
@@ -841,7 +1261,7 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
     return RoomState(
         room=RoomOut.model_validate(room),
         runtime=RoomRuntimeOut.model_validate(runtime),
-        personas=[PersonaOut.model_validate(p) for p in personas],
+        personas=[PersonaInstanceOut.model_validate(p) for p in personas],
         phase_plan=[RoomPhasePlanOut.model_validate(p) for p in phase_plan],
         current_phase=RoomPhaseInstanceOut.model_validate(current_phase) if current_phase else None,
         messages=message_outputs,
@@ -869,3 +1289,39 @@ def _extract_text(path: Path, suffix: str, raw: bytes) -> str:
         reader = PdfReader(str(path))
         return "\n\n".join(page.extract_text() or "" for page in reader.pages).strip()
     return raw.decode("utf-8", errors="replace")
+
+
+def _resolve_frontend_dist() -> Path | None:
+    override = os.environ.get("MAI_FRONTEND_DIST")
+    if override:
+        path = Path(override)
+        return path if path.exists() else None
+    here = Path(__file__).resolve().parent  # backend/app
+    pyinstaller_base = Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "frozen", False) else None
+    candidates = [
+        pyinstaller_base / "frontend-dist" if pyinstaller_base else None,
+        here.parent.parent / "frontend" / "dist",  # repo dev layout
+        here.parent / "frontend_dist",             # bundled next to backend/
+        here / "frontend_dist",                    # bundled inside app/ (PyInstaller)
+    ]
+    for candidate in candidates:
+        if candidate and candidate.is_dir() and (candidate / "index.html").is_file():
+            return candidate
+    return None
+
+
+class SPAStaticFiles(StaticFiles):
+    """StaticFiles with SPA fallback: any 404 is served as index.html."""
+
+    async def get_response(self, path: str, scope):  # type: ignore[override]
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
+
+
+_frontend_dist = _resolve_frontend_dist()
+if _frontend_dist is not None:
+    app.mount("/", SPAStaticFiles(directory=_frontend_dist, html=True), name="frontend")

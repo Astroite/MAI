@@ -91,3 +91,28 @@ textarea {
   @apply overflow-auto rounded-md bg-surface p-3 text-xs;
 }
 
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(45, 180, 161, 0.6);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(45, 180, 161, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(45, 180, 161, 0);
+  }
+}
+
+@keyframes drawer-slide-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+.drawer-enter {
+  animation: drawer-slide-in 180ms ease-out;
+}
+

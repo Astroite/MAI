@@ -1,7 +1,9 @@
 import { useEffect } from "react";
 import type { ReactNode } from "react";
-import { NavLink, Route, Routes } from "react-router-dom";
-import { Moon, PanelsTopLeft, Settings, Sun, Workflow } from "lucide-react";
+import { NavLink, Route, Routes, useMatch } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { AlertTriangle, Moon, PanelsTopLeft, Settings, Sun, Workflow } from "lucide-react";
+import { api } from "./api";
 import { useUIStore } from "./store";
 import { DashboardPage } from "./pages/DashboardPage";
 import { RoomPage } from "./pages/RoomPage";
@@ -11,13 +13,29 @@ import { SettingsPage } from "./pages/SettingsPage";
 export function App() {
   const dark = useUIStore((state) => state.dark);
   const toggleDark = useUIStore((state) => state.toggleDark);
+  // The room view is its own three-column shell with its own left nav, so we
+  // suppress the global top header there to give the chat the full viewport.
+  const inRoomView = useMatch({ path: "/rooms/:roomId/*", end: false });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
+  if (inRoomView) {
+    return (
+      <div className="min-h-screen bg-surface text-text">
+        <SetupBanner />
+        <Routes>
+          <Route path="/rooms/:roomId" element={<RoomPage />} />
+          <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
+        </Routes>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-surface text-text">
+      <SetupBanner />
       <header className="sticky top-0 z-20 border-b border-border bg-panel/95 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1500px] items-center justify-between px-4">
           <div className="flex items-center gap-2">
@@ -41,12 +59,27 @@ export function App() {
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/rooms/:roomId" element={<RoomPage />} />
-          <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
           <Route path="/templates/:kind" element={<TemplatesPage />} />
           <Route path="/settings" element={<SettingsPage />} />
         </Routes>
       </main>
+    </div>
+  );
+}
+
+function SetupBanner() {
+  const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
+  if (!health.data || health.data.setup_complete) return null;
+  return (
+    <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-700 dark:text-rose-300">
+      <div className="mx-auto flex max-w-[1500px] items-center gap-2">
+        <AlertTriangle size={14} />
+        <span>尚未配置默认 API。人设调用会失败——</span>
+        <NavLink to="/settings" className="underline">
+          前往设置页面
+        </NavLink>
+        <span>添加 API 提供商并设为默认。</span>
+      </div>
     </div>
   );
 }

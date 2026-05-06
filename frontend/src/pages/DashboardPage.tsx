@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, RefreshCw } from "lucide-react";
 import { api } from "../api";
-import type { DebateFormat, Persona } from "../types";
+import type { DebateFormat, PersonaTemplate } from "../types";
 import { StatusPill } from "../components/StatusPill";
 
 export function DashboardPage() {
@@ -12,7 +12,10 @@ export function DashboardPage() {
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
-  const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
+  const personas = useQuery({
+    queryKey: ["persona-templates", "discussant"],
+    queryFn: () => api.personaTemplates("discussant")
+  });
   const [title, setTitle] = useState("方案评审讨论");
   const solutionReview = formats.data?.find((item) => item.name === "方案评审")?.id;
   const defaultRecipe = recipes.data?.find((item) => item.name === "方案评审默认配方")?.id;
@@ -107,7 +110,7 @@ export function DashboardPage() {
           <div>
             <div className="label">参辩人设</div>
             <div className="mt-2 max-h-72 space-y-2 overflow-auto pr-1">
-              {(personas.data ?? []).map((persona: Persona) => {
+              {(personas.data ?? []).map((persona: PersonaTemplate) => {
                 const checked = effectivePersonaIds.includes(persona.id);
                 return (
                   <label key={persona.id} className="flex items-start gap-2 rounded-md border border-border p-2 text-sm">

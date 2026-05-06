@@ -37,7 +37,9 @@ export function useRoomEvents(roomId?: string) {
             "phase.exit_continued",
             "phase.transitioned",
             "room.frozen",
-            "room.unfrozen"
+            "room.unfrozen",
+            "persona.instance.updated",
+            "persona.instance.removed"
           ].includes(payload.type)
         ) {
           void queryClient.invalidateQueries({ queryKey: ["room", roomId] });

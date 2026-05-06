@@ -6,12 +6,25 @@ __pycache__/
 
 backend/.venv/
 backend/.env
+backend/tests/.env.test
+backend/tests/.env*
 backend/trace_payloads/
 backend/uploads/
+backend/mai.sqlite3
+backend/mai.sqlite3-journal
+backend/mai.sqlite3-wal
+backend/mai.sqlite3-shm
 
 frontend/node_modules/
 frontend/dist/
+frontend/src-tauri/binaries/*
+!frontend/src-tauri/binaries/.gitkeep
+frontend/src-tauri/target/
 frontend/vite.config.js
 frontend/vite.config.d.ts
 
 release/
+build/
+.tmp/
+
+.claude/

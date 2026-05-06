@@ -1,7 +1,7 @@
 # 项目进度与待办
 
 > 以 `product_design.md` / `technical_design.md` 为基线，记录当前实现状态。
-> 最近更新：2026-05-01
+> 最近更新：2026-05-06
 
 ---
 
@@ -11,6 +11,7 @@
 |------|------|------|
 | 数据模型 / Schema | ✅ 完整 | ✅ 类型已镜像 |
 | 引擎调度 / Phase FSM | ✅ 完整 | — |
+| 自动驱动 / autodrive | ✅ 用户消息后自动触发下一位 persona | ✅ 发送框默认聊天化 |
 | 系统级角色（书记官 / 副手） | ✅ 完整 | ✅ 面板已渲染 |
 | 流式 + SSE | ✅ 含 30s 空闲超时 / parallel 多路 in-flight | ✅ 含 `message.cancelled` + 多气泡渲染 |
 | 冻结 + 快照 | ✅ 完整 | ✅ 完整 |
@@ -21,8 +22,9 @@
 | Limit 分层 | ✅ 单条 / 房间 / phase 轮次 / 账号日月预算 | ✅ LimitPanel 已可调整 |
 | Markdown 渲染 | — | ✅ shiki 代码高亮 + KaTeX |
 | Trace | ✅ 写入完整 | — (v1 不做查询 UI) |
+| 桌面壳 / Tauri | ✅ PyInstaller sidecar 入口 | ✅ Tauri v2 壳已接入，NSIS 安装包已构建 |
 
-代码量：后端 `app/*.py` ~3,260 行，前端 `src/**` ~1,520 行，测试 ~280 行；文档预估 ~15,800 行（前端尚未铺开）。
+当前基线：后端测试套已按主题拆分为 11 个文件（`backend/tests/test_*.py`），跑通需要 `tests/.env.test` 提供真实 LiteLLM 凭据（`OPENAI_API_KEY`），不再有 mock fallback；前端 `pnpm build` 通过，Tauri NSIS 安装包构建通过；PyInstaller sidecar 已通过 `/health` 运行时探活。
 
 ---
 
@@ -34,6 +36,9 @@
 - 6 种 exit conditions 全部实现：rounds / all_spoken / all_voted / user_manual / facilitator_suggests / token_budget（`engine.py:517+`）
 - `pick_next_speaker` 返回 wait / single / parallel / phase_done（`engine.py:51`）
 - `ACTIVE_CALLS: dict[room_id, dict[message_id, InFlightCall]]` 支持 parallel 多路流；`freeze_room` 批量取消 in-flight + 房间快照 + SSE 推送
+- autodrive 已接入 `after_message_appended`：用户发言、用户伪装、裁决者文本、用户文档会触发一次自动 persona 回复；AI 回复不会递归触发
+- `mention_driven` 先解析最近消息中的 @-mention；未命中时回退到 round-robin，保证默认自由房间也能自动推进
+- SQLite 启用 WAL 与 `busy_timeout`，缓解 autodrive 后台任务与前台请求之间的写锁竞争
 - 书记官 / 副手每 5 条消息 + phase 边界触发；副手按 tag cooldown（`filter_facilitator_signals`）；副手输出落 `messages` 表 meta + `facilitator_signals` 表 + SSE
 - 严格 append-only：verdict / verdict_revoke / dead_end 都是新消息（`engine.py:720-774`），`Decision.revoked_by_message_id` 反向链接
 - AI 视图过滤 `visibility_to_models is True`（`engine.py:236`），副手信号对讨论者完全隐藏
@@ -45,8 +50,9 @@
 技术文档 §4.2 列出的全部表已建好：personas、phase_templates、debate_formats、recipes、rooms、room_phase_plan、room_phase_instances、messages、scribe_states、decisions、facilitator_signals、merge_backs、room_snapshots、uploads、room_runtime_state、trace_events。
 
 - discriminated union：`ExitCondition`、`OrderingRule`、`AllowedSpeakers`、`PersonaConfig` 全部到位
-- 模板字段：`forked_from_id`、`version`、`schema_version`、`status`、`tags`（GIN 索引）
+- 模板字段：`forked_from_id`、`version`、`schema_version`、`status`、`tags`
 - Format 锁定 phase 版本：`FormatPhaseSlot.phase_template_version`
+- JSON 列跨方言：`JSONType = JSON().with_variant(JSONB(), "postgresql")`，PG 仍走 JSONB，SQLite 走标准 JSON
 
 ### 2.3 REST 端点（`backend/app/main.py`）
 
@@ -61,15 +67,18 @@
 
 ### 2.5 LLM 层（`llm.py`）
 
-- `stream` + `complete_tool`，tool calling 走 LiteLLM
-- mock vs real 双重判定：`MOCK_LLM` env + persona `backing_model` 以 `mock/` 起头（CLAUDE.md 已记录此约定）
+- `stream` + `complete_tool` 直接走 LiteLLM `acompletion`，tool calling 走原生 schema
+- 凭据来源：persona 绑定 ApiProvider 时使用其 `api_key`/`api_base`，否则回退到 `backend/.env` 的环境变量
 - `deep_thinking` 参数路由：Anthropic 走 `thinking` budget，OpenAI 走 `reasoning_effort=high`，stream / tool call 共用同一路径
 
 ### 2.6 前端
 
-- 主路由：dashboard、room、templates、settings
-- Room 主视图：消息列表、streaming bubble、phase plan 侧栏、决策横幅、auto_transition toggle
-- 模式切换 dropdown：normal / judge / dead_end / masquerade（含 reveal）
+- 主路由：dashboard、room、templates、settings；`/rooms/*` 下移除顶层导航，直挂聊天壳
+- Room 主视图：三栏 grid（房间列表 / 聊天 / 成员），header 内置设置入口与冻结 / 解冻
+- 消息列表：QQ 风格左右气泡，用户右侧、AI 左侧、meta 居中，自动滚到底
+- Composer：Enter 发送、Shift+Enter 换行；normal / judge / dead_end / 群友发言特殊模式折叠到 `...` 菜单
+- 设置页：后端健康状态 + API provider CRUD；人设页可为人设绑定 provider
+- 设置抽屉：Phase、Limit、Scribe、Facilitator、Decisions、Upload、Subroom 七个 Tab，支持 URL `?settings=` 同步与 Esc 关闭
 - freeze / unfreeze、askFacilitator、Scribe / Facilitator 面板
 - 子讨论创建 + merge-back 表单
 - 文件上传（md/txt/pdf）→ user_doc 消息，支持拖拽上传区
@@ -84,7 +93,28 @@
 
 ### 2.7 测试
 
-`tests/test_smoke.py` 覆盖：health、builtins、room CRUD、消息追加、scribe / facilitator 工具调用、phase transition、facilitator cooldown、verdict + revoke、freeze、子讨论 merge-back、masquerade + reveal、6 种 ordering 调度、visibility 过滤、断线重连 partial、parallel 多路 in-flight、模板 PATCH / fork、deep thinking 参数路由。
+测试套已按主题拆分到 `backend/tests/` 下 11 个文件：
+
+- `test_health.py` — `/health` + 内置模板可见性
+- `test_templates.py` — personas / formats / recipes / api-providers CRUD，PATCH / fork，provider 凭据注入到 `LLMAdapter.stream`
+- `test_room_lifecycle.py` — 房间创建、消息追加、`/turn`、phase continue、子讨论 + merge_back、分层 limit
+- `test_engine.py` — 6 种 ordering 调度、`freeze_room` 取消 autodrive、4 个 autodrive 场景（happy、non-recurse、mention 回退、frozen 短路）
+- `test_scribe_facilitator.py` — scribe 把 verdict 折进 decisions、phase 边界强制整理、facilitator 每 5 条触发 + cooldown + 手动 `/facilitator` 绕过
+- `test_verdict.py` — verdict_revoke / dead_end / decision 锁定审计 meta
+- `test_in_flight.py` — `in_flight_partial` 断线重连、parallel 多路 streams、chunk idle timeout
+- `test_masquerade.py` — 伪装发言 + reveal + 普通消息 reveal 拒绝
+- `test_uploads.py` — upload 绑定 owning room
+- `test_visibility.py` — observer_only facilitator 消息不进入 LLM context
+- `test_llm_adapter.py` — `_build_extra_params` / `_build_provider_params` 纯单元（不调 LLM）
+
+共享 fixture（`client`、`review_format`、`architect_persona` 等）放在 `tests/conftest.py`。`conftest.py` import 前会加载 `tests/.env.test`；缺 `OPENAI_API_KEY` 直接 pytest 退出。运行前用户必须在 `tests/.env.test` 填入真实 token。
+
+### 2.8 部署 / 数据存储
+
+- 默认存储为 SQLite（`backend/mai.sqlite3`）；通过 `DATABASE_URL` 可切到 PostgreSQL，两条路径都受测。
+- 打包态（`MAI_PACKAGED=1` 或 PyInstaller `sys.frozen`）下，SQLite 文件、`trace_payloads/`、`uploads/` 自动落到 `%APPDATA%/MAI/`（macOS / Linux 取对应 user-data 目录）。
+- FastAPI 在 `frontend/dist/index.html` 存在或 `MAI_FRONTEND_DIST` 指定时，自动以 `SPAStaticFiles` 把前端挂在 `/`，并对未匹配路径回落到 `index.html`；`_strip_api_prefix` 中间件把进来的 `/api/...` 重写到根，前端 `VITE_API_BASE` 不必修改即可在单进程模式下工作。
+- Tauri v2 壳位于 `frontend/src-tauri/`，通过 `tauri-plugin-shell` 启动 `mai-backend` sidecar；sidecar 由 `backend/mai_backend_main.py` + `backend/mai-backend.spec` 打包，脚本入口是 `scripts/build-sidecar.ps1` 与 `scripts/package-tauri.ps1`。
 
 ---
 
@@ -118,10 +148,19 @@
 
 ### P4 · 测试覆盖补强
 
-- [x] 子讨论 + merge-back 端到端：`test_room_message_and_mock_turn` 覆盖子房间创建、merge_back、父房间合并消息。
+- [x] 子讨论 + merge-back 端到端：`test_room_lifecycle.py::test_room_full_lifecycle` 覆盖子房间创建、merge_back、父房间合并消息。
 - [x] masquerade 完整流程（含 reveal）：`test_masquerade_reveal_flow` 覆盖伪装发言、身份揭示、普通消息 reveal 拒绝。
 - [x] 6 种 ordering 各自的单测：`test_pick_next_speaker_ordering_rules` 覆盖 mention_driven / user_picks / parallel / round_robin / alternating / question_paired。
 - [x] visibility 过滤的真实场景断言：`test_hidden_facilitator_messages_are_filtered_from_llm_context` 覆盖 observer_only facilitator 消息不进入 LLM context。
+
+### P5 · 桌面壳
+
+- [x] **PyInstaller sidecar 入口**：`backend/mai_backend_main.py` 支持 `--host` / `--port` / `--log-level`，默认设置 `MAI_PACKAGED=1`。
+- [x] **sidecar 运行时导入兜底**：入口直接导入 `app.main`，spec 显式收集 `app.*`，避免安装版启动时报 `ModuleNotFoundError: No module named 'app'`。
+- [x] **Tauri v2 工程骨架**：`frontend/src-tauri` 已配置窗口、sidecar、capability 与 NSIS bundle。
+- [x] **动态 API Base 注入**：Tauri 壳启动 sidecar 后，把 `window.__MAI_API_BASE__` 注入前端，避免固定端口冲突。
+- [x] **打包脚本**：`scripts/build-sidecar.ps1` 构建 `mai-backend-<target-triple>.exe`，`scripts/package-tauri.ps1` 生成安装包。
+- [x] **本机安装包验证**：`pnpm tauri build` 已生成 `frontend/src-tauri/target/release/bundle/nsis/MAI_0.1.0_x64-setup.exe`。
 
 ---
 
@@ -129,9 +168,11 @@
 
 文档 §14 验收剧本：开房 → 加载方案评审 4 phase → 拉 4 人设 → 拖入文档 → 跑完 → 锁决议 → 伪装投放 → 副手提示打转后切 phase → 开子讨论 → 合并 → 拿结构化结论。
 
-**后端**：100% 跑得通（`test_smoke.py` 已断言关键节点）。
+**后端**：100% 跑得通（拆分后的 `tests/test_*.py` 已断言关键节点）。
 
-**前端**：P1 / P2 / P3 已清；决议锁、代码高亮、tag 筛选、Persona 创建与编辑、Format 顺序卡片编辑与详情编辑、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。P4 测试补强已完成，当前 v1 范围内待办清零。
+**前端**：P1 / P2 / P3 已清；三栏聊天壳、设置抽屉、极简 Composer、动态成员状态、决议锁、代码高亮、tag 筛选、Persona 创建与编辑、Format 顺序卡片编辑与详情编辑、Phase 字段编辑器、Limit 分层、断线重连、上传拖拽区、parallel 多气泡已落地。P4 测试补强已完成。
+
+**桌面壳**：代码、脚本与 NSIS 安装包构建验证已完成。
 
 附加场景（自定义 phase + 导出）：列表筛选 + Phase 字段表单 + Format 顺序模板可走通。
 

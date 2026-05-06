@@ -3,9 +3,9 @@ import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { Download, GripVertical, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Trash2, Wifi, XCircle } from "lucide-react";
 import { api } from "../api";
-import type { DebateFormat, Persona, PersonaKind, PhaseTemplate, Recipe } from "../types";
+import type { DebateFormat, PersonaKind, PersonaTemplate, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
 
 export function TemplatesPage() {
@@ -17,11 +17,13 @@ export function TemplatesPage() {
         <TemplateNav to="/templates/phases" label="Phase" />
         <TemplateNav to="/templates/formats" label="赛制" />
         <TemplateNav to="/templates/recipes" label="配方" />
+        <TemplateNav to="/templates/api" label="API 配置" />
       </aside>
       {kind === "personas" && <PersonasView />}
       {kind === "formats" && <FormatsView />}
       {kind === "recipes" && <RecipesView />}
       {kind === "phases" && <PhasesView />}
+      {kind === "api" && <ApiProvidersView />}
     </div>
   );
 }
@@ -36,13 +38,15 @@ function TemplateNav({ to, label }: { to: string; label: string }) {
 
 function PersonasView() {
   const queryClient = useQueryClient();
-  const personas = useQuery({ queryKey: ["personas"], queryFn: () => api.personas() });
+  const personas = useQuery({ queryKey: ["persona-templates"], queryFn: () => api.personaTemplates() });
+  const apiProviders = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(personas.data, selectedTags);
   const [kind, setKind] = useState<PersonaKind>("discussant");
   const [name, setName] = useState("自定义专家");
   const [description, setDescription] = useState("从模板页创建的人设。");
-  const [backingModel, setBackingModel] = useState("mock/generalist");
+  const [backingModel, setBackingModel] = useState("openai/gpt-4o-mini");
+  const [apiProviderId, setApiProviderId] = useState<string>("");
   const [temperature, setTemperature] = useState(0.4);
   const [tags, setTags] = useState("custom");
   const [systemPrompt, setSystemPrompt] = useState("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
@@ -55,17 +59,23 @@ function PersonasView() {
     name,
     description,
     backing_model: backingModel,
+    api_provider_id: apiProviderId || null,
     system_prompt: systemPrompt,
     temperature,
     config: configValue.value,
     tags: splitTags(tags)
   });
-  const loadPersona = (persona: Persona) => {
+  const updatePayload = () => {
+    const { kind: _kind, ...rest } = personaPayload();
+    return rest;
+  };
+  const loadPersona = (persona: PersonaTemplate) => {
     setEditingPersonaId(persona.id);
     setKind(persona.kind);
     setName(persona.name);
     setDescription(persona.description);
     setBackingModel(persona.backing_model);
+    setApiProviderId(persona.api_provider_id ?? "");
     setTemperature(persona.temperature);
     setTags(persona.tags.join(","));
     setSystemPrompt(persona.system_prompt);
@@ -76,7 +86,8 @@ function PersonasView() {
     setKind("discussant");
     setName("自定义专家");
     setDescription("从模板页创建的人设。");
-    setBackingModel("mock/generalist");
+    setBackingModel("openai/gpt-4o-mini");
+    setApiProviderId("");
     setTemperature(0.4);
     setTags("custom");
     setSystemPrompt("你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。");
@@ -84,28 +95,52 @@ function PersonasView() {
   };
   const save = useMutation({
     mutationFn: () =>
-      editingPersonaId ? api.updatePersona(editingPersonaId, personaPayload()) : api.createPersona(personaPayload()),
+      editingPersonaId
+        ? api.updatePersonaTemplate(editingPersonaId, updatePayload())
+        : api.createPersonaTemplate(personaPayload()),
     onSuccess: (saved) => {
       loadPersona(saved);
-      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
     }
   });
+  const duplicate = useMutation({
+    mutationFn: (templateId: string) => api.duplicatePersonaTemplate(templateId),
+    onSuccess: (copy) => {
+      loadPersona(copy);
+      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+    }
+  });
+  const editingIsBuiltin = editingPersona?.is_builtin ?? false;
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
         <Header title="人设模板" />
+        <p className="text-xs text-muted">
+          模板是“蓝本”，加入房间时会派生为该房间专属的实例。在房间侧栏可对实例做局部调整，不影响模板。
+        </p>
         <TagFilterBar items={personas.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
         <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
-          {items.map((persona: Persona) => (
+          {items.map((persona: PersonaTemplate) => (
             <div key={persona.id} className="panel p-4">
               <div className="flex items-center justify-between gap-2">
                 <h2 className="font-semibold">{persona.name}</h2>
                 <div className="flex items-center gap-2">
                   <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{persona.kind}</StatusPill>
-                  <button className="btn h-8 px-2 text-xs" type="button" onClick={() => loadPersona(persona)}>
-                    <Pencil size={14} />
-                    编辑
-                  </button>
+                  {persona.is_builtin ? (
+                    <button
+                      className="btn h-8 px-2 text-xs"
+                      type="button"
+                      onClick={() => duplicate.mutate(persona.id)}
+                      disabled={duplicate.isPending}
+                    >
+                      <Plus size={14} /> 复制为我的模板
+                    </button>
+                  ) : (
+                    <button className="btn h-8 px-2 text-xs" type="button" onClick={() => loadPersona(persona)}>
+                      <Pencil size={14} />
+                      编辑
+                    </button>
+                  )}
                 </div>
               </div>
               <p className="mt-2 text-sm text-muted">{persona.description}</p>
@@ -121,7 +156,7 @@ function PersonasView() {
       </div>
       <aside className="panel p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold">{editingPersonaId ? "编辑人设" : "新建人设"}</h2>
+          <h2 className="font-semibold">{editingPersonaId ? "编辑模板" : "新建模板"}</h2>
           {editingPersonaId && (
             <button className="btn h-8 px-2 text-xs" type="button" onClick={resetPersonaForm}>
               <Plus size={14} />
@@ -129,11 +164,22 @@ function PersonasView() {
             </button>
           )}
         </div>
+        {editingIsBuiltin && (
+          <p className="mt-2 rounded-md border border-border bg-surface p-2 text-xs text-muted">
+            内建模板只读。请使用“复制为我的模板”创建可编辑副本。
+          </p>
+        )}
         <div className="mt-4 space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="label">Kind</span>
-              <select name="persona-kind" className="input mt-1 w-full" value={kind} onChange={(event) => setKind(event.target.value as PersonaKind)}>
+              <select
+                name="persona-kind"
+                className="input mt-1 w-full"
+                value={kind}
+                onChange={(event) => setKind(event.target.value as PersonaKind)}
+                disabled={Boolean(editingPersonaId)}
+              >
                 <option value="discussant">discussant</option>
                 <option value="scribe">scribe</option>
                 <option value="facilitator">facilitator</option>
@@ -155,6 +201,34 @@ function PersonasView() {
           <label className="block">
             <span className="label">Backing Model</span>
             <input name="persona-backing-model" className="input mt-1 w-full" value={backingModel} onChange={(event) => setBackingModel(event.target.value)} />
+            <p className="mt-1 text-xs text-muted">
+              LiteLLM 模型名，例如 <code>openai/gpt-4o-mini</code>、<code>anthropic/claude-sonnet-4-5</code>。
+            </p>
+          </label>
+          <label className="block">
+            <span className="label">API 配置</span>
+            <select
+              name="persona-api-provider"
+              className="input mt-1 w-full"
+              value={apiProviderId}
+              onChange={(event) => setApiProviderId(event.target.value)}
+            >
+              <option value="">默认（使用环境变量）</option>
+              {(apiProviders.data ?? []).map((provider) => (
+                <option key={provider.id} value={provider.id}>
+                  {provider.name} · {provider.provider_slug}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-muted">
+              {(apiProviders.data?.length ?? 0) === 0 ? (
+                <>
+                  还没有 API 配置，<NavLink className="text-brand underline" to="/templates/api">前往新增</NavLink>
+                </>
+              ) : (
+                "选中后调用此人设时将覆盖默认凭据。"
+              )}
+            </p>
           </label>
           <label className="block">
             <span className="label">Tags</span>
@@ -169,9 +243,13 @@ function PersonasView() {
             <textarea name="persona-config-json" className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
           </label>
           {!configValue.ok && <div className="text-xs text-danger">Config 必须是 JSON object。</div>}
-          <button className="btn btn-primary w-full" onClick={() => save.mutate()} disabled={!name.trim() || !systemPrompt.trim() || !configValue.ok || save.isPending}>
+          <button
+            className="btn btn-primary w-full"
+            onClick={() => save.mutate()}
+            disabled={editingIsBuiltin || !name.trim() || !systemPrompt.trim() || !configValue.ok || save.isPending}
+          >
             <Save size={16} />
-            {editingPersona?.is_builtin ? "保存为副本" : editingPersonaId ? "保存修改" : "保存人设"}
+            {editingPersonaId ? "保存修改" : "保存模板"}
           </button>
         </div>
       </aside>
@@ -599,7 +677,10 @@ function RecipesView() {
   const queryClient = useQueryClient();
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
   const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
-  const personas = useQuery({ queryKey: ["personas", "discussant"], queryFn: () => api.personas("discussant") });
+  const personas = useQuery({
+    queryKey: ["persona-templates", "discussant"],
+    queryFn: () => api.personaTemplates("discussant")
+  });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const items = filterByTags(recipes.data, selectedTags);
   const [name, setName] = useState("我的方案评审配方");
@@ -683,6 +764,262 @@ function RecipesView() {
           <button className="btn btn-primary w-full" onClick={() => create.mutate()} disabled={!name.trim() || create.isPending}>
             <Save size={16} />
             保存配方
+          </button>
+        </div>
+      </aside>
+    </section>
+  );
+}
+
+export function ApiProvidersView() {
+  const queryClient = useQueryClient();
+  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [providerSlug, setProviderSlug] = useState("openai");
+  const [apiKey, setApiKey] = useState("");
+  const [apiBase, setApiBase] = useState("");
+  const [showKey, setShowKey] = useState(false);
+  const [pendingError, setPendingError] = useState<string | null>(null);
+  const editing = providers.data?.find((p) => p.id === editingId) ?? null;
+  const resetForm = () => {
+    setEditingId(null);
+    setName("");
+    setProviderSlug("openai");
+    setApiKey("");
+    setApiBase("");
+    setShowKey(false);
+    setPendingError(null);
+  };
+  const loadProvider = async (id: string) => {
+    setEditingId(id);
+    setPendingError(null);
+    try {
+      const detail = await api.apiProviderDetail(id);
+      setName(detail.name);
+      setProviderSlug(detail.provider_slug);
+      setApiKey(detail.api_key);
+      setApiBase(detail.api_base ?? "");
+      setShowKey(false);
+    } catch (err) {
+      setPendingError(err instanceof Error ? err.message : "无法加载 API 配置");
+    }
+  };
+  const save = useMutation({
+    mutationFn: () => {
+      const body = {
+        name: name.trim(),
+        provider_slug: providerSlug.trim(),
+        api_key: apiKey,
+        api_base: apiBase.trim() ? apiBase.trim() : null
+      };
+      return editingId ? api.updateApiProvider(editingId, body) : api.createApiProvider(body);
+    },
+    onSuccess: (saved) => {
+      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      setEditingId(saved.id);
+      setName(saved.name);
+      setProviderSlug(saved.provider_slug);
+      setApiKey(saved.api_key);
+      setApiBase(saved.api_base ?? "");
+      setPendingError(null);
+    },
+    onError: (err) => setPendingError(err instanceof Error ? err.message : "保存失败")
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api.deleteApiProvider(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      resetForm();
+    },
+    onError: (err) => setPendingError(err instanceof Error ? err.message : "删除失败")
+  });
+  const test = useMutation({
+    mutationFn: (id: string) => api.testApiProvider(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-providers"] })
+  });
+  const handleDelete = (id: string) => {
+    if (window.confirm("删除该 API 配置？引用它的人设会回退到默认凭据。")) {
+      remove.mutate(id);
+    }
+  };
+  return (
+    <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-xl font-semibold">API 配置</h1>
+            <p className="mt-1 text-sm text-muted">为人设指定外部 LLM 凭据。明文保存在本地数据库，不上传任何远端。</p>
+          </div>
+          <button className="btn" type="button" onClick={resetForm}>
+            <Plus size={16} />
+            新建
+          </button>
+        </div>
+        <div className="space-y-3">
+          {(providers.data ?? []).map((provider) => {
+            const tone =
+              provider.last_tested_ok === true
+                ? "bg-emerald-500"
+                : provider.last_tested_ok === false
+                  ? "bg-rose-500"
+                  : "bg-zinc-400";
+            const tip =
+              provider.last_tested_ok === true
+                ? `已测试 OK · ${provider.last_tested_at?.slice(0, 19).replace("T", " ") ?? ""}`
+                : provider.last_tested_ok === false
+                  ? `测试失败：${provider.last_tested_error ?? "未知"}`
+                  : "尚未测试";
+            return (
+              <div
+                key={provider.id}
+                className={`panel p-4 ${editingId === provider.id ? "ring-1 ring-brand" : ""}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${tone}`}
+                        title={tip}
+                        aria-label={tip}
+                      />
+                      <h2 className="truncate font-semibold">{provider.name}</h2>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      <StatusPill tone="brand">{provider.provider_slug}</StatusPill>
+                      <span className="font-mono">{provider.api_key_preview || "(未设置)"}</span>
+                      {provider.api_base && <span>· {provider.api_base}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="btn h-8 px-2 text-xs"
+                      type="button"
+                      onClick={() => test.mutate(provider.id)}
+                      disabled={test.isPending && test.variables === provider.id}
+                      title="测试连接（GET /models）"
+                    >
+                      {test.isPending && test.variables === provider.id ? (
+                        <Wifi size={14} className="animate-pulse" />
+                      ) : provider.last_tested_ok === true ? (
+                        <CheckCircle2 size={14} className="text-emerald-500" />
+                      ) : provider.last_tested_ok === false ? (
+                        <XCircle size={14} className="text-rose-500" />
+                      ) : (
+                        <Wifi size={14} />
+                      )}
+                      测试
+                    </button>
+                    <button className="btn h-8 px-2 text-xs" type="button" onClick={() => void loadProvider(provider.id)}>
+                      <Pencil size={14} />
+                      编辑
+                    </button>
+                    <button
+                      className="btn h-8 px-2 text-xs text-danger"
+                      type="button"
+                      onClick={() => handleDelete(provider.id)}
+                      disabled={remove.isPending && remove.variables === provider.id}
+                    >
+                      <Trash2 size={14} />
+                      删除
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {(providers.data ?? []).length === 0 && (
+            <div className="panel p-6 text-sm text-muted">尚未创建任何 API 配置。</div>
+          )}
+        </div>
+      </div>
+      <aside className="panel p-4">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="font-semibold">{editingId ? "编辑 API 配置" : "新建 API 配置"}</h2>
+          {editingId && (
+            <button className="btn h-8 px-2 text-xs" type="button" onClick={resetForm}>
+              <Plus size={14} />
+              新建
+            </button>
+          )}
+        </div>
+        <div className="mt-4 space-y-3">
+          <label className="block">
+            <span className="label">名称</span>
+            <input
+              name="api-provider-name"
+              className="input mt-1 w-full"
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              placeholder="例如 我的 OpenAI"
+            />
+          </label>
+          <label className="block">
+            <span className="label">Provider Slug</span>
+            <select
+              name="api-provider-slug"
+              className="input mt-1 w-full"
+              value={providerSlug}
+              onChange={(event) => setProviderSlug(event.target.value)}
+            >
+              <option value="openai">openai</option>
+              <option value="anthropic">anthropic</option>
+              <option value="gemini">gemini</option>
+              <option value="openrouter">openrouter</option>
+              <option value="azure">azure</option>
+              <option value="custom">custom</option>
+            </select>
+            <p className="mt-1 text-xs text-muted">
+              用于在 UI 上区分；具体 LiteLLM 路由仍由人设的 Backing Model 决定。
+            </p>
+          </label>
+          <label className="block">
+            <span className="label">API Key</span>
+            <div className="mt-1 flex items-stretch gap-2">
+              <input
+                name="api-provider-key"
+                className="input flex-1"
+                type={showKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                placeholder="sk-..."
+              />
+              <button
+                type="button"
+                className="btn px-2"
+                onClick={() => setShowKey((value) => !value)}
+                aria-label={showKey ? "隐藏" : "显示"}
+              >
+                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+              </button>
+            </div>
+            {editing && !apiKey && (
+              <p className="mt-1 text-xs text-muted">当前密钥：{editing.api_key_preview}（修改时请重新填入完整密钥）</p>
+            )}
+          </label>
+          <label className="block">
+            <span className="label">API Base（可选）</span>
+            <input
+              name="api-provider-base"
+              className="input mt-1 w-full"
+              value={apiBase}
+              onChange={(event) => setApiBase(event.target.value)}
+              placeholder="https://api.example.com/v1"
+            />
+            <p className="mt-1 text-xs text-muted">
+              用于 OpenAI 兼容代理或自部署网关；空表示走 LiteLLM 默认地址。
+            </p>
+          </label>
+          {pendingError && <div className="text-xs text-danger">{pendingError}</div>}
+          <button
+            className="btn btn-primary w-full"
+            onClick={() => save.mutate()}
+            disabled={!name.trim() || !providerSlug.trim() || save.isPending}
+          >
+            <Save size={16} />
+            {editingId ? "保存修改" : "保存配置"}
           </button>
         </div>
       </aside>

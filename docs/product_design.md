@@ -89,7 +89,9 @@ Persona 数据结构有三个特殊子类型：
 | Prompt 渲染 | 带 `[USER VERDICT]` 高优先级 tag |
 | UI 视觉 | 必须明显区别于普通发言(颜色 / 边框 / 徽章)|
 
-### 5.3 伪装人设(Masquerade)
+### 5.3 群友发言 / 伪装(Masquerade)
+
+当前实现把入口收敛为“群友发言”：用户新增一个临时群友昵称并投放观点，而不是附身到已经在场的 AI 人设。旧的“附身某个人设”语义保留为底层兼容字段，不作为默认 UI。
 
 **本质**：让用户作为一个"普通参辩者"进场，与 AI 角色平级。
 
@@ -97,11 +99,11 @@ Persona 数据结构有三个特殊子类型：
 
 1. **测试层**：验证某个 AI 角色是否真的会被反对意见说服
 2. **引导层**：用户有想法但不想以"上帝口吻"宣布，把它当备选方案投放接受真实批评
-3. **娱乐 / 探索层**：体验"以某个人设的口吻发言会怎样"
+3. **娱乐 / 探索层**：体验"多一个真实群友视角会怎样"
 
 #### 渲染策略：按一般 AI 处理
 
-伪装消息在 AI 视图里跟普通 AI 消息**完全无差异**：
+群友消息在 AI 视图里跟普通讨论消息**完全无差异**：
 - 同 role、同格式、无任何 marker
 - system prompt 不提"可能有用户伪装"
 - AI 可能反向推断身份，**作为"狼人杀"游戏特性接受**，不做对抗
@@ -125,7 +127,7 @@ Persona 数据结构有三个特殊子类型：
 - **同一 turn 只能是一个身份**——伪装中不能切换到裁决者
 - **书记官不知情**——污染状态更新
 - **上帝副手也不知情**——同等对待
-- **一次只能附身一个人设**——不允许左右手互搏
+- **一次只允许一个群友昵称**——不允许左右手互搏
 
 ### 5.4 v1 不做的功能
 
@@ -297,7 +299,9 @@ FacilitatorConfig {
 
 ### 7.4 节奏假设：人是速度瓶颈
 
-**核心假设**：用户是讨论节奏的控制者。每次 AI 发言完成后，系统默认停下来等待用户下一步动作。该假设直接影响技术架构——单房间内任何时刻**至多一个 in-flight LLM call**。
+**核心假设**：用户仍是讨论节奏的最终控制者，但默认聊天体验应当顺滑。用户追加消息后，系统会自动驱动一位符合当前 phase 规则的 persona 回复；AI 回复不会递归触发下一轮。用户可以通过冻结、phase 横幅、手动 turn 或显式选择 speaker 接管节奏。
+
+普通 / autodrive 流程每个房间只推进一轮自动回复；声明式 `parallel` phase 是唯一允许多个 in-flight LLM call 的例外，并按消息独立渲染与落库。
 
 ## 8. Phase 与赛制(Debate Format)
 
@@ -349,14 +353,14 @@ PhaseTemplate {
 |-------|------------|
 | **立论(constructive)** | allowed=正反双方 / ordering=alternating / exit=各 N 轮 |
 | **质询(cross-exam)** | ordering=question_paired / 提问方主导 |
-| **自由辩论(free-debate)** | allowed=all / ordering=mention_driven / exit=用户手动或 N 轮 |
+| **自由辩论(free-debate)** | allowed=all / ordering=mention_driven（@ 优先，未命中回退 round-robin）/ exit=用户手动或 N 轮 |
 | **总结陈词(closing)** | allowed=指定双方 / ordering=反方先 / exit=各 1 轮 |
 | **轮询(round-robin)** | allowed=all / ordering=round_robin |
 | **作者答辩(author-defense)** | allowed=作者 / ordering=question_paired(评审先问) |
 | **评审打分(review-scoring)** | allowed=指定评审 / ordering=parallel |
 | **头脑风暴(brainstorm)** | allowed=all / ordering=parallel / role_constraints=禁止批评 |
 | **诘问(socratic)** | allowed=指定主问者 / ordering=question_paired |
-| **自由模式(open)** | allowed=all / ordering=mention_driven / exit=never |
+| **自由模式(open)** | allowed=all / ordering=mention_driven（@ 优先，未命中回退 round-robin）/ exit=never |
 
 ### 8.6 内置赛制模板(v1)
 

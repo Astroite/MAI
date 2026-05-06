@@ -10,13 +10,14 @@ from .event_bus import event_bus
 from .ids import new_id
 from .llm import llm_adapter
 from .models import (
+    ApiProvider,
+    AppSettings,
     Decision,
     FacilitatorSignal,
     Message,
-    Persona,
+    PersonaInstance,
     PhaseTemplate,
     Room,
-    RoomPersona,
     RoomPhaseInstance,
     RoomPhasePlan,
     RoomRuntimeState,
@@ -95,6 +96,65 @@ def _unregister_active_call(call: InFlightCall) -> None:
         ACTIVE_CALLS.pop(call.room_id, None)
 
 
+# Per-room locks guarding auto-drive dispatch. A held lock means an autodrive
+# task is already streaming a persona reply; further user messages skip
+# scheduling rather than queueing. Users can still POST /turn manually.
+_AUTODRIVE_LOCKS: dict[str, asyncio.Lock] = {}
+_AUTODRIVE_TRIGGER_AUTHORS = {"user", "user_as_persona", "user_as_judge"}
+_AUTODRIVE_TRIGGER_TYPES = {"speech", "question", "answer", "user_doc"}
+
+
+def _autodrive_lock(room_id: str) -> asyncio.Lock:
+    return _AUTODRIVE_LOCKS.setdefault(room_id, asyncio.Lock())
+
+
+async def maybe_autodrive_after(room_id: str, just_appended: Message) -> None:
+    """Schedule a persona reply if the just-appended message is user-driven.
+
+    The recursion guard hinges on `author_actual`: persona replies have
+    `author_actual == "ai"` and never re-trigger autodrive, even though
+    `_stream_one_message` calls `after_message_appended` on its tail.
+    """
+    if just_appended.author_actual not in _AUTODRIVE_TRIGGER_AUTHORS:
+        return
+    if just_appended.message_type not in _AUTODRIVE_TRIGGER_TYPES:
+        return
+    lock = _autodrive_lock(room_id)
+    if lock.locked():
+        return
+    if active_calls_for_room(room_id):
+        return
+    asyncio.create_task(_autodrive_runner(room_id, lock))
+
+
+async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
+    if lock.locked():
+        return
+    async with lock:
+        try:
+            async with SessionLocal() as session:
+                await run_room_turn(session, room_id, None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — surface to user, never swallow
+            try:
+                async with SessionLocal() as session:
+                    await trace_record(
+                        session,
+                        room_id,
+                        "autodrive_error",
+                        f"autodrive failed: {exc!r}",
+                        {"error": repr(exc)},
+                    )
+                    await session.commit()
+            except Exception:  # noqa: BLE001
+                pass
+            await event_bus.publish(
+                room_id,
+                {"type": "system.error", "kind": "autodrive", "detail": str(exc)},
+            )
+
+
 async def get_current_phase(session: AsyncSession, runtime: RoomRuntimeState) -> RoomPhaseInstance | None:
     if not runtime.current_phase_instance_id:
         return None
@@ -107,31 +167,77 @@ async def get_phase_template(session: AsyncSession, phase_instance: RoomPhaseIns
     return await session.get(PhaseTemplate, phase_instance.phase_template_id)
 
 
-async def get_room_discussants(session: AsyncSession, room_id: str) -> list[Persona]:
+async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) -> ApiProvider | None:
+    if not persona.api_provider_id:
+        return None
+    return await session.get(ApiProvider, persona.api_provider_id)
+
+
+async def resolve_persona_runtime(
+    session: AsyncSession, persona: PersonaInstance
+) -> tuple[PersonaInstance, ApiProvider | None]:
+    """Overlay user-level defaults from AppSettings onto an empty persona
+    backing_model / api_provider_id. Persona instance is detached from the
+    session before mutation so the override doesn't accidentally persist.
+
+    Resolution order:
+      backing_model:    persona.backing_model || settings.default_backing_model
+      api_provider_id:  persona.api_provider_id || settings.default_api_provider_id
+
+    Raises ValueError if neither persona nor settings supply a model or a
+    provider — the engine treats this as a "system not configured yet" error
+    that surfaces clearly to the user (no env-var fallback).
+    """
+    settings_row = await session.get(AppSettings, 1)
+    default_model = (settings_row.default_backing_model or "").strip() if settings_row else ""
+    default_provider_id = settings_row.default_api_provider_id if settings_row else None
+
+    effective_model = (persona.backing_model or "").strip() or default_model
+    effective_provider_id = persona.api_provider_id or default_provider_id
+
+    if not effective_model:
+        raise ValueError(
+            "no backing model configured: set persona.backing_model or "
+            "AppSettings.default_backing_model"
+        )
+    if not effective_provider_id:
+        raise ValueError(
+            "no API provider configured: set persona.api_provider_id or "
+            "AppSettings.default_api_provider_id"
+        )
+
+    provider = await session.get(ApiProvider, effective_provider_id)
+    if provider is None:
+        raise ValueError(f"api provider {effective_provider_id} not found")
+
+    # Detach + overlay so llm_adapter sees resolved values via duck-typing.
+    session.expunge(persona)
+    persona.backing_model = effective_model
+    persona.api_provider_id = provider.id
+    return persona, provider
+
+
+async def get_room_discussants(session: AsyncSession, room_id: str) -> list[PersonaInstance]:
     stmt = (
-        select(Persona)
-        .join(RoomPersona, RoomPersona.persona_id == Persona.id)
-        .where(and_(RoomPersona.room_id == room_id, Persona.kind == "discussant"))
-        .order_by(Persona.name)
+        select(PersonaInstance)
+        .where(and_(PersonaInstance.room_id == room_id, PersonaInstance.kind == "discussant"))
+        .order_by(PersonaInstance.position, PersonaInstance.name)
     )
     return list((await session.scalars(stmt)).all())
 
 
-async def get_room_system_persona(session: AsyncSession, room_id: str, kind: Literal["scribe", "facilitator"]) -> Persona:
-    room_stmt = (
-        select(Persona)
-        .join(RoomPersona, RoomPersona.persona_id == Persona.id)
-        .where(and_(RoomPersona.room_id == room_id, Persona.kind == kind))
-        .order_by(Persona.is_builtin, Persona.name)
+async def get_room_system_persona(
+    session: AsyncSession, room_id: str, kind: Literal["scribe", "facilitator"]
+) -> PersonaInstance:
+    stmt = (
+        select(PersonaInstance)
+        .where(and_(PersonaInstance.room_id == room_id, PersonaInstance.kind == kind))
+        .order_by(PersonaInstance.position, PersonaInstance.name)
         .limit(1)
     )
-    persona = await session.scalar(room_stmt)
-    if persona:
-        return persona
-    fallback_stmt = select(Persona).where(and_(Persona.kind == kind, Persona.is_builtin.is_(True))).order_by(Persona.name).limit(1)
-    persona = await session.scalar(fallback_stmt)
+    persona = await session.scalar(stmt)
     if persona is None:
-        raise ValueError(f"{kind} persona not found")
+        raise ValueError(f"{kind} persona instance not found for room {room_id}")
     return persona
 
 
@@ -141,6 +247,12 @@ async def allowed_persona_ids(
     phase_template: PhaseTemplate | None,
     plan: RoomPhasePlan | None,
 ) -> list[str]:
+    """Return *instance ids* of discussants allowed in the current phase.
+
+    Phase templates store **template ids** in `allowed_speakers.persona_ids`
+    and `variable_bindings`. We resolve those to the room's instances by
+    matching `instance.template_id`.
+    """
     discussants = await get_room_discussants(session, room_id)
     if not phase_template:
         return [p.id for p in discussants]
@@ -148,14 +260,14 @@ async def allowed_persona_ids(
     if allowed["type"] == "all":
         return [p.id for p in discussants]
     if allowed["type"] == "specific":
-        room_ids = {p.id for p in discussants}
-        return [pid for pid in allowed.get("persona_ids", []) if pid in room_ids]
+        allowed_template_ids = set(allowed.get("persona_ids", []))
+        return [p.id for p in discussants if p.template_id in allowed_template_ids]
     bindings = (plan.variable_bindings if plan else {}) or {}
-    ids: list[str] = []
+    template_ids: list[str] = []
     for variable_name in allowed.get("variable_names", []):
-        ids.extend(bindings.get(variable_name, []))
-    room_ids = {p.id for p in discussants}
-    return [pid for pid in ids if pid in room_ids]
+        template_ids.extend(bindings.get(variable_name, []))
+    template_id_set = set(template_ids)
+    return [p.id for p in discussants if p.template_id in template_id_set]
 
 
 async def pick_next_speaker(
@@ -183,8 +295,13 @@ async def pick_next_speaker(
         if requested_persona_id not in allowed:
             return NextSpeakerResult("wait", [], "requested persona not allowed in current phase")
         return NextSpeakerResult("single", [requested_persona_id], "user picked speaker")
-    if ordering in {"mention_driven", "user_picks"}:
-        return NextSpeakerResult("wait", [], f"{ordering} waits for user")
+    if ordering == "user_picks":
+        return NextSpeakerResult("wait", [], "user_picks waits for user")
+    if ordering == "mention_driven":
+        mentioned = await _resolve_at_mention(session, room.id, allowed)
+        if mentioned is not None:
+            return NextSpeakerResult("single", [mentioned], "mention_driven matched @-mention")
+        # fall through to round-robin so auto-drive still moves the room forward
     if ordering == "parallel":
         spoken = await _spoken_counts(session, room.id, phase.id)
         remaining = [pid for pid in allowed if spoken.get(pid, 0) == 0]
@@ -192,10 +309,45 @@ async def pick_next_speaker(
 
     spoken = await _spoken_counts(session, room.id, phase.id)
     total = sum(spoken.values())
-    if ordering in {"round_robin", "alternating", "question_paired"}:
+    if ordering in {"round_robin", "alternating", "question_paired", "mention_driven"}:
         next_id = allowed[total % len(allowed)]
-        return NextSpeakerResult("single", [next_id], ordering)
+        reason = "mention_driven fallback to round-robin" if ordering == "mention_driven" else ordering
+        return NextSpeakerResult("single", [next_id], reason)
     return NextSpeakerResult("wait", [], "unknown ordering")
+
+
+async def _resolve_at_mention(
+    session: AsyncSession, room_id: str, allowed_ids: list[str]
+) -> str | None:
+    """Scan the most recent visible user message for `@<persona-name>` tokens.
+
+    Returns the matched persona id (must be in `allowed_ids`) or None.
+    """
+    if not allowed_ids:
+        return None
+    last_user_message = await session.scalar(
+        select(Message)
+        .where(
+            Message.room_id == room_id,
+            Message.visibility_to_models.is_(True),
+            Message.author_actual.in_(["user", "user_as_persona", "user_as_judge"]),
+            Message.message_type.in_(["speech", "question", "answer", "user_doc"]),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    if last_user_message is None or "@" not in (last_user_message.content or ""):
+        return None
+    personas = (
+        await session.scalars(select(PersonaInstance).where(PersonaInstance.id.in_(allowed_ids)))
+    ).all()
+    content = last_user_message.content
+    for persona in personas:
+        if not persona.name:
+            continue
+        if f"@{persona.name}" in content:
+            return persona.id
+    return None
 
 
 async def _spoken_counts(session: AsyncSession, room_id: str, phase_instance_id: str) -> dict[str, int]:
@@ -288,9 +440,11 @@ async def _stream_one_message(
     runtime: RoomRuntimeState,
     persona_id: str,
 ) -> Message:
-    persona = await session.get(Persona, persona_id)
+    # `persona_id` is a PersonaInstance.id (room-scoped); the engine never
+    # consumes raw template ids past pick_next_speaker.
+    persona = await session.get(PersonaInstance, persona_id)
     if persona is None:
-        raise ValueError("persona not found")
+        raise ValueError("persona instance not found")
     phase = await get_current_phase(session, runtime)
     template = await get_phase_template(session, phase)
     context = list(
@@ -325,8 +479,9 @@ async def _stream_one_message(
     await session.commit()
 
     truncated_reason = None
+    persona, api_provider = await resolve_persona_runtime(session, persona)
     stream_iter = llm_adapter.stream(
-        persona, context, template, runtime.max_message_tokens, scribe_state
+        persona, context, template, runtime.max_message_tokens, scribe_state, api_provider=api_provider
     ).__aiter__()
     try:
         while True:
@@ -459,6 +614,7 @@ async def after_message_appended(session: AsyncSession, room_id: str, message: M
     if room and runtime:
         await check_phase_exit(session, room, runtime, emit=True)
     await session.commit()
+    await maybe_autodrive_after(room_id, message)
 
 
 async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_id: str) -> None:
@@ -485,6 +641,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
                 break
     new_messages = messages[start_index:]
     scribe = await get_room_system_persona(session, room_id, "scribe")
+    scribe, scribe_provider = await resolve_persona_runtime(session, scribe)
     update = await llm_adapter.complete_tool(
         scribe,
         "scribe_update",
@@ -495,6 +652,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
             "latest_message_id": latest_message_id,
             "messages": [message_to_tool_payload(message) for message in new_messages],
         },
+        api_provider=scribe_provider,
     )
     current = apply_scribe_update(current, update)
     state.current_state = current
@@ -541,6 +699,8 @@ async def run_facilitator_eval(
             )
         ).all()
     )
+    facilitator_provider = None
+    facilitator, facilitator_provider = await resolve_persona_runtime(session, facilitator)
     evaluation = await llm_adapter.complete_tool(
         facilitator,
         "facilitator_evaluation",
@@ -553,6 +713,7 @@ async def run_facilitator_eval(
             "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
             "manual_request": force,
         },
+        api_provider=facilitator_provider,
     )
     signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
     signals = (await limit_facilitator_signals(session, runtime, phase, template, latest_message_id)) + signals
@@ -1076,6 +1237,7 @@ def message_to_event(message: Message) -> dict:
         "author_model": message.author_model,
         "author_actual": message.author_actual,
         "user_masquerade_persona_id": message.user_masquerade_persona_id,
+        "user_masquerade_name": message.user_masquerade_name,
         "visibility": message.visibility,
         "visibility_to_models": message.visibility_to_models,
         "content": message.content,
