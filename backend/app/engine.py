@@ -11,6 +11,7 @@ from .ids import new_id
 from .llm import llm_adapter
 from .models import (
     ApiProvider,
+    AppSettings,
     Decision,
     FacilitatorSignal,
     Message,
@@ -170,6 +171,50 @@ async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) 
     if not persona.api_provider_id:
         return None
     return await session.get(ApiProvider, persona.api_provider_id)
+
+
+async def resolve_persona_runtime(
+    session: AsyncSession, persona: PersonaInstance
+) -> tuple[PersonaInstance, ApiProvider | None]:
+    """Overlay user-level defaults from AppSettings onto an empty persona
+    backing_model / api_provider_id. Persona instance is detached from the
+    session before mutation so the override doesn't accidentally persist.
+
+    Resolution order:
+      backing_model:    persona.backing_model || settings.default_backing_model
+      api_provider_id:  persona.api_provider_id || settings.default_api_provider_id
+
+    Raises ValueError if neither persona nor settings supply a model or a
+    provider — the engine treats this as a "system not configured yet" error
+    that surfaces clearly to the user (no env-var fallback).
+    """
+    settings_row = await session.get(AppSettings, 1)
+    default_model = (settings_row.default_backing_model or "").strip() if settings_row else ""
+    default_provider_id = settings_row.default_api_provider_id if settings_row else None
+
+    effective_model = (persona.backing_model or "").strip() or default_model
+    effective_provider_id = persona.api_provider_id or default_provider_id
+
+    if not effective_model:
+        raise ValueError(
+            "no backing model configured: set persona.backing_model or "
+            "AppSettings.default_backing_model"
+        )
+    if not effective_provider_id:
+        raise ValueError(
+            "no API provider configured: set persona.api_provider_id or "
+            "AppSettings.default_api_provider_id"
+        )
+
+    provider = await session.get(ApiProvider, effective_provider_id)
+    if provider is None:
+        raise ValueError(f"api provider {effective_provider_id} not found")
+
+    # Detach + overlay so llm_adapter sees resolved values via duck-typing.
+    session.expunge(persona)
+    persona.backing_model = effective_model
+    persona.api_provider_id = provider.id
+    return persona, provider
 
 
 async def get_room_discussants(session: AsyncSession, room_id: str) -> list[PersonaInstance]:
@@ -434,7 +479,7 @@ async def _stream_one_message(
     await session.commit()
 
     truncated_reason = None
-    api_provider = await resolve_api_provider(session, persona)
+    persona, api_provider = await resolve_persona_runtime(session, persona)
     stream_iter = llm_adapter.stream(
         persona, context, template, runtime.max_message_tokens, scribe_state, api_provider=api_provider
     ).__aiter__()
@@ -596,7 +641,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
                 break
     new_messages = messages[start_index:]
     scribe = await get_room_system_persona(session, room_id, "scribe")
-    scribe_provider = await resolve_api_provider(session, scribe)
+    scribe, scribe_provider = await resolve_persona_runtime(session, scribe)
     update = await llm_adapter.complete_tool(
         scribe,
         "scribe_update",
@@ -654,7 +699,8 @@ async def run_facilitator_eval(
             )
         ).all()
     )
-    facilitator_provider = await resolve_api_provider(session, facilitator)
+    facilitator_provider = None
+    facilitator, facilitator_provider = await resolve_persona_runtime(session, facilitator)
     evaluation = await llm_adapter.complete_tool(
         facilitator,
         "facilitator_evaluation",

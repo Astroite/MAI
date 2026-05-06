@@ -1,8 +1,10 @@
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 
+import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -30,6 +32,7 @@ from .event_bus import event_bus
 from .ids import new_id
 from .models import (
     ApiProvider,
+    AppSettings,
     DebateFormat,
     Decision,
     FacilitatorSignal,
@@ -51,7 +54,10 @@ from .schemas import (
     ApiProviderCreate,
     ApiProviderDetailOut,
     ApiProviderOut,
+    ApiProviderTestResult,
     ApiProviderUpdate,
+    AppSettingsOut,
+    AppSettingsUpdate,
     DebateFormatCreate,
     DebateFormatOut,
     DebateFormatUpdate,
@@ -139,7 +145,52 @@ async def _strip_api_prefix(request, call_next):
 @app.get("/health")
 async def health(session: AsyncSession = Depends(get_session)) -> dict:
     await session.scalar(select(func.count(PersonaTemplate.id)))
-    return {"status": "ok", "database": "ok"}
+    settings_row = await _get_or_create_app_settings(session)
+    setup_complete = bool(
+        settings_row.default_backing_model and settings_row.default_api_provider_id
+    )
+    return {"status": "ok", "database": "ok", "setup_complete": setup_complete}
+
+
+async def _get_or_create_app_settings(session: AsyncSession) -> AppSettings:
+    row = await session.get(AppSettings, 1)
+    if row is None:
+        row = AppSettings(id=1)
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return row
+
+
+@app.get("/settings", response_model=AppSettingsOut)
+async def get_app_settings(session: AsyncSession = Depends(get_session)):
+    row = await _get_or_create_app_settings(session)
+    return AppSettingsOut(
+        default_backing_model=row.default_backing_model,
+        default_api_provider_id=row.default_api_provider_id,
+        setup_complete=bool(row.default_backing_model and row.default_api_provider_id),
+        updated_at=row.updated_at,
+    )
+
+
+@app.patch("/settings", response_model=AppSettingsOut)
+async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = Depends(get_session)):
+    row = await _get_or_create_app_settings(session)
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "default_api_provider_id" in changes and changes["default_api_provider_id"]:
+        provider = await session.get(ApiProvider, changes["default_api_provider_id"])
+        if not provider:
+            raise HTTPException(404, "api provider not found")
+    for key, value in changes.items():
+        setattr(row, key, value or None)
+    await session.commit()
+    await session.refresh(row)
+    return AppSettingsOut(
+        default_backing_model=row.default_backing_model,
+        default_api_provider_id=row.default_api_provider_id,
+        setup_complete=bool(row.default_backing_model and row.default_api_provider_id),
+        updated_at=row.updated_at,
+    )
 
 
 @app.get("/templates/personas", response_model=list[PersonaTemplateOut])
@@ -252,10 +303,16 @@ async def update_api_provider(
     if not provider:
         raise HTTPException(404, "api provider not found")
     changes = body.model_dump(mode="json", exclude_unset=True)
+    creds_touched = any(key in changes for key in ("api_key", "api_base"))
     for key, value in changes.items():
         if key == "provider_slug" and isinstance(value, str):
             value = value.strip()
         setattr(provider, key, value)
+    if creds_touched:
+        # Stale green dot would lie about new key/base; force a re-test.
+        provider.last_tested_ok = None
+        provider.last_tested_at = None
+        provider.last_tested_error = None
     await session.commit()
     await session.refresh(provider)
     return ApiProviderDetailOut.from_model(provider)
@@ -275,6 +332,97 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     await session.delete(provider)
     await session.commit()
     return {"status": "deleted"}
+
+
+@app.post("/templates/api-providers/{provider_id}/test", response_model=ApiProviderTestResult)
+async def test_api_provider(
+    provider_id: str,
+    model: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    """Test an API provider. Two modes:
+
+    - Without `?model=`: cheap GET `{base}/models` ping. Validates that the
+      key + base URL reach a server that exposes the OpenAI-compat surface,
+      no token spend.
+    - With `?model=`: real `litellm.acompletion(max_tokens=1)`. Validates the
+      full path including litellm's provider routing, so a green dot here
+      truly means "ready to use". Costs ~1 token.
+
+    Persists the result on the ApiProvider row so the UI can show a status
+    dot.
+    """
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    tested_at = datetime.now(timezone.utc)
+    ok = False
+    status_code: int | None = None
+    error: str | None = None
+
+    if model:
+        from litellm import acompletion
+
+        try:
+            response = await acompletion(
+                model=model,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+                api_key=provider.api_key,
+                api_base=provider.api_base or None,
+            )
+            # Any well-formed completion counts as success.
+            if response and getattr(response, "choices", None):
+                ok = True
+            else:
+                error = "litellm 返回空响应"
+        except Exception as exc:  # noqa: BLE001 — surface to user
+            error = _summarize_litellm_error(exc)
+    else:
+        base = (provider.api_base or "https://api.openai.com/v1").rstrip("/")
+        url = f"{base}/models"
+        headers = {"Authorization": f"Bearer {provider.api_key}"}
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as http:
+                response = await http.get(url, headers=headers)
+            status_code = response.status_code
+            if response.status_code == 200:
+                ok = True
+            elif response.status_code in (401, 403):
+                error = "鉴权失败：API Key 无效或权限不足"
+            elif response.status_code == 404:
+                error = "地址不通：请检查 API Base 是否正确（应包含 /v1）"
+            else:
+                error = f"HTTP {response.status_code}: {response.text[:200]}"
+        except httpx.ConnectError as exc:
+            error = f"无法连接：{exc}"
+        except httpx.TimeoutException:
+            error = "请求超时（10s）"
+        except Exception as exc:  # noqa: BLE001 — surface message
+            error = f"请求失败：{type(exc).__name__}: {exc}"
+
+    provider.last_tested_ok = ok
+    provider.last_tested_at = tested_at
+    provider.last_tested_error = None if ok else error
+    await session.commit()
+    return ApiProviderTestResult(ok=ok, status_code=status_code, error=error, tested_at=tested_at)
+
+
+def _summarize_litellm_error(exc: Exception) -> str:
+    """litellm appends a verbose 'Provider List: https://docs...' footer plus
+    sometimes a request_id. Strip both so the UI gets the actionable line."""
+    text = str(exc).strip()
+    # Drop the verbose footers litellm appends to routing failures.
+    for marker in ("Provider List:", "\nLearn more", " Learn more:", "Pass model as E.g."):
+        idx = text.find(marker)
+        if idx != -1:
+            text = text[:idx].rstrip()
+    # Drop request_id parens
+    import re as _re
+
+    text = _re.sub(r"\s*\(request_id:[^)]*\)", "", text)
+    text = text[:300].strip()
+    return text or f"{type(exc).__name__}"
 
 
 @app.get("/templates/phases", response_model=list[PhaseTemplateOut])
@@ -807,6 +955,52 @@ async def freeze(room_id: str, session: AsyncSession = Depends(get_session)):
     await freeze_room(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
+
+
+@app.delete("/rooms/{room_id}")
+async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Hard-delete a room and all of its dependents. Cancels any in-flight
+    streams first so background tasks don't write to a vanished row."""
+    room = await session.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "room not found")
+    for active_call in active_calls_for_room(room_id):
+        active_call.cancel("room_deleted")
+    # Order matters: clear children before parents to satisfy FKs even when
+    # ON DELETE CASCADE isn't declared.
+    from .models import (
+        Decision as _Decision,
+        FacilitatorSignal as _FacilitatorSignal,
+        MergeBack as _MergeBack,
+        RoomPhaseInstance as _RoomPhaseInstance,
+        RoomPhasePlan as _RoomPhasePlan,
+        RoomSnapshot as _RoomSnapshot,
+        ScribeState as _ScribeState,
+        TraceEvent as _TraceEvent,
+    )
+    await session.execute(delete(Message).where(Message.room_id == room_id))
+    await session.execute(delete(_Decision).where(_Decision.room_id == room_id))
+    await session.execute(delete(_FacilitatorSignal).where(_FacilitatorSignal.room_id == room_id))
+    await session.execute(delete(_RoomPhaseInstance).where(_RoomPhaseInstance.room_id == room_id))
+    await session.execute(delete(_RoomPhasePlan).where(_RoomPhasePlan.room_id == room_id))
+    await session.execute(delete(_ScribeState).where(_ScribeState.room_id == room_id))
+    await session.execute(delete(RoomRuntimeState).where(RoomRuntimeState.room_id == room_id))
+    await session.execute(delete(PersonaInstance).where(PersonaInstance.room_id == room_id))
+    await session.execute(delete(_RoomSnapshot).where(_RoomSnapshot.room_id == room_id))
+    await session.execute(delete(_TraceEvent).where(_TraceEvent.room_id == room_id))
+    # MergeBack rows reference room as parent or sub-room; drop any pointing here.
+    await session.execute(
+        delete(_MergeBack).where(
+            (_MergeBack.parent_room_id == room_id) | (_MergeBack.sub_room_id == room_id)
+        )
+    )
+    # Uploads are tied loosely (nullable room_id) — keep the file row, null out
+    # the link so the upload library survives.
+    await session.execute(update(Upload).where(Upload.room_id == room_id).values(room_id=None))
+    await session.delete(room)
+    await session.commit()
+    await event_bus.publish(room_id, {"type": "room.deleted"})
+    return {"status": "deleted", "room_id": room_id}
 
 
 @app.post("/rooms/{room_id}/unfreeze", response_model=RoomState)

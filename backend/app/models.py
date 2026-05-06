@@ -127,7 +127,23 @@ class ApiProvider(Base):
     provider_slug: Mapped[str] = mapped_column(String(64))
     api_key: Mapped[str] = mapped_column(Text)
     api_base: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_tested_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_tested_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class AppSettings(Base):
+    """Singleton row holding user-level defaults. Only id=1 is used."""
+
+    __tablename__ = "app_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    default_backing_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    default_api_provider_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True
+    )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 

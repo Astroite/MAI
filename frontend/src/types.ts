@@ -41,12 +41,29 @@ export interface ApiProvider {
   api_key_preview: string;
   has_api_key: boolean;
   api_base?: string | null;
+  last_tested_ok?: boolean | null;
+  last_tested_at?: string | null;
+  last_tested_error?: string | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface ApiProviderDetail extends ApiProvider {
   api_key: string;
+}
+
+export interface ApiProviderTestResult {
+  ok: boolean;
+  status_code?: number | null;
+  error?: string | null;
+  tested_at: string;
+}
+
+export interface AppSettings {
+  default_backing_model?: string | null;
+  default_api_provider_id?: string | null;
+  setup_complete: boolean;
+  updated_at?: string | null;
 }
 
 export interface PhaseTemplate {

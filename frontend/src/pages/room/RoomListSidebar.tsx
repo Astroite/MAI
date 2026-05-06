@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate } from "react-router-dom";
-import { MessagesSquare, Plus, Settings, Workflow } from "lucide-react";
+import { MessagesSquare, Plus, Settings, Trash2, Workflow } from "lucide-react";
 import { api } from "../../api";
 import { StatusPill } from "../../components/StatusPill";
 import type { Room } from "../../types";
@@ -44,6 +44,21 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       navigate(`/rooms/${state.room.id}`);
     }
   });
+
+  const remove = useMutation({
+    mutationFn: (roomId: string) => api.deleteRoom(roomId),
+    onSuccess: (_data, roomId) => {
+      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      // If we just deleted the room we're viewing, kick back to the list.
+      if (roomId === activeRoomId) navigate("/");
+    }
+  });
+
+  const handleDelete = (room: Room) => {
+    if (window.confirm(`删除房间「${room.title}」？所有消息和子房间状态会一并清除，不可撤销。`)) {
+      remove.mutate(room.id);
+    }
+  };
 
   // Top-level rooms (not subrooms) sorted by created_at desc.
   const topLevel = useMemo(
@@ -111,7 +126,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
           </div>
         )}
         {topLevel.map((room) => (
-          <RoomEntry key={room.id} room={room} active={room.id === activeRoomId} />
+          <RoomEntry key={room.id} room={room} active={room.id === activeRoomId} onDelete={() => handleDelete(room)} />
         ))}
         {topLevel.flatMap((room) => {
           const children = childrenByParent.get(room.id) ?? [];
@@ -122,6 +137,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
               active={child.id === activeRoomId}
               indent
               parentId={room.id}
+              onDelete={() => handleDelete(child)}
             />
           ));
         })}
@@ -144,29 +160,46 @@ function RoomEntry({
   room,
   active,
   indent = false,
-  parentId
+  parentId,
+  onDelete
 }: {
   room: Room;
   active: boolean;
   indent?: boolean;
   parentId?: string;
+  onDelete: () => void;
 }) {
   const to = parentId ? `/rooms/${parentId}/sub/${room.id}` : `/rooms/${room.id}`;
   return (
-    <NavLink
-      to={to}
-      className={`flex items-center gap-2 rounded-md px-2 py-2 text-sm transition ${
-        active ? "bg-brand/10 text-brand" : "text-text hover:bg-surface"
-      } ${indent ? "ml-4" : ""}`}
-    >
-      <div className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-md bg-surface text-xs">
-        {indent ? "↳" : room.title.slice(0, 2)}
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="truncate font-medium">{room.title}</div>
-        <div className="mt-0.5 text-xs text-muted">{room.status}</div>
-      </div>
-      {room.status === "frozen" && <StatusPill tone="danger">冻</StatusPill>}
-    </NavLink>
+    <div className={`group relative ${indent ? "ml-4" : ""}`}>
+      <NavLink
+        to={to}
+        className={`flex items-center gap-2 rounded-md px-2 py-2 pr-9 text-sm transition ${
+          active ? "bg-brand/10 text-brand" : "text-text hover:bg-surface"
+        }`}
+      >
+        <div className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-md bg-surface text-xs">
+          {indent ? "↳" : room.title.slice(0, 2)}
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="truncate font-medium">{room.title}</div>
+          <div className="mt-0.5 text-xs text-muted">{room.status}</div>
+        </div>
+        {room.status === "frozen" && <StatusPill tone="danger">冻</StatusPill>}
+      </NavLink>
+      <button
+        type="button"
+        className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500"
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          onDelete();
+        }}
+        title="删除房间"
+        aria-label={`删除房间 ${room.title}`}
+      >
+        <Trash2 size={14} />
+      </button>
+    </div>
   );
 }

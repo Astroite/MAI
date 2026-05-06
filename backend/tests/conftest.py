@@ -25,6 +25,39 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _autoconfigure_default_provider():
+    """Engine no longer falls back to env vars at runtime — a real
+    ApiProvider must be configured. Bootstrap one from .env.test so the
+    test suite can run without each test having to set it up."""
+    with TestClient(app) as c:
+        providers = c.get("/templates/api-providers").json()
+        provider = next(
+            (p for p in providers if p["name"] == "__pytest_default__"), None
+        )
+        if provider is None:
+            created = c.post(
+                "/templates/api-providers",
+                json={
+                    "name": "__pytest_default__",
+                    "provider_slug": "openai",
+                    "api_key": os.environ["OPENAI_API_KEY"],
+                    "api_base": os.environ.get("OPENAI_API_BASE") or None,
+                },
+            )
+            provider = created.json()
+        c.patch(
+            "/settings",
+            json={
+                "default_api_provider_id": provider["id"],
+                "default_backing_model": os.environ.get(
+                    "OPENAI_TEST_MODEL", "openai/gpt-4o-mini"
+                ),
+            },
+        )
+    yield
+
+
 @pytest.fixture
 def client():
     with TestClient(app) as c:

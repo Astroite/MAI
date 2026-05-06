@@ -3,7 +3,7 @@ import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { CheckCircle2, Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Trash2, Wifi, XCircle } from "lucide-react";
 import { api } from "../api";
 import type { DebateFormat, PersonaKind, PersonaTemplate, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -836,6 +836,10 @@ export function ApiProvidersView() {
     },
     onError: (err) => setPendingError(err instanceof Error ? err.message : "删除失败")
   });
+  const test = useMutation({
+    mutationFn: (id: string) => api.testApiProvider(id),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-providers"] })
+  });
   const handleDelete = (id: string) => {
     if (window.confirm("删除该 API 配置？引用它的人设会回退到默认凭据。")) {
       remove.mutate(id);
@@ -855,38 +859,77 @@ export function ApiProvidersView() {
           </button>
         </div>
         <div className="space-y-3">
-          {(providers.data ?? []).map((provider) => (
-            <div
-              key={provider.id}
-              className={`panel p-4 ${editingId === provider.id ? "ring-1 ring-brand" : ""}`}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0">
-                  <h2 className="truncate font-semibold">{provider.name}</h2>
-                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-                    <StatusPill tone="brand">{provider.provider_slug}</StatusPill>
-                    <span className="font-mono">{provider.api_key_preview || "(未设置)"}</span>
-                    {provider.api_base && <span>· {provider.api_base}</span>}
+          {(providers.data ?? []).map((provider) => {
+            const tone =
+              provider.last_tested_ok === true
+                ? "bg-emerald-500"
+                : provider.last_tested_ok === false
+                  ? "bg-rose-500"
+                  : "bg-zinc-400";
+            const tip =
+              provider.last_tested_ok === true
+                ? `已测试 OK · ${provider.last_tested_at?.slice(0, 19).replace("T", " ") ?? ""}`
+                : provider.last_tested_ok === false
+                  ? `测试失败：${provider.last_tested_error ?? "未知"}`
+                  : "尚未测试";
+            return (
+              <div
+                key={provider.id}
+                className={`panel p-4 ${editingId === provider.id ? "ring-1 ring-brand" : ""}`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${tone}`}
+                        title={tip}
+                        aria-label={tip}
+                      />
+                      <h2 className="truncate font-semibold">{provider.name}</h2>
+                    </div>
+                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      <StatusPill tone="brand">{provider.provider_slug}</StatusPill>
+                      <span className="font-mono">{provider.api_key_preview || "(未设置)"}</span>
+                      {provider.api_base && <span>· {provider.api_base}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="btn h-8 px-2 text-xs"
+                      type="button"
+                      onClick={() => test.mutate(provider.id)}
+                      disabled={test.isPending && test.variables === provider.id}
+                      title="测试连接（GET /models）"
+                    >
+                      {test.isPending && test.variables === provider.id ? (
+                        <Wifi size={14} className="animate-pulse" />
+                      ) : provider.last_tested_ok === true ? (
+                        <CheckCircle2 size={14} className="text-emerald-500" />
+                      ) : provider.last_tested_ok === false ? (
+                        <XCircle size={14} className="text-rose-500" />
+                      ) : (
+                        <Wifi size={14} />
+                      )}
+                      测试
+                    </button>
+                    <button className="btn h-8 px-2 text-xs" type="button" onClick={() => void loadProvider(provider.id)}>
+                      <Pencil size={14} />
+                      编辑
+                    </button>
+                    <button
+                      className="btn h-8 px-2 text-xs text-danger"
+                      type="button"
+                      onClick={() => handleDelete(provider.id)}
+                      disabled={remove.isPending && remove.variables === provider.id}
+                    >
+                      <Trash2 size={14} />
+                      删除
+                    </button>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button className="btn h-8 px-2 text-xs" type="button" onClick={() => void loadProvider(provider.id)}>
-                    <Pencil size={14} />
-                    编辑
-                  </button>
-                  <button
-                    className="btn h-8 px-2 text-xs text-danger"
-                    type="button"
-                    onClick={() => handleDelete(provider.id)}
-                    disabled={remove.isPending && remove.variables === provider.id}
-                  >
-                    <Trash2 size={14} />
-                    删除
-                  </button>
-                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {(providers.data ?? []).length === 0 && (
             <div className="panel p-6 text-sm text-muted">尚未创建任何 API 配置。</div>
           )}

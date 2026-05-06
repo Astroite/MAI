@@ -1,6 +1,8 @@
 import type {
   ApiProvider,
   ApiProviderDetail,
+  ApiProviderTestResult,
+  AppSettings,
   DebateFormat,
   Decision,
   Message,
@@ -39,9 +41,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  health: () => request<{ status: string; database: string }>("/health"),
+  health: () =>
+    request<{ status: string; database: string; setup_complete: boolean }>("/health"),
+  appSettings: () => request<AppSettings>("/settings"),
+  updateAppSettings: (body: { default_backing_model?: string | null; default_api_provider_id?: string | null }) =>
+    request<AppSettings>("/settings", { method: "PATCH", body: JSON.stringify(body) }),
+  testApiProvider: (providerId: string, model?: string) => {
+    const qs = model ? `?model=${encodeURIComponent(model)}` : "";
+    return request<ApiProviderTestResult>(
+      `/templates/api-providers/${providerId}/test${qs}`,
+      { method: "POST" }
+    );
+  },
   rooms: () => request<Room[]>("/rooms"),
   roomState: (roomId: string) => request<RoomState>(`/rooms/${roomId}/state`),
+  deleteRoom: (roomId: string) =>
+    request<{ status: string; room_id: string }>(`/rooms/${roomId}`, { method: "DELETE" }),
   createRoom: (body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }) =>
     request<RoomState>("/rooms", { method: "POST", body: JSON.stringify(body) }),
   createSubroom: (

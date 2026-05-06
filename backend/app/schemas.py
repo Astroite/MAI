@@ -259,6 +259,9 @@ class ApiProviderOut(APIModel):
     api_key_preview: str
     has_api_key: bool
     api_base: str | None = None
+    last_tested_ok: bool | None = None
+    last_tested_at: datetime | None = None
+    last_tested_error: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -271,6 +274,9 @@ class ApiProviderOut(APIModel):
             api_key_preview=_mask_api_key(provider.api_key or ""),
             has_api_key=bool(provider.api_key),
             api_base=provider.api_base,
+            last_tested_ok=provider.last_tested_ok,
+            last_tested_at=provider.last_tested_at,
+            last_tested_error=provider.last_tested_error,
             created_at=provider.created_at,
             updated_at=provider.updated_at,
         )
@@ -289,9 +295,31 @@ class ApiProviderDetailOut(ApiProviderOut):
             has_api_key=bool(provider.api_key),
             api_base=provider.api_base,
             api_key=provider.api_key or "",
+            last_tested_ok=provider.last_tested_ok,
+            last_tested_at=provider.last_tested_at,
+            last_tested_error=provider.last_tested_error,
             created_at=provider.created_at,
             updated_at=provider.updated_at,
         )
+
+
+class ApiProviderTestResult(APIModel):
+    ok: bool
+    status_code: int | None = None
+    error: str | None = None
+    tested_at: datetime
+
+
+class AppSettingsOut(APIModel):
+    default_backing_model: str | None = None
+    default_api_provider_id: str | None = None
+    setup_complete: bool
+    updated_at: datetime | None = None
+
+
+class AppSettingsUpdate(APIModel):
+    default_backing_model: str | None = None
+    default_api_provider_id: str | None = None
 
 
 class ApiProviderCreate(APIModel):
