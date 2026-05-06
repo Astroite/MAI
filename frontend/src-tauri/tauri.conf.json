@@ -27,6 +27,13 @@
     "active": true,
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
-    "externalBin": ["binaries/mai-backend"]
+    "externalBin": ["binaries/mai-backend"],
+    "createUpdaterArtifacts": true
+  },
+  "updater": {
+    "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZEMzhCQTQxNkE3RDZGNTkKUldSWmIzMXFRYm80L1k5d00yd1h3REtoM2krNUJZa1g4aFNRR0dwMEY2NGxvK3hDMjZrNFcyVHMK",
+    "endpoints": [
+      "https://github.com/Astroite/MAI/releases/latest/download/latest.json"
+    ]
   }
 }

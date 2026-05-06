@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Default capability for the MAI desktop window.",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": ["core:default", "updater:default", "process:default"]
 }
