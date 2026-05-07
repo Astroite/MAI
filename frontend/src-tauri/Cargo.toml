@@ -1,6 +1,6 @@
 [package]
 name = "mai-desktop"
-version = "0.4.1"
+version = "0.5.0"
 description = "Desktop shell for MAI"
 authors = ["MAI"]
 edition = "2021"
