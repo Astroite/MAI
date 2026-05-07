@@ -100,6 +100,9 @@ export function Composer({
     });
   };
 
+  const isComposingIme = (event: React.KeyboardEvent<HTMLTextAreaElement>) =>
+    event.nativeEvent.isComposing || event.keyCode === 229;
+
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (mentionPanelOpen) {
       if (event.key === "ArrowDown" && mentionSuggestions.length > 0) {
@@ -112,7 +115,7 @@ export function Composer({
         setActiveMentionIndex((index) => (index - 1 + mentionSuggestions.length) % mentionSuggestions.length);
         return;
       }
-      if ((event.key === "Enter" || event.key === "Tab") && mentionSuggestions[activeMentionIndex]) {
+      if ((event.key === "Enter" || event.key === "Tab") && !isComposingIme(event) && mentionSuggestions[activeMentionIndex]) {
         event.preventDefault();
         insertMention(mentionSuggestions[activeMentionIndex]);
         return;
@@ -123,7 +126,7 @@ export function Composer({
         return;
       }
     }
-    if (event.key === "Enter" && !event.shiftKey) {
+    if (event.key === "Enter" && !event.shiftKey && !isComposingIme(event)) {
       event.preventDefault();
       if (!frozen && content.trim() && !submit.isPending) submit.mutate();
     }
@@ -252,9 +255,10 @@ export function Composer({
           className="btn btn-primary"
           disabled={frozen || !content.trim() || submit.isPending}
           onClick={() => submit.mutate()}
+          title={submit.isPending ? t("composer.sending") : t("composer.enterHint")}
         >
           {modeIcon(mode)}
-          {t("composer.send")}
+          {submit.isPending ? t("composer.sending") : t("composer.send")}
         </button>
       </div>
     </div>
