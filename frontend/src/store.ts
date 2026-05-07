@@ -9,13 +9,18 @@ interface StreamingMessage {
   lastChunkIndex: number;
 }
 
+export type ConnectionStatus = "connected" | "reconnecting" | "offline";
+
 interface UIState {
   dark: boolean;
   streaming: Record<string, StreamingMessage>;
+  connectionStatus: ConnectionStatus;
+  connectionRetries: number;
   toggleDark: () => void;
   appendChunk: (roomId: string, messageId: string, personaId: string, text: string, chunkIndex?: number) => void;
   hydrateStream: (roomId: string, messageId: string, personaId: string, text: string, lastChunkIndex: number) => void;
   clearStream: (messageId: string) => void;
+  setConnectionStatus: (status: ConnectionStatus, retries?: number) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -23,7 +28,14 @@ export const useUIStore = create<UIState>()(
     (set) => ({
       dark: false,
       streaming: {},
+      connectionStatus: "connected",
+      connectionRetries: 0,
       toggleDark: () => set((state) => ({ dark: !state.dark })),
+      setConnectionStatus: (status, retries) =>
+        set(() => ({
+          connectionStatus: status,
+          connectionRetries: retries ?? (status === "connected" ? 0 : 0)
+        })),
       appendChunk: (roomId, messageId, personaId, text, chunkIndex) =>
         set((state) => {
           const current = state.streaming[messageId];

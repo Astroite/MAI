@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Settings, Snowflake, Unlock } from "lucide-react";
+import { ArrowLeft, Loader2, Settings, Snowflake, Unlock, WifiOff } from "lucide-react";
 import { api } from "../../api";
 import { useRoomEvents } from "../../hooks";
 import { useUIStore } from "../../store";
@@ -132,6 +132,7 @@ export function RoomShell() {
                 </button>
               </div>
             </header>
+            <ConnectionBanner />
             {state.runtime.phase_exit_suggested && (
               <PhaseExitBanner
                 matched={state.runtime.phase_exit_matched_conditions}
@@ -170,6 +171,32 @@ export function RoomShell() {
       </div>
 
       {state && <RoomSettingsDrawer state={state} childRooms={childRooms} />}
+    </div>
+  );
+}
+
+function ConnectionBanner() {
+  const status = useUIStore((s) => s.connectionStatus);
+  const retries = useUIStore((s) => s.connectionRetries);
+  const { t } = useI18n();
+  if (status === "connected") return null;
+  const isOffline = status === "offline";
+  return (
+    <div
+      className={`flex items-center gap-2 border-b px-4 py-1.5 text-xs ${
+        isOffline
+          ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+      }`}
+    >
+      {isOffline ? <WifiOff size={13} /> : <Loader2 size={13} className="animate-spin" />}
+      <span>
+        {isOffline
+          ? t("connection.offline")
+          : retries > 0
+            ? t("connection.retrying", { count: retries })
+            : t("connection.reconnecting")}
+      </span>
     </div>
   );
 }
