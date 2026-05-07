@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink, Route, Routes, useMatch } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronRight, Download, Loader2, Moon, PanelsTopLeft, Settings, Sun, Workflow, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Download, Loader2, Moon, PanelsTopLeft, RefreshCw, Settings, Sun, Workflow, X } from "lucide-react";
 import { api } from "./api";
 import { useUIStore } from "./store";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -141,11 +141,12 @@ function SetupBanner() {
   );
 }
 
-const SKIP_UPDATE_KEY = "mai-skip-update-version";
+export const SKIP_UPDATE_KEY = "mai-skip-update-version";
 
 function UpdateBanner() {
   const { t } = useI18n();
-  const [status, setStatus] = useState<"idle" | "downloading" | "installing" | "done">("idle");
+  const [status, setStatus] = useState<"idle" | "downloading" | "installing" | "error" | "done">("idle");
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [downloaded, setDownloaded] = useState(0);
   const [total, setTotal] = useState(0);
   const [updateInfo, setUpdateInfo] = useState<{ version: string; body: string } | null>(null);
@@ -168,19 +169,27 @@ function UpdateBanner() {
   const handleInstall = useCallback(async () => {
     if (!updateInfo) return;
     setStatus("downloading");
-    const { check } = await import("@tauri-apps/plugin-updater");
-    const update = await check();
-    if (!update) return;
-    await update.downloadAndInstall((progress) => {
-      if (progress.event === "Started" && progress.data.contentLength) {
-        setTotal(Number(progress.data.contentLength));
-      } else if (progress.event === "Progress") {
-        setDownloaded((prev) => prev + Number(progress.data.chunkLength));
-      }
-    });
-    setStatus("installing");
-    const { relaunch } = await import("@tauri-apps/plugin-process");
-    await relaunch();
+    setErrorMessage(null);
+    setDownloaded(0);
+    setTotal(0);
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (!update) return;
+      await update.downloadAndInstall((progress) => {
+        if (progress.event === "Started" && progress.data.contentLength) {
+          setTotal(Number(progress.data.contentLength));
+        } else if (progress.event === "Progress") {
+          setDownloaded((prev) => prev + Number(progress.data.chunkLength));
+        }
+      });
+      setStatus("installing");
+      const { relaunch } = await import("@tauri-apps/plugin-process");
+      await relaunch();
+    } catch (err) {
+      setStatus("error");
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    }
   }, [updateInfo]);
 
   const handleDismiss = useCallback(() => {
@@ -191,25 +200,35 @@ function UpdateBanner() {
   if (!visible || !updateInfo) return null;
 
   const progressPct = total > 0 ? Math.round((downloaded / total) * 100) : 0;
+  const tone = status === "error"
+    ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+    : "border-brand/30 bg-brand/10 text-brand dark:text-blue-300";
 
   return (
-    <div className="border-b border-brand/30 bg-brand/10 px-4 py-2 text-sm text-brand dark:text-blue-300">
+    <div className={`border-b px-4 py-2 text-sm ${tone}`}>
       <div className="mx-auto flex max-w-[1500px] items-center gap-3">
         <Download size={14} className="shrink-0" />
         <span className="min-w-0">
           {t("update.available", { version: updateInfo.version })}
           {status === "downloading" && ` - ${t("update.downloading", { progress: progressPct })}`}
           {status === "installing" && ` - ${t("update.installing")}`}
+          {status === "error" && errorMessage && ` - ${t("update.failed", { error: errorMessage })}`}
         </span>
         {status === "idle" && (
           <button onClick={handleInstall} className="btn btn-sm shrink-0 border-brand bg-brand text-white">
             {t("update.install")}
           </button>
         )}
+        {status === "error" && (
+          <button onClick={handleInstall} className="btn btn-sm shrink-0">
+            <RefreshCw size={14} />
+            {t("update.retry")}
+          </button>
+        )}
         {status === "downloading" && (
           <Loader2 size={14} className="shrink-0 animate-spin" />
         )}
-        {status === "idle" && (
+        {(status === "idle" || status === "error") && (
           <button onClick={handleDismiss} className="ml-auto shrink-0 text-muted hover:text-text" title={t("update.skip")}>
             <X size={14} />
           </button>

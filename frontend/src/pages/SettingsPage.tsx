@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink } from "react-router-dom";
-import { CheckCircle2, Save, Wifi, XCircle } from "lucide-react";
+import { CheckCircle2, Download, RefreshCw, Save, Wifi, XCircle } from "lucide-react";
 import { api } from "../api";
+import { SKIP_UPDATE_KEY } from "../App";
 import { StatusPill } from "../components/StatusPill";
+import { toast } from "../components/Toaster";
 import { ApiProvidersView } from "./TemplatesPage";
 import type { ApiModel, ApiProvider } from "../types";
 import { useI18n } from "../i18n";
@@ -22,8 +24,71 @@ export function SettingsPage() {
         <DefaultApiSection />
         <BackendStatusCard health={health.data} />
       </div>
+      <UpdaterSection />
       <ApiProvidersView />
     </div>
+  );
+}
+
+function UpdaterSection() {
+  const { t } = useI18n();
+  const [skippedVersion, setSkippedVersion] = useState<string | null>(() => localStorage.getItem(SKIP_UPDATE_KEY));
+  const [checking, setChecking] = useState(false);
+  const isTauri = typeof window !== "undefined" && Boolean((window as any).__TAURI_INTERNALS__);
+
+  const handleCheck = useCallback(async () => {
+    if (!isTauri) return;
+    setChecking(true);
+    try {
+      const { check } = await import("@tauri-apps/plugin-updater");
+      const update = await check();
+      if (!update) {
+        toast.success(t("updater.upToDate"));
+      } else {
+        // Clear any skip so the banner re-appears at the top of the app.
+        localStorage.removeItem(SKIP_UPDATE_KEY);
+        setSkippedVersion(null);
+        toast.message(t("updater.foundUpdate", { version: update.version }));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("updater.checkFailed"));
+    } finally {
+      setChecking(false);
+    }
+  }, [isTauri, t]);
+
+  const handleUnskip = () => {
+    localStorage.removeItem(SKIP_UPDATE_KEY);
+    setSkippedVersion(null);
+    toast.success(t("updater.skipCleared"));
+  };
+
+  if (!isTauri) return null;
+
+  return (
+    <section className="panel p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="font-medium">{t("updater.title")}</div>
+          <div className="mt-1 text-sm text-muted">{t("updater.subtitle")}</div>
+          {skippedVersion && (
+            <div className="mt-2 text-xs text-muted">{t("updater.skipped", { version: skippedVersion })}</div>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="btn" type="button" onClick={handleCheck} disabled={checking}>
+            {checking ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+            {t("updater.checkNow")}
+          </button>
+          {skippedVersion && (
+            <button className="btn" type="button" onClick={handleUnskip}>
+              <RefreshCw size={14} />
+              {t("updater.unskip")}
+            </button>
+          )}
+        </div>
+      </div>
+    </section>
   );
 }
 
