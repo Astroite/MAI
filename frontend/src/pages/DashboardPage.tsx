@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Plus, RefreshCw, Search, Users, X } from "lucide-react";
+import { Check, Plus, RefreshCw, Search, Users, X } from "lucide-react";
 import { api } from "../api";
 import type { DebateFormat, PersonaTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -15,6 +15,7 @@ export function DashboardPage() {
   const navigate = useNavigate();
   const { t, display } = useI18n();
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
+  const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
   const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
   const personas = useQuery({
@@ -131,7 +132,13 @@ export function DashboardPage() {
               </StatusPill>
             </Link>
           ))}
-          {!rooms.data?.length && <div className="px-4 py-10 text-center text-sm text-muted">{t("dashboard.emptyRooms")}</div>}
+          {!rooms.data?.length && (
+            <GettingStartedCard
+              apiReady={Boolean(health.data?.setup_complete)}
+              hasPersonas={(personas.data?.length ?? 0) > 0}
+              onCreateRoom={() => setDialogOpen(true)}
+            />
+          )}
         </div>
       </section>
 
@@ -310,6 +317,87 @@ export function DashboardPage() {
           </form>
         </div>
       )}
+    </div>
+  );
+}
+
+function GettingStartedCard({
+  apiReady,
+  hasPersonas,
+  onCreateRoom
+}: {
+  apiReady: boolean;
+  hasPersonas: boolean;
+  onCreateRoom: () => void;
+}) {
+  const { t } = useI18n();
+  const steps = [
+    {
+      key: "api",
+      done: apiReady,
+      label: t("dashboard.gettingStarted.step.api"),
+      action: { to: "/settings", label: t("dashboard.gettingStarted.go.api") }
+    },
+    {
+      key: "personas",
+      done: hasPersonas,
+      label: t("dashboard.gettingStarted.step.personas"),
+      action: { to: "/templates/personas", label: t("dashboard.gettingStarted.go.personas") }
+    },
+    {
+      key: "room",
+      done: false,
+      label: t("dashboard.gettingStarted.step.room"),
+      action: null
+    }
+  ];
+  const nextStep = steps.find((step) => !step.done);
+
+  return (
+    <div className="px-6 py-10">
+      <div className="mx-auto max-w-2xl space-y-5 text-center">
+        <div className="space-y-2">
+          <h2 className="text-lg font-semibold">{t("dashboard.gettingStarted.title")}</h2>
+          <p className="text-sm text-muted">{t("dashboard.gettingStarted.subtitle")}</p>
+        </div>
+        <ol className="space-y-2 text-left text-sm">
+          {steps.map((step, index) => {
+            const isNext = step === nextStep;
+            return (
+              <li
+                key={step.key}
+                className={`flex items-center gap-3 rounded-md border px-3 py-2 ${
+                  step.done
+                    ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+                    : isNext
+                      ? "border-brand bg-brand/5 text-text"
+                      : "border-border bg-surface text-muted"
+                }`}
+              >
+                {step.done ? (
+                  <Check size={14} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current text-xs">
+                    {index + 1}
+                  </span>
+                )}
+                <span className={`flex-1 ${step.done ? "line-through opacity-70" : ""}`}>{step.label}</span>
+                {step.action && !step.done && (
+                  <Link to={step.action.to} className="btn h-7 px-2 text-xs">
+                    {step.action.label}
+                  </Link>
+                )}
+                {step.key === "room" && !step.done && (
+                  <button type="button" className="btn btn-primary h-7 px-2 text-xs" onClick={onCreateRoom}>
+                    <Plus size={12} />
+                    {t("dashboard.newRoom")}
+                  </button>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      </div>
     </div>
   );
 }
