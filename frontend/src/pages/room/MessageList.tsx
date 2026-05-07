@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Virtuoso } from "react-virtuoso";
 import { RotateCcw } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
@@ -23,6 +24,10 @@ function personaInitial(name?: string | null): string {
   return trimmed.slice(0, 2);
 }
 
+type Entry =
+  | { kind: "message"; key: string; message: Message }
+  | { kind: "stream"; key: string; messageId: string; personaId: string; text: string };
+
 export function MessageList({
   roomId,
   frozen,
@@ -36,7 +41,6 @@ export function MessageList({
 }) {
   const streaming = useUIStore((state) => state.streaming);
   const { t } = useI18n();
-  const scrollRef = useRef<HTMLDivElement | null>(null);
   const personaById = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
   const revokedMessageIds = useMemo(
     () =>
@@ -47,56 +51,88 @@ export function MessageList({
       ),
     [messages]
   );
-  const streamed = useMemo(
-    () => Object.values(streaming).filter((item) => item.roomId === roomId),
-    [streaming, roomId]
-  );
-  const visibleCount = messages.length + streamed.length;
+  const entries = useMemo<Entry[]>(() => {
+    const out: Entry[] = messages.map((message) => ({ kind: "message", key: message.id, message }));
+    for (const item of Object.values(streaming)) {
+      if (item.roomId !== roomId) continue;
+      out.push({
+        kind: "stream",
+        key: `stream-${item.messageId}`,
+        messageId: item.messageId,
+        personaId: item.personaId,
+        text: item.text
+      });
+    }
+    return out;
+  }, [messages, streaming, roomId]);
 
-  useEffect(() => {
-    const node = scrollRef.current;
-    if (!node) return;
-    // Auto-scroll to bottom on new content (keeps the chat feel).
-    node.scrollTop = node.scrollHeight;
-  }, [visibleCount]);
+  if (!entries.length) {
+    return (
+      <div className="min-h-0 flex-1 overflow-auto bg-surface">
+        <div className="mt-12 text-center text-sm text-muted">{t("message.empty")}</div>
+      </div>
+    );
+  }
 
   return (
-    <div ref={scrollRef} className="min-h-0 flex-1 overflow-auto bg-surface px-4 py-4">
-      <div className="mx-auto flex max-w-3xl flex-col gap-3">
-        {messages.map((message) => (
-          <MessageRow
-            key={message.id}
-            roomId={roomId}
-            frozen={frozen}
-            message={message}
-            persona={message.author_persona_id ? personaById.get(message.author_persona_id) : undefined}
-            revoked={revokedMessageIds.has(message.id) ?? false}
-          />
-        ))}
-        {streamed.map((item) => {
-          const persona = personaById.get(item.personaId);
-          return (
-            <ChatRow
-              key={item.messageId}
-              side="left"
-              avatar={{ label: personaInitial(persona?.name), color: personaColor(persona?.id) }}
-            >
-              <div className="text-xs font-medium text-brand">
-                {t("message.streaming", { name: persona?.name ?? "AI" })}
-              </div>
-              <div className="mt-1">
-                <MarkdownBlock content={item.text} />
-              </div>
-            </ChatRow>
-          );
-        })}
-        {!messages.length && !streamed.length && (
-          <div className="mt-12 text-center text-sm text-muted">
-            {t("message.empty")}
+    <Virtuoso
+      className="min-h-0 flex-1 bg-surface"
+      data={entries}
+      followOutput="smooth"
+      // Smooth-scroll on append rather than fixed-bottom so users reading
+      // history aren't yanked to the latest message.
+      computeItemKey={(_, entry) => entry.key}
+      components={{
+        Header: () => <div className="h-3" />,
+        Footer: () => <div className="h-3" />
+      }}
+      itemContent={(_, entry) => (
+        <div className="px-4">
+          <div className="mx-auto max-w-3xl py-1.5">
+            {entry.kind === "message" ? (
+              <MessageRow
+                roomId={roomId}
+                frozen={frozen}
+                message={entry.message}
+                persona={entry.message.author_persona_id ? personaById.get(entry.message.author_persona_id) : undefined}
+                revoked={revokedMessageIds.has(entry.message.id) ?? false}
+              />
+            ) : (
+              <StreamingRow
+                personaName={personaById.get(entry.personaId)?.name}
+                personaId={entry.personaId}
+                text={entry.text}
+              />
+            )}
           </div>
-        )}
+        </div>
+      )}
+    />
+  );
+}
+
+function StreamingRow({
+  personaName,
+  personaId,
+  text
+}: {
+  personaName?: string;
+  personaId: string;
+  text: string;
+}) {
+  const { t } = useI18n();
+  return (
+    <ChatRow
+      side="left"
+      avatar={{ label: personaInitial(personaName), color: personaColor(personaId) }}
+    >
+      <div className="text-xs font-medium text-brand">
+        {t("message.streaming", { name: personaName ?? "AI" })}
       </div>
-    </div>
+      <div className="mt-1">
+        <MarkdownBlock content={text} />
+      </div>
+    </ChatRow>
   );
 }
 
