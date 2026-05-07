@@ -211,6 +211,8 @@ const zh: Record<string, string> = {
   "api.deleteModelTitle": "删除模型",
   "api.keyMissing": "未设置",
   "api.statusOk": "已测试 OK · {time}",
+  "api.testedOk": "测试通过 · {time}",
+  "api.testedFailed": "上次测试失败 · {time}",
   "api.statusFailed": "测试失败：{error}",
   "api.statusUntested": "尚未测试",
   "api.connectionOk": "连接 OK，模型可用",
@@ -537,6 +539,8 @@ const en: Record<string, string> = {
   "api.deleteModelTitle": "Delete model",
   "api.keyMissing": "Not set",
   "api.statusOk": "Tested OK · {time}",
+  "api.testedOk": "Test passed · {time}",
+  "api.testedFailed": "Test failed · {time}",
   "api.statusFailed": "Test failed: {error}",
   "api.statusUntested": "Not tested",
   "api.connectionOk": "Connection OK, model available",
@@ -807,6 +811,32 @@ interface I18nContextValue {
   setLocale: (locale: Locale) => void;
   t: (key: string, params?: Record<string, string | number | null | undefined>) => string;
   display: (kind: string, value?: string | null) => string;
+  formatRelativeTime: (date: string | Date | null | undefined) => string;
+}
+
+const RELATIVE_THRESHOLDS: { unit: Intl.RelativeTimeFormatUnit; ms: number }[] = [
+  { unit: "year", ms: 365 * 24 * 60 * 60 * 1000 },
+  { unit: "month", ms: 30 * 24 * 60 * 60 * 1000 },
+  { unit: "week", ms: 7 * 24 * 60 * 60 * 1000 },
+  { unit: "day", ms: 24 * 60 * 60 * 1000 },
+  { unit: "hour", ms: 60 * 60 * 1000 },
+  { unit: "minute", ms: 60 * 1000 },
+  { unit: "second", ms: 1000 }
+];
+
+function relativeTime(locale: Locale, target: string | Date | null | undefined): string {
+  if (!target) return "";
+  const date = typeof target === "string" ? new Date(target) : target;
+  if (Number.isNaN(date.getTime())) return "";
+  const diff = date.getTime() - Date.now();
+  const formatter = new Intl.RelativeTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", { numeric: "auto" });
+  const abs = Math.abs(diff);
+  for (const { unit, ms } of RELATIVE_THRESHOLDS) {
+    if (abs >= ms || unit === "second") {
+      return formatter.format(Math.round(diff / ms), unit);
+    }
+  }
+  return formatter.format(0, "second");
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
@@ -849,7 +879,8 @@ export function I18nProvider({ children }: { children: ReactNode }) {
       display: (kind, rawValue) => {
         const value = rawValue ?? "";
         return displayLabels[locale][kind]?.[value] ?? displayLabels["zh-CN"][kind]?.[value] ?? humanize(value);
-      }
+      },
+      formatRelativeTime: (date) => relativeTime(locale, date)
     }),
     [locale]
   );

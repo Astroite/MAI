@@ -1238,7 +1238,7 @@ function RecipesView() {
 
 export function ApiProvidersView() {
   const queryClient = useQueryClient();
-  const { t } = useI18n();
+  const { t, formatRelativeTime } = useI18n();
   const confirm = useConfirm();
   const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
   const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
@@ -1666,6 +1666,17 @@ export function ApiProvidersView() {
                               <span className="truncate text-sm font-medium">{model.display_name || model.model_name}</span>
                             </div>
                             <div className="mt-1 truncate font-mono text-xs text-muted">{model.model_name}</div>
+                            {model.last_tested_at && (
+                              <div className={`mt-1 text-xs ${
+                                model.last_tested_ok === true
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-rose-600 dark:text-rose-400"
+                              }`}>
+                                {model.last_tested_ok === true
+                                  ? t("api.testedOk", { time: formatRelativeTime(model.last_tested_at) })
+                                  : t("api.testedFailed", { time: formatRelativeTime(model.last_tested_at) })}
+                              </div>
+                            )}
                             <div className="mt-1 flex flex-wrap gap-1">
                               {model.is_default && <StatusPill tone="brand">{t("common.default")}</StatusPill>}
                               {!model.enabled && <StatusPill tone="danger">{t("common.disabled")}</StatusPill>}
