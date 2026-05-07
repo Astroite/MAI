@@ -172,7 +172,7 @@ jobs:
         shell: bash
         run: |
           VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
-          sed -i "s/\"version\": \"0.2.0\"/\"version\": \"${VERSION_NUMBER}\"/" frontend/src-tauri/tauri.conf.json
+          sed -i -E "0,/\"version\": \"[^\"]+\"/s//\"version\": \"${VERSION_NUMBER}\"/" frontend/src-tauri/tauri.conf.json
 
       - name: Build Tauri installer
         working-directory: frontend
