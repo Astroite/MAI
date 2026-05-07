@@ -75,7 +75,7 @@ Single-process serve: when `frontend/dist/index.html` exists, `MAI_FRONTEND_DIST
 
 Tauri desktop shell: `frontend/src-tauri` creates the window manually after spawning the `mai-backend` sidecar on an ephemeral localhost port. It injects `window.__MAI_API_BASE__` before the SPA loads; `frontend/src/api.ts` must keep that value ahead of `VITE_API_BASE` and `/api`.
 
-Room UI is composed in `frontend/src/components/RoomShell.tsx` (three-column layout) and a set of panels under `frontend/src/pages/room/`. `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page.
+Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory only holds primitive bits (`MarkdownBlock`, `StatusPill`).
 
 ## Trace + uploads
 

@@ -380,6 +380,7 @@ class RoomRuntimeState(Base):
     phase_exit_suppressed_after_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     consecutive_ai_turns: Mapped[int] = mapped_column(Integer, default=0)
     max_consecutive_ai_turns: Mapped[int] = mapped_column(Integer, default=10)
+    phase_extra_rounds: Mapped[int] = mapped_column(Integer, default=0)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 

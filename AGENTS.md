@@ -75,6 +75,12 @@ Single-process serve: when `frontend/dist/index.html` exists, `MAI_FRONTEND_DIST
 
 Tauri desktop shell: `frontend/src-tauri` creates the window manually after spawning the `mai-backend` sidecar on an ephemeral localhost port. It injects `window.__MAI_API_BASE__` before the SPA loads; `frontend/src/api.ts` must keep that value ahead of `VITE_API_BASE` and `/api`.
 
+Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory only holds primitive bits (`MarkdownBlock`, `StatusPill`).
+
 ## Trace + uploads
 
 `app/trace.py::trace_record` writes a row to `trace_events` and a JSON sidecar under `<trace_payload_dir>/<room_id>/<event_id>.json`. Uploads land under `<upload_dir>/<room_id>/`. In dev these resolve to `backend/trace_payloads/` and `backend/uploads/` (gitignored, created lazily at startup); in packaged mode (`MAI_PACKAGED=1` or `sys.frozen`) they default to `<APPDATA>/MAI/trace_payloads/` and `<APPDATA>/MAI/uploads/`. Only `.md`, `.txt`, and `.pdf` are accepted — PDFs are extracted with `pypdf`.
+
+## Sibling agent docs
+
+`CLAUDE.md` is a near-verbatim copy of this file aimed at Claude Code. When you change architecture-level guidance here, mirror it there (or vice versa) so the two assistants don't drift.

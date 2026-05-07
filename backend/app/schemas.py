@@ -90,8 +90,27 @@ class TokenBudgetExit(APIModel):
     max: int = Field(ge=1)
 
 
+class PhaseRoundLimitExit(APIModel):
+    """Runtime-injected hard cap on phase rounds.
+
+    Emitted by the engine (not authored on phase templates) when
+    `RoomRuntimeState.max_phase_rounds` is reached. Surfaced as a structured
+    `ExitCondition` so the frontend can render it the same way it renders
+    template-declared conditions instead of getting an unknown `type`.
+    """
+
+    type: Literal["phase_round_limit"] = "phase_round_limit"
+    max: int = Field(ge=1)
+
+
 ExitCondition = Annotated[
-    RoundsExit | AllSpokenExit | AllVotedExit | UserManualExit | FacilitatorSuggestsExit | TokenBudgetExit,
+    RoundsExit
+    | AllSpokenExit
+    | AllVotedExit
+    | UserManualExit
+    | FacilitatorSuggestsExit
+    | TokenBudgetExit
+    | PhaseRoundLimitExit,
     Field(discriminator="type"),
 ]
 

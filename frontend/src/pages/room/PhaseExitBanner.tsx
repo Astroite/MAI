@@ -1,14 +1,16 @@
-import { Play } from "lucide-react";
+import { Play, Plus } from "lucide-react";
 
 export function PhaseExitBanner({
   matched,
   onNext,
   onContinue,
+  onExtend,
   disabled
 }: {
   matched: Array<Record<string, unknown>>;
   onNext: () => void;
   onContinue: () => void;
+  onExtend: () => void;
   disabled: boolean;
 }) {
   const label = matched.map((item) => String(item.type ?? "condition")).join(", ");
@@ -24,8 +26,12 @@ export function PhaseExitBanner({
             <Play size={16} />
             进入下一阶段
           </button>
-          <button className="btn" disabled={disabled} onClick={onContinue}>
+          <button className="btn" disabled={disabled} onClick={onExtend} title="给当前阶段的 rounds 上限再加一轮">
+            <Plus size={16} />
             再来一回合
+          </button>
+          <button className="btn" disabled={disabled} onClick={onContinue} title="忽略退出建议，等下一条消息再判断">
+            继续讨论
           </button>
         </div>
       </div>

@@ -39,6 +39,7 @@ export function RoomShell() {
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", activeRoomId] });
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
   const continuePhase = useMutation({ mutationFn: () => api.continuePhase(activeRoomId!), onSuccess: invalidate });
+  const extendPhase = useMutation({ mutationFn: () => api.extendPhase(activeRoomId!), onSuccess: invalidate });
   const freeze = useMutation({ mutationFn: () => api.freeze(activeRoomId!), onSuccess: invalidate });
   const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidate });
 
@@ -133,7 +134,13 @@ export function RoomShell() {
                 matched={state.runtime.phase_exit_matched_conditions}
                 onNext={() => nextPhase.mutate()}
                 onContinue={() => continuePhase.mutate()}
-                disabled={state.runtime.frozen || nextPhase.isPending || continuePhase.isPending}
+                onExtend={() => extendPhase.mutate()}
+                disabled={
+                  state.runtime.frozen ||
+                  nextPhase.isPending ||
+                  continuePhase.isPending ||
+                  extendPhase.isPending
+                }
               />
             )}
             <MessageList

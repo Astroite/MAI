@@ -135,6 +135,7 @@ export interface Runtime {
   phase_exit_suppressed_after_message_id?: string | null;
   consecutive_ai_turns?: number;
   max_consecutive_ai_turns?: number;
+  phase_extra_rounds?: number;
 }
 
 export interface PhasePlan {
@@ -154,12 +155,25 @@ export interface PhaseInstance {
   status: "running" | "completed" | "skipped";
 }
 
+export type MessageType =
+  | "speech"
+  | "question"
+  | "answer"
+  | "summary"
+  | "verdict"
+  | "verdict_revoke"
+  | "dead_end"
+  | "facilitator_signal"
+  | "user_doc"
+  | "masquerade_reveal"
+  | "meta";
+
 export interface Message {
   id: string;
   room_id: string;
   phase_instance_id?: string | null;
   parent_message_id?: string | null;
-  message_type: string;
+  message_type: MessageType;
   author_persona_id?: string | null;
   author_model?: string | null;
   author_actual: "ai" | "user" | "user_as_judge" | "user_as_persona" | "system";

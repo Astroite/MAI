@@ -35,6 +35,7 @@ export function useRoomEvents(roomId?: string) {
             "facilitator.signal",
             "phase.exit_suggested",
             "phase.exit_continued",
+            "phase.extended",
             "phase.transitioned",
             "room.frozen",
             "room.unfrozen",
