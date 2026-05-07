@@ -881,10 +881,38 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     () => ({
       locale,
       setLocale,
-      t: (key, params) => interpolate((locale === "zh-CN" ? zh : en)[key] ?? zh[key] ?? key, params),
+      t: (key, params) => {
+        const dict = locale === "zh-CN" ? zh : en;
+        let template = dict[key];
+        if (template === undefined) {
+          template = zh[key];
+          if (template !== undefined && import.meta.env.DEV && locale !== "zh-CN") {
+            console.warn(`[i18n] Missing translation for "${key}" in ${locale}, falling back to zh-CN`);
+          }
+        }
+        if (template === undefined) {
+          if (import.meta.env.DEV) {
+            console.warn(`[i18n] Missing translation key "${key}"`);
+          }
+          template = key;
+        }
+        return interpolate(template, params);
+      },
       display: (kind, rawValue) => {
         const value = rawValue ?? "";
-        return displayLabels[locale][kind]?.[value] ?? displayLabels["zh-CN"][kind]?.[value] ?? humanize(value);
+        const labels = displayLabels[locale][kind];
+        const fallback = displayLabels["zh-CN"][kind];
+        if (labels?.[value]) return labels[value];
+        if (fallback?.[value]) {
+          if (import.meta.env.DEV && locale !== "zh-CN") {
+            console.warn(`[i18n] Missing display label for ${kind}.${value} in ${locale}`);
+          }
+          return fallback[value];
+        }
+        if (import.meta.env.DEV && value) {
+          console.warn(`[i18n] Unknown enum ${kind}.${value}`);
+        }
+        return humanize(value);
       },
       formatRelativeTime: (date) => relativeTime(locale, date)
     }),
