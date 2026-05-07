@@ -9,6 +9,7 @@ import type { ApiModel, ApiProvider, DebateFormat, PersonaKind, PersonaTemplate,
 import { StatusPill } from "../components/StatusPill";
 import { toast } from "../components/Toaster";
 import { useConfirm } from "../components/ConfirmDialog";
+import { useUnsavedChangesWarning } from "../hooks";
 import { useI18n } from "../i18n";
 
 export function TemplatesPage() {
@@ -156,6 +157,29 @@ function PersonasView() {
     }
   };
   const editingIsBuiltin = editingPersona?.is_builtin ?? false;
+  // Form is dirty when the current values diverge from the loaded persona's
+  // values (or from the blank default if creating a new one). JSON.stringify
+  // is good enough for this shallow compare.
+  const personaDirty = useMemo(() => {
+    const current = JSON.stringify(personaPayload());
+    if (editingPersona) {
+      const loaded = {
+        kind: editingPersona.kind,
+        name: editingPersona.name,
+        description: editingPersona.description,
+        api_model_id: editingPersona.api_model_id ?? null,
+        api_provider_id: editingPersona.api_provider_id ?? null,
+        backing_model: editingPersona.backing_model ?? "",
+        system_prompt: editingPersona.system_prompt,
+        temperature: editingPersona.temperature,
+        config: editingPersona.config ?? {},
+        tags: editingPersona.tags ?? []
+      };
+      return current !== JSON.stringify(loaded);
+    }
+    return false;
+  }, [personaPayload, editingPersona]); // eslint-disable-line react-hooks/exhaustive-deps
+  useUnsavedChangesWarning(personaDirty && !editingIsBuiltin);
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
@@ -234,7 +258,12 @@ function PersonasView() {
       </div>
       <aside className="panel p-4">
         <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold">{editingPersonaId ? t("templates.editPersona") : t("templates.blankPersona")}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold">{editingPersonaId ? t("templates.editPersona") : t("templates.blankPersona")}</h2>
+            {personaDirty && !editingIsBuiltin && (
+              <StatusPill tone="accent">{t("common.unsaved")}</StatusPill>
+            )}
+          </div>
           {editingPersonaId && (
             <button className="btn h-8 px-2 text-xs" type="button" onClick={resetPersonaForm}>
               <Plus size={14} />

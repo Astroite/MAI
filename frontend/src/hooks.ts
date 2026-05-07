@@ -5,6 +5,20 @@ import { API_BASE } from "./api";
 import { useUIStore } from "./store";
 import type { StreamingEvent } from "./types";
 
+export function useUnsavedChangesWarning(when: boolean) {
+  useEffect(() => {
+    if (!when) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      // Modern browsers ignore custom strings; setting returnValue is the
+      // cross-browser way to trigger the native confirm dialog.
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [when]);
+}
+
 type EventPayload = StreamingEvent & { message?: { id: string } };
 
 export function useRoomEvents(roomId?: string) {
