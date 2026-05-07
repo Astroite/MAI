@@ -9,7 +9,7 @@
 
 技术决策建立在三个产品决策之上：
 
-1. **人是速度瓶颈** —— 普通 / autodrive 流程每个房间只推进一轮自动回复；声明式 `parallel` phase 是唯一允许多个 in-flight LLM call 的例外，并按 `message_id` 独立跟踪。
+1. **AI 自动讨论循环受控可中断** —— 用户消息后，autodrive 默认会驱动 AI 之间持续接力，最长 `runtime.max_consecutive_ai_turns`（默认 10）轮；只有当 phase 模板的 `auto_discuss=True` 才进入连发循环，否则维持"用户消息 → 单轮 AI 回复"。声明式 `parallel` phase 是唯一允许多个 in-flight LLM call 同时存在的例外，并按 `message_id` 独立跟踪。任何用户操作（发言、冻结、phase 切换）都立即打断当前接力。
 2. **严格 append-only，不做编辑 / 删除** —— 消息历史只追加；裁决撤销也是 append 一条新消息。
 3. **产品设计要克制** —— 不为不存在的并发场景做架构准备；不引入超出当前需求的框架。
 
@@ -109,7 +109,12 @@ v1 这套架构在以下条件下需要演进，否则不动：
 users(id, email, created_at, ...)
 
 -- 模板对象(共享 schema 套路)
-personas(
+-- v1 把"全局可重用的 persona"和"挂在某个房间里、和该房间生命周期绑定的
+-- persona"拆成了两张表：persona_templates 是模板池，persona_instances 是
+-- "把模板加到房间时的快照"。共识是：模板编辑不会回灌已建房间，房间内
+-- 改 persona 也不污染模板。原来的 personas 单表保留为只读 legacy，迁移
+-- 由 backend/app/migrate_personas.py 在启动时一次性完成。
+persona_templates(
   id uuid pk,
   version int,
   schema_version int,
@@ -118,21 +123,69 @@ personas(
   forked_from_version int null,
   owner_user_id uuid null,
   is_builtin bool,
-  
+
   kind text check (kind in ('discussant','scribe','facilitator')),
-  
+
   name text,
   description text,
   backing_model text,
+  api_provider_id uuid null references api_providers(id),
   system_prompt text,
   temperature float,
   config jsonb,           -- discriminated by kind
   tags text[],
-  
+
   created_at timestamptz,
   updated_at timestamptz
 )
-CREATE INDEX ON personas USING gin(tags);
+CREATE INDEX ON persona_templates USING gin(tags);
+
+persona_instances(
+  id uuid pk,
+  room_id uuid references rooms(id) on delete cascade,
+  template_id uuid references persona_templates(id),
+  template_version int,    -- snapshot 时 template 的 version
+  position int,            -- 房间内显示顺序
+
+  -- 以下字段都是创建实例时从 template 拷贝；之后房间内的修改只动 instance 不动 template
+  kind text,
+  name text,
+  description text,
+  backing_model text,
+  api_provider_id uuid null,
+  system_prompt text,
+  temperature float,
+  config jsonb,
+  tags text[],
+
+  created_at timestamptz,
+  updated_at timestamptz
+)
+CREATE INDEX ON persona_instances(room_id);
+
+-- 全局账号设定与外部 LLM provider；persona 选 backing model 时按
+-- "instance.backing_model -> template.backing_model -> app_settings.default_backing_model" 的顺序回退；
+-- api_provider_id 同样有 instance -> template -> app_settings 的回退链。
+-- seed.py 不会预置任何 ApiProvider；首次启动后用户必须在 /settings UI 创建
+-- 至少一个 provider 并指定 default_api_provider_id 才能跑 LLM 调用。
+api_providers(
+  id uuid pk,
+  name text,
+  provider_slug text,           -- e.g. 'openai' | 'anthropic' | 'litellm-proxy'
+  api_key text,                 -- encrypted at rest if provider supports it
+  api_base text null,
+  last_tested_ok bool null,
+  last_tested_at timestamptz null,
+  last_tested_error text null,
+  created_at, updated_at
+)
+
+app_settings(
+  id int primary key default 1, -- singleton row, enforced by check (id = 1)
+  default_backing_model text null,
+  default_api_provider_id uuid null references api_providers(id),
+  updated_at timestamptz
+)
 
 phase_templates(
   id uuid pk, version int, schema_version int,
@@ -210,13 +263,13 @@ room_phase_instances(
   completed_at timestamptz null
 )
 
--- 消息(按 room_id hash 分区)
+-- 消息表（不分区；v1 工作集小，PG 分区方案推迟到真正出现单表性能问题再做）
 messages(
   id uuid pk,
   room_id uuid,
   phase_instance_id uuid null,
   parent_message_id uuid null,        -- 回复关系
-  message_type text,                  -- speech|question|answer|summary|verdict|verdict_revoke|facilitator_signal|user_doc|meta
+  message_type text,                  -- speech|question|answer|summary|verdict|verdict_revoke|dead_end|facilitator_signal|user_doc|masquerade_reveal|meta
   
   author_persona_id uuid,
   author_model text null,             -- 用户消息时为 null
@@ -239,7 +292,7 @@ messages(
   user_revealed_at timestamptz null,   -- 群友/伪装揭示时间(仅用户视图用)
   
   created_at timestamptz
-) PARTITION BY HASH(room_id);
+);
 
 CREATE INDEX ON messages(room_id, created_at);
 CREATE INDEX ON messages(phase_instance_id);
@@ -495,10 +548,13 @@ ExitCondition = (
   | UserManualExit              # 仅用户手动结束
   | FacilitatorSuggestsExit     # 上帝副手判定该结束
   | TokenBudgetExit             # token 上限
+  | PhaseRoundLimitExit         # 运行时全局轮数硬上限（runtime 注入而非模板声明）
 )
 ```
 
 `exit_conditions` 是数组：**任一条件先满足都触发结束事件**。
+
+`PhaseRoundLimitExit` 不出现在 phase 模板里——它由引擎根据 `RoomRuntimeState.max_phase_rounds`（默认 3 轮，限额面板可调）注入，目的是给所有 phase 一个最终保险，避免无限轮转。其 `max` 字段在评估时还要叠加 `runtime.phase_extra_rounds`：用户在 phase exit banner 上点"再来一回合"会调用 `POST /rooms/{id}/phase/extend`，把这个计数器 +1，从而把所有 rounds-style 条件（含模板里的 `RoundsExit`）的目标值整体推后一轮。`phase_extra_rounds` 在每次 phase 切换时归零。
 
 ### 6.4 调度核心：`pick_next_speaker`
 
@@ -695,10 +751,20 @@ type SSEEvent =
   | ScribeUpdatedEvent
   | FacilitatorSignalEvent
   | PhaseExitSuggestedEvent
+  | PhaseExitContinuedEvent    // 用户点"继续讨论"，本次建议被忽略
+  | PhaseExtendedEvent         // 用户点"再来一回合"，phase_extra_rounds += 1
   | PhaseTransitionedEvent
   | RoomFrozenEvent
   | RoomUnfrozenEvent
-  | LimitWarningEvent
+  | RoomDeletedEvent
+  | PersonaInstanceUpdatedEvent
+  | PersonaInstanceRemovedEvent
+  | SystemErrorEvent
+
+// LimitWarningEvent 已不再单独发：limit 接近阈值时由 facilitator 以
+// `pacing_warning` tag 的 FacilitatorSignal 形式推出，复用 facilitator 的
+// 严重度阶梯（info → suggest → warning → block），因此 UI 只需在
+// FacilitatorSignal 上展示阈值告警，不再处理一个独立的 limit 事件。
 
 interface MessageStreamingEvent {
   type: 'message.streaming'

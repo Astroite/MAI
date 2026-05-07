@@ -77,6 +77,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
         ("max_account_monthly_tokens", "integer DEFAULT 3000000 NOT NULL", "INTEGER DEFAULT 3000000 NOT NULL"),
         ("consecutive_ai_turns", "integer DEFAULT 0 NOT NULL", "INTEGER DEFAULT 0 NOT NULL"),
         ("max_consecutive_ai_turns", "integer DEFAULT 10 NOT NULL", "INTEGER DEFAULT 10 NOT NULL"),
+        ("phase_extra_rounds", "integer DEFAULT 0 NOT NULL", "INTEGER DEFAULT 0 NOT NULL"),
     ],
     "personas": [
         ("api_provider_id", "varchar(36)", "VARCHAR(36)"),

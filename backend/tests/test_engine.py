@@ -3,7 +3,7 @@ import time
 
 from app.db import SessionLocal
 from app.engine import ACTIVE_CALLS, pick_next_speaker
-from app.models import Room, RoomRuntimeState
+from app.models import Message, PersonaInstance, Room, RoomRuntimeState
 
 
 def _wait_for_ai_message(client, room_id, *, after_count: int, timeout: float = 30.0) -> list:
@@ -79,8 +79,9 @@ def test_pick_next_speaker_ordering_rules(client, discussant_personas):
         instance_ids_by_ordering[ordering] = {instance_map[t] for t in template_ids}
         results[ordering] = asyncio.run(pick(room_id))
 
-    # mention_driven falls back to round-robin when no @-mention exists so
-    # auto-drive can keep moving the room forward. pick_next_speaker returns
+    # mention_driven and question_paired fall back to round-robin when no
+    # @-mention is found in the latest user/question message — the room is
+    # empty here, so both fall through. pick_next_speaker returns
     # PersonaInstance ids — match against the per-room instance map.
     assert results["mention_driven"][0] == "single"
     assert "round-robin" in results["mention_driven"][2]
@@ -89,12 +90,19 @@ def test_pick_next_speaker_ordering_rules(client, discussant_personas):
     assert results["user_picks"][0] == "wait"
     assert results["parallel"][0] == "parallel"
     assert set(results["parallel"][1]) == instance_ids_by_ordering["parallel"]
-    for ordering in ["round_robin", "alternating", "question_paired"]:
-        kind, picked, reason = results[ordering]
-        assert kind == "single"
-        assert reason == ordering
-        assert len(picked) == 1
-        assert picked[0] in instance_ids_by_ordering[ordering]
+    # round_robin: reason is just the ordering name.
+    rr = results["round_robin"]
+    assert rr[0] == "single" and rr[2] == "round_robin"
+    assert rr[1][0] in instance_ids_by_ordering["round_robin"]
+    # alternating: reason is "alternating skip last speaker" — even with no
+    # prior AI message, the branch still executes (excluded set is empty).
+    alt = results["alternating"]
+    assert alt[0] == "single" and "alternating" in alt[2]
+    assert alt[1][0] in instance_ids_by_ordering["alternating"]
+    # question_paired: no question in the room → falls through to round-robin.
+    qp = results["question_paired"]
+    assert qp[0] == "single" and "round-robin" in qp[2]
+    assert qp[1][0] in instance_ids_by_ordering["question_paired"]
 
 
 def test_freeze_cancels_active_turn(client, review_format, architect_persona):
@@ -269,3 +277,160 @@ def test_autodrive_short_circuits_when_frozen(
         if m["author_actual"] == "ai"
     ]
     assert len(ai_messages) == before, "frozen room must not produce any persona reply"
+
+
+def _make_ordering_room(client, discussant_personas, ordering: str, *, suffix: str, count: int = 2):
+    template_ids = [p["id"] for p in discussant_personas[:count]]
+    phase = client.post(
+        "/templates/phases",
+        json={
+            "name": f"pytest {ordering} {suffix}",
+            "description": f"{ordering} positive test",
+            "declared_variables": [],
+            "allowed_speakers": {"type": "all"},
+            "ordering_rule": {"type": ordering},
+            "exit_conditions": [{"type": "user_manual"}],
+            "role_constraints": "",
+            "prompt_template": "请发言。",
+            "tags": ["pytest", ordering, suffix],
+        },
+    ).json()
+    debate_format = client.post(
+        "/templates/formats",
+        json={
+            "name": f"pytest {ordering} fmt {suffix}",
+            "phase_sequence": [
+                {"phase_template_id": phase["id"], "phase_template_version": phase["version"]}
+            ],
+            "tags": ["pytest", ordering, suffix],
+        },
+    ).json()
+    room = client.post(
+        "/rooms",
+        json={
+            "title": f"pytest {ordering} room {suffix}",
+            "format_id": debate_format["id"],
+            "persona_ids": template_ids,
+        },
+    ).json()
+    return room
+
+
+def test_question_paired_routes_to_at_mention(client, discussant_personas):
+    """When the latest visible message is a question containing @<name>,
+    question_paired must route the next turn to that persona instance."""
+    room = _make_ordering_room(client, discussant_personas, "question_paired", suffix="hit")
+    room_id = room["room"]["id"]
+    instance_map = _instance_ids_by_template(client, room_id)
+    target_template_id = discussant_personas[1]["id"]
+    target_instance_id = instance_map[target_template_id]
+
+    async def insert_question_and_pick():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            target = await session.get(PersonaInstance, target_instance_id)
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="question",
+                    author_actual="user",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content=f"@{target.name} 你怎么看？",
+                )
+            )
+            await session.commit()
+        async with SessionLocal() as session:
+            room_obj = await session.get(Room, room_id)
+            runtime = await session.get(RoomRuntimeState, room_id)
+            return await pick_next_speaker(session, room_obj, runtime, None)
+
+    result = asyncio.run(insert_question_and_pick())
+    assert result.kind == "single"
+    assert result.persona_ids == [target_instance_id]
+    assert "question_paired matched" in result.reason
+
+
+def test_question_paired_falls_through_when_latest_is_not_question(client, discussant_personas):
+    """If the most recent visible message is not a question, question_paired
+    must release back to round-robin (no stale pairing on old questions)."""
+    room = _make_ordering_room(client, discussant_personas, "question_paired", suffix="stale")
+    room_id = room["room"]["id"]
+    instance_map = _instance_ids_by_template(client, room_id)
+    target_instance_id = instance_map[discussant_personas[1]["id"]]
+
+    async def setup_and_pick():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            target = await session.get(PersonaInstance, target_instance_id)
+            # Old question with @mention …
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="question",
+                    author_actual="user",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content=f"@{target.name} 你怎么看？",
+                )
+            )
+            await session.flush()
+            # … followed by a non-question speech: pairing should release.
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_actual="user",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="换个话题继续。",
+                )
+            )
+            await session.commit()
+        async with SessionLocal() as session:
+            room_obj = await session.get(Room, room_id)
+            runtime = await session.get(RoomRuntimeState, room_id)
+            return await pick_next_speaker(session, room_obj, runtime, None)
+
+    result = asyncio.run(setup_and_pick())
+    assert result.kind == "single"
+    assert "round-robin" in result.reason
+
+
+def test_alternating_skips_last_ai_speaker(client, discussant_personas):
+    """alternating must avoid picking the persona who spoke last AI turn."""
+    room = _make_ordering_room(client, discussant_personas, "alternating", suffix="skip", count=3)
+    room_id = room["room"]["id"]
+    instance_map = _instance_ids_by_template(client, room_id)
+    last_speaker_instance_id = instance_map[discussant_personas[0]["id"]]
+
+    async def insert_ai_message_and_pick():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_actual="ai",
+                    author_persona_id=last_speaker_instance_id,
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="我先说一段。",
+                )
+            )
+            await session.commit()
+        async with SessionLocal() as session:
+            room_obj = await session.get(Room, room_id)
+            runtime = await session.get(RoomRuntimeState, room_id)
+            return await pick_next_speaker(session, room_obj, runtime, None)
+
+    result = asyncio.run(insert_ai_message_and_pick())
+    assert result.kind == "single"
+    assert result.persona_ids[0] != last_speaker_instance_id, (
+        "alternating should not pick the persona who just spoke"
+    )
+    assert "alternating" in result.reason

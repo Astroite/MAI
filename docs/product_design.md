@@ -83,11 +83,13 @@ Persona 数据结构有三个特殊子类型：
 | 属性 | 行为 |
 |------|------|
 | 是否参与论证 | 否，只下判决，不需要论据支撑 |
-| 直接写入 `decisions[]` | 是，AI 间共识只能进 `consensus[]`，进 `decisions[]` 必须裁决 |
-| 强制中止某条线 | 是，直接写入 `dead_ends[]`，AI 不能再提 |
-| 可撤销 | 是。撤销不修改原裁决，而是 append 一条新的"撤销裁决"消息 |
+| 写入 `Decision` 表 | 是。AI 间共识只能进 `ScribeState.consensus[]`；进 `Decision` 表必须由裁决者下 verdict（`message_type='verdict'`），引擎在 `append_verdict` 中同步插入 `Decision` 行 |
+| 强制中止某条线 | 是。dead_end 是独立的 `message_type='dead_end'`（不是带前缀的 meta），书记官随后会在下一次 fold 时把它落入 `ScribeState.dead_ends[]`，AI 不能再提 |
+| 可撤销 | 是。撤销不修改原裁决，而是 append 一条 `verdict_revoke` 消息，并把 `Decision.revoked_by_message_id` 链回去 |
 | Prompt 渲染 | 带 `[USER VERDICT]` 高优先级 tag |
 | UI 视觉 | 必须明显区别于普通发言(颜色 / 边框 / 徽章)|
+
+> **权威性约定**：`Decision` 表是用户裁决的权威源；`ScribeState.decisions[]` 是 AI 推断的可视化镜像，仅在书记官每 5 条消息或 phase 边界 fold 时刷新，可能滞后。前端默认从 `Decision` 表渲染裁决列表（包含锁定状态、撤销状态），ScribeState 只用来给入场 persona 写 brief。书记官的 `decisions_added` 永远只增不减，撤销与解锁不会通过 ScribeState diff 反向冲掉，因此不要把 ScribeState.decisions 当作"当前有效裁决列表"来用。
 
 ### 5.3 群友发言 / 伪装(Masquerade)
 
@@ -297,11 +299,11 @@ FacilitatorConfig {
 - 当前用户身份模式(normal / judge / masquerade-as-X)
 - 自动转换开关(auto_transition: bool)
 
-### 7.4 节奏假设：人是速度瓶颈
+### 7.4 节奏假设：可中断的 AI 自动讨论循环
 
-**核心假设**：用户仍是讨论节奏的最终控制者，但默认聊天体验应当顺滑。用户追加消息后，系统会自动驱动一位符合当前 phase 规则的 persona 回复；AI 回复不会递归触发下一轮。用户可以通过冻结、phase 横幅、手动 turn 或显式选择 speaker 接管节奏。
+**核心假设**：用户仍是讨论节奏的最终控制者，但默认聊天体验应当顺滑——尤其是希望"放手让 AI 互相讨论几轮再回头看"的场景。用户追加一条消息后，autodrive 会驱动一位符合当前 phase 规则的 persona 回复；如果当前 phase 模板允许（`auto_discuss=True`，比如 `cross_exam` / `free_debate` / 自由模式 `round_robin`），AI 之间会继续接力，最长走 `runtime.max_consecutive_ai_turns` 轮（默认 10），随后自动停下来等用户。`auto_discuss=False` 的 phase（如 `constructive` / `summary`）退回"用户消息 → 一轮 AI"的语义。
 
-普通 / autodrive 流程每个房间只推进一轮自动回复；声明式 `parallel` phase 是唯一允许多个 in-flight LLM call 的例外，并按消息独立渲染与落库。
+任何用户操作（再发一条消息、冻结、点击 phase 横幅、手动 turn、显式 @ 指定 speaker）都立即打断当前接力。声明式 `parallel` phase 是唯一允许多个 in-flight LLM call 同时存在的例外，按消息独立渲染与落库。
 
 ## 8. Phase 与赛制(Debate Format)
 

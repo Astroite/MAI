@@ -116,12 +116,18 @@ function MessageRow({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
   });
 
-  // Render system/meta messages as a centered info strip, not a bubble.
-  if (message.message_type === "meta" || message.author_actual === "system") {
+  // Render system/meta/dead_end messages as a centered info strip, not a bubble.
+  if (
+    message.message_type === "meta" ||
+    message.message_type === "dead_end" ||
+    message.author_actual === "system"
+  ) {
+    const label =
+      message.message_type === "dead_end" ? `死路：${message.content}` : message.content;
     return (
       <div className="my-1 flex items-center justify-center gap-2 text-xs text-muted">
         <div className="h-px flex-1 bg-border" />
-        <span>{message.content}</span>
+        <span>{label}</span>
         <div className="h-px flex-1 bg-border" />
       </div>
     );

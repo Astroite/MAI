@@ -343,6 +343,11 @@ async def pick_next_speaker(
         if mentioned is not None:
             return NextSpeakerResult("single", [mentioned], "mention_driven matched @-mention")
         # fall through to round-robin so auto-drive still moves the room forward
+    if ordering == "question_paired":
+        target = await _resolve_question_paired(session, room.id, allowed)
+        if target is not None:
+            return NextSpeakerResult("single", [target], "question_paired matched @-mention")
+        # fall through to round-robin if no @-mention on the latest question
     if ordering == "parallel":
         spoken = await _spoken_counts(session, room.id, phase.id)
         remaining = [pid for pid in allowed if spoken.get(pid, 0) == 0]
@@ -350,11 +355,38 @@ async def pick_next_speaker(
 
     spoken = await _spoken_counts(session, room.id, phase.id)
     total = sum(spoken.values())
-    if ordering in {"round_robin", "alternating", "question_paired", "mention_driven"}:
+    if ordering == "alternating":
+        last_speaker = await _last_ai_speaker(session, room.id, phase.id)
+        candidates = [pid for pid in allowed if pid != last_speaker] or allowed
+        next_id = candidates[total % len(candidates)]
+        return NextSpeakerResult("single", [next_id], "alternating skip last speaker")
+    if ordering in {"round_robin", "question_paired", "mention_driven"}:
         next_id = allowed[total % len(allowed)]
-        reason = "mention_driven fallback to round-robin" if ordering == "mention_driven" else ordering
+        if ordering == "mention_driven":
+            reason = "mention_driven fallback to round-robin"
+        elif ordering == "question_paired":
+            reason = "question_paired fallback to round-robin"
+        else:
+            reason = ordering
         return NextSpeakerResult("single", [next_id], reason)
     return NextSpeakerResult("wait", [], "unknown ordering")
+
+
+async def _match_at_mention_in_text(
+    session: AsyncSession, text: str | None, allowed_ids: list[str]
+) -> str | None:
+    """Match `@<persona-name>` tokens in `text` against allowed instance ids."""
+    if not text or not allowed_ids or "@" not in text:
+        return None
+    personas = (
+        await session.scalars(select(PersonaInstance).where(PersonaInstance.id.in_(allowed_ids)))
+    ).all()
+    for persona in personas:
+        if not persona.name:
+            continue
+        if f"@{persona.name}" in text:
+            return persona.id
+    return None
 
 
 async def _resolve_at_mention(
@@ -377,18 +409,52 @@ async def _resolve_at_mention(
         .order_by(Message.created_at.desc())
         .limit(1)
     )
-    if last_user_message is None or "@" not in (last_user_message.content or ""):
+    if last_user_message is None:
         return None
-    personas = (
-        await session.scalars(select(PersonaInstance).where(PersonaInstance.id.in_(allowed_ids)))
-    ).all()
-    content = last_user_message.content
-    for persona in personas:
-        if not persona.name:
-            continue
-        if f"@{persona.name}" in content:
-            return persona.id
-    return None
+    return await _match_at_mention_in_text(session, last_user_message.content, allowed_ids)
+
+
+async def _resolve_question_paired(
+    session: AsyncSession, room_id: str, allowed_ids: list[str]
+) -> str | None:
+    """If the most recent visible message is a `question`, return the @-mentioned persona id.
+
+    Falls through (returns None) if the latest visible turn is not a question — that means
+    someone has already answered, and pairing should release back to round-robin.
+    """
+    if not allowed_ids:
+        return None
+    last_visible = await session.scalar(
+        select(Message)
+        .where(
+            Message.room_id == room_id,
+            Message.visibility_to_models.is_(True),
+            Message.author_actual != "system",
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    if last_visible is None or last_visible.message_type != "question":
+        return None
+    return await _match_at_mention_in_text(session, last_visible.content, allowed_ids)
+
+
+async def _last_ai_speaker(
+    session: AsyncSession, room_id: str, phase_instance_id: str
+) -> str | None:
+    """Author persona id of the most recent visible AI message in the current phase."""
+    return await session.scalar(
+        select(Message.author_persona_id)
+        .where(
+            Message.room_id == room_id,
+            Message.phase_instance_id == phase_instance_id,
+            Message.visibility_to_models.is_(True),
+            Message.author_actual == "ai",
+            Message.author_persona_id.is_not(None),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
 
 
 async def _spoken_counts(session: AsyncSession, room_id: str, phase_instance_id: str) -> dict[str, int]:
@@ -720,7 +786,7 @@ async def run_facilitator_eval(
         await trace_record(session, room_id, "facilitator_signal", "facilitator disabled", {"latest_message_id": latest_message_id})
         await session.flush()
         return None
-    context_window = int(config.get("context_window_messages", 8))
+    context_window = int(config.get("context_window_messages", 50))
     recent = list(
         (
             await session.scalars(
@@ -852,7 +918,8 @@ async def limit_facilitator_signals(
         plan = await session.get(RoomPhasePlan, {"room_id": phase.room_id, "position": phase.plan_position})
         allowed = await allowed_persona_ids(session, phase.room_id, template, plan)
         counts = await _spoken_counts(session, phase.room_id, phase.id)
-        phase_turn_budget = max(1, len(allowed)) * runtime.max_phase_rounds
+        extra = max(0, int(runtime.phase_extra_rounds or 0))
+        phase_turn_budget = max(1, len(allowed)) * (runtime.max_phase_rounds + extra)
         add_note(sum(counts.values()), phase_turn_budget, "当前 phase 轮次")
 
     if not notes:
@@ -879,14 +946,17 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
         select(Message.id).where(Message.room_id == room.id).order_by(Message.created_at.desc())
     )
     matched: list[dict] = []
-    if runtime.max_phase_rounds and sum(counts.values()) >= max(1, len(allowed)) * runtime.max_phase_rounds:
-        matched.append({"type": "phase_round_limit", "max": runtime.max_phase_rounds})
+    extra = max(0, int(runtime.phase_extra_rounds or 0))
+    if runtime.max_phase_rounds:
+        effective_limit = runtime.max_phase_rounds + extra
+        if sum(counts.values()) >= max(1, len(allowed)) * effective_limit:
+            matched.append({"type": "phase_round_limit", "max": effective_limit})
     for condition in template.exit_conditions or []:
         ctype = condition.get("type")
         if ctype == "user_manual":
             continue
         if ctype == "rounds":
-            n = int(condition.get("n", 1))
+            n = int(condition.get("n", 1)) + extra
             if sum(counts.values()) >= max(1, len(allowed)) * n:
                 matched.append(condition)
         if ctype == "all_spoken":
@@ -947,6 +1017,33 @@ async def continue_current_phase(session: AsyncSession, room_id: str) -> None:
     await event_bus.publish(room_id, {"type": "phase.exit_continued"})
 
 
+async def extend_current_phase(session: AsyncSession, room_id: str) -> int:
+    """Add one more round to the current phase's `rounds`/`phase_round_limit` budgets.
+
+    Clears any pending exit suggestion so the user can keep going past the
+    threshold. Returns the new `phase_extra_rounds` value for telemetry.
+    """
+    runtime = await session.get(RoomRuntimeState, room_id)
+    if runtime is None:
+        raise ValueError("runtime not found")
+    runtime.phase_extra_rounds = int(runtime.phase_extra_rounds or 0) + 1
+    runtime.phase_exit_suggested = False
+    runtime.phase_exit_matched_conditions = []
+    runtime.phase_exit_suppressed_after_message_id = None
+    await trace_record(
+        session,
+        room_id,
+        "phase_transition",
+        "phase extended by one round",
+        {"phase_extra_rounds": runtime.phase_extra_rounds},
+    )
+    await event_bus.publish(
+        room_id,
+        {"type": "phase.extended", "phase_extra_rounds": runtime.phase_extra_rounds},
+    )
+    return runtime.phase_extra_rounds
+
+
 async def transition_to_next_phase(session: AsyncSession, room_id: str, target_position: int | None = None) -> RoomPhaseInstance | None:
     runtime = await session.get(RoomRuntimeState, room_id)
     if runtime is None:
@@ -967,6 +1064,7 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
         runtime.phase_exit_matched_conditions = []
         runtime.phase_exit_suppressed_after_message_id = None
         runtime.consecutive_ai_turns = 0
+        runtime.phase_extra_rounds = 0
         await trace_record(session, room_id, "phase_transition", "no next phase", {"target_position": position})
         await session.flush()
         if exiting_phase:
@@ -986,6 +1084,7 @@ async def transition_to_next_phase(session: AsyncSession, room_id: str, target_p
     runtime.phase_exit_matched_conditions = []
     runtime.phase_exit_suppressed_after_message_id = None
     runtime.consecutive_ai_turns = 0
+    runtime.phase_extra_rounds = 0
     marker = Message(
         room_id=room_id,
         phase_instance_id=instance.id,
@@ -1126,11 +1225,11 @@ async def append_verdict(
         meta = Message(
             room_id=room_id,
             phase_instance_id=phase_id,
-            message_type="meta",
+            message_type="dead_end",
             author_actual="user_as_judge",
             visibility="public",
             visibility_to_models=True,
-            content=f"死路：{content}",
+            content=content,
         )
         session.add(meta)
     await trace_record(session, room_id, "user_action", "judge verdict", {"message_id": message.id})
@@ -1192,23 +1291,47 @@ def default_facilitator_signal(recent: list[Message]) -> dict[str, Any]:
     }
 
 
+_SEVERITY_RANK = {"info": 0, "suggest": 1, "warning": 2, "block": 3}
+
+
 def filter_facilitator_signals(
     signals: list[dict[str, Any]],
     previous: list[FacilitatorSignal],
     config: dict[str, Any],
     force: bool,
 ) -> list[dict[str, Any]]:
+    """Suppress repeats unless the candidate severity escalates past the prior peak.
+
+    The dedupe key is `(tag, severity)`. A signal is allowed through when either
+    its tag has not appeared in `previous`, or its severity rank is strictly
+    higher than the highest severity previously emitted for that tag — that's
+    the `info → suggest → warning → block` escalation channel. `force=True`
+    (manual ask) skips suppression entirely.
+    """
     enabled_tags = set(config.get("enabled_signal_tags") or [])
     filtered = [signal for signal in signals if not enabled_tags or signal.get("tag") in enabled_tags]
     if force:
         return filtered
-    recent_tags = {
-        signal.get("tag")
-        for item in previous
-        for signal in (item.signals or [])
-        if signal.get("tag")
-    }
-    return [signal for signal in filtered if signal.get("tag") not in recent_tags]
+    prev_max_rank: dict[str, int] = {}
+    for item in previous:
+        for signal in item.signals or []:
+            tag = signal.get("tag")
+            if not tag:
+                continue
+            rank = _SEVERITY_RANK.get(signal.get("severity") or "info", 0)
+            if rank > prev_max_rank.get(tag, -1):
+                prev_max_rank[tag] = rank
+    result: list[dict[str, Any]] = []
+    for signal in filtered:
+        tag = signal.get("tag")
+        if not tag:
+            result.append(signal)
+            continue
+        candidate_rank = _SEVERITY_RANK.get(signal.get("severity") or "info", 0)
+        prior = prev_max_rank.get(tag)
+        if prior is None or candidate_rank > prior:
+            result.append(signal)
+    return result
 
 
 def facilitator_signal_to_tool_payload(item: FacilitatorSignal) -> dict[str, Any]:

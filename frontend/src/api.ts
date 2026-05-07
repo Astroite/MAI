@@ -144,6 +144,7 @@ export const api = {
       body: JSON.stringify({ target_position })
     }),
   continuePhase: (roomId: string) => request<RoomState>(`/rooms/${roomId}/phase/continue`, { method: "POST" }),
+  extendPhase: (roomId: string) => request<RoomState>(`/rooms/${roomId}/phase/extend`, { method: "POST" }),
   askFacilitator: (roomId: string) => request<RoomState>(`/rooms/${roomId}/facilitator`, { method: "POST" }),
   insertPhase: (roomId: string, phase_template_id: string) =>
     request<RoomState>(`/rooms/${roomId}/phase/insert`, {

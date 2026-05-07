@@ -22,6 +22,8 @@ from .engine import (
     after_message_appended,
     append_verdict,
     continue_current_phase,
+    estimate_tokens,
+    extend_current_phase,
     freeze_room,
     run_manual_facilitator_eval,
     run_room_turn,
@@ -704,7 +706,7 @@ async def append_user_message(room_id: str, body: MessageCreate, session: AsyncS
         visibility="public",
         visibility_to_models=True,
         content=body.content,
-        completion_tokens=max(1, len(body.content) // 4),
+        completion_tokens=estimate_tokens(body.content),
         cost_usd=0,
     )
     runtime.token_counter_total += message.completion_tokens or 0
@@ -800,7 +802,7 @@ async def create_masquerade(room_id: str, body: MasqueradeCreate, session: Async
         visibility="public",
         visibility_to_models=True,
         content=body.content,
-        completion_tokens=max(1, len(body.content) // 4),
+        completion_tokens=estimate_tokens(body.content),
         cost_usd=0,
     )
     runtime.token_counter_total += message.completion_tokens or 0
@@ -880,6 +882,16 @@ async def continue_phase(room_id: str, session: AsyncSession = Depends(get_sessi
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
     await continue_current_phase(session, room_id)
+    await session.commit()
+    return await _room_state(session, room_id)
+
+
+@app.post("/rooms/{room_id}/phase/extend", response_model=RoomState)
+async def extend_phase(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Add one round to the current phase's `rounds` / `phase_round_limit` budgets."""
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    await extend_current_phase(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
 
@@ -1051,8 +1063,12 @@ async def message_from_upload(room_id: str, body: FromUploadRequest, session: As
     upload = await session.get(Upload, body.upload_id)
     if not upload:
         raise HTTPException(404, "upload not found")
-    if upload.room_id != room_id:
-        raise HTTPException(403, "upload does not belong to this room")
+    # Allow global uploads (room_id is None) to be claimed by the first room
+    # that references them. Already-bound uploads stay locked to their room.
+    if upload.room_id is not None and upload.room_id != room_id:
+        raise HTTPException(403, "upload already belongs to a different room")
+    if upload.room_id is None:
+        upload.room_id = room_id
     message = Message(
         room_id=room_id,
         phase_instance_id=runtime.current_phase_instance_id,
@@ -1061,7 +1077,7 @@ async def message_from_upload(room_id: str, body: FromUploadRequest, session: As
         visibility="public",
         visibility_to_models=True,
         content=f"# {upload.filename}\n\n{upload.extracted_text}",
-        completion_tokens=max(1, len(upload.extracted_text) // 4),
+        completion_tokens=estimate_tokens(upload.extracted_text),
         cost_usd=0,
     )
     session.add(message)
@@ -1247,7 +1263,7 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
                 persona_id=active_call.persona_id,
                 content=active_call.partial_text,
                 last_chunk_index=active_call.last_chunk_index,
-                cumulative_tokens_estimate=max(1, len(active_call.partial_text) // 4),
+                cumulative_tokens_estimate=estimate_tokens(active_call.partial_text),
             )
         )
     revealed_at_by_message_id = {

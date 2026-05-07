@@ -29,7 +29,9 @@ def test_verdict_revoke_and_dead_end_messages(client):
     assert dead_end.status_code == 200
 
     state = client.get(f"/rooms/{room_id}/state").json()
-    assert any(message["content"].startswith("死路：轮询所有 provider SDK") for message in state["messages"])
+    dead_end_msgs = [m for m in state["messages"] if m["message_type"] == "dead_end"]
+    assert dead_end_msgs, "dead_end verdict must produce a message with message_type=='dead_end'"
+    assert any("轮询所有 provider SDK" in m["content"] for m in dead_end_msgs)
 
     async def fetch_decision() -> Decision:
         async with SessionLocal() as session:
