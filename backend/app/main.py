@@ -154,11 +154,24 @@ async def _strip_api_prefix(request, call_next):
 async def health(session: AsyncSession = Depends(get_session)) -> dict:
     await session.scalar(select(func.count(PersonaTemplate.id)))
     settings_row = await _get_or_create_app_settings(session)
-    setup_complete = bool(
+    provider_count = await session.scalar(select(func.count(ApiProvider.id))) or 0
+    model_count = await session.scalar(select(func.count(ApiModel.id))) or 0
+    has_default_model = bool(
         settings_row.default_api_model_id
         or (settings_row.default_backing_model and settings_row.default_api_provider_id)
     )
-    return {"status": "ok", "database": "ok", "setup_complete": setup_complete}
+    setup_steps = {
+        "providers": provider_count > 0,
+        "models": model_count > 0,
+        "default_model": has_default_model,
+    }
+    setup_complete = all(setup_steps.values())
+    return {
+        "status": "ok",
+        "database": "ok",
+        "setup_complete": setup_complete,
+        "setup_steps": setup_steps,
+    }
 
 
 async def _get_or_create_app_settings(session: AsyncSession) -> AppSettings:

@@ -43,7 +43,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   health: () =>
-    request<{ status: string; database: string; setup_complete: boolean }>("/health"),
+    request<{
+      status: string;
+      database: string;
+      setup_complete: boolean;
+      setup_steps?: { providers: boolean; models: boolean; default_model: boolean };
+    }>("/health"),
   appSettings: () => request<AppSettings>("/settings"),
   updateAppSettings: (body: {
     default_backing_model?: string | null;

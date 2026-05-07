@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { NavLink, Route, Routes, useMatch } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Download, Loader2, Moon, PanelsTopLeft, Settings, Sun, Workflow, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Download, Loader2, Moon, PanelsTopLeft, Settings, Sun, Workflow, X } from "lucide-react";
 import { api } from "./api";
 import { useUIStore } from "./store";
 import { DashboardPage } from "./pages/DashboardPage";
@@ -76,15 +76,66 @@ function SetupBanner() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
   const { t } = useI18n();
   if (!health.data || health.data.setup_complete) return null;
+
+  // Older backends return only `setup_complete`. Fall back to a single-line
+  // banner so we don't render an empty checklist.
+  const steps = health.data.setup_steps;
+  if (!steps) {
+    return (
+      <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-700 dark:text-rose-300">
+        <div className="mx-auto flex max-w-[1500px] items-center gap-2">
+          <AlertTriangle size={14} />
+          <span>{t("setup.missingPrefix")}</span>
+          <NavLink to="/settings" className="underline">
+            {t("setup.goSettings")}
+          </NavLink>
+          <span>{t("setup.missingSuffix")}</span>
+        </div>
+      </div>
+    );
+  }
+
+  const items: { key: keyof typeof steps; label: string; to: string }[] = [
+    { key: "providers", label: t("setup.step.provider"), to: "/settings" },
+    { key: "models", label: t("setup.step.model"), to: "/settings" },
+    { key: "default_model", label: t("setup.step.default"), to: "/settings" },
+  ];
+  const doneCount = items.filter((item) => steps[item.key]).length;
+  const nextItem = items.find((item) => !steps[item.key]);
+
   return (
-    <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-700 dark:text-rose-300">
-      <div className="mx-auto flex max-w-[1500px] items-center gap-2">
-        <AlertTriangle size={14} />
-        <span>{t("setup.missingPrefix")}</span>
-        <NavLink to="/settings" className="underline">
-          {t("setup.goSettings")}
-        </NavLink>
-        <span>{t("setup.missingSuffix")}</span>
+    <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+      <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-1">
+        <div className="flex items-center gap-2 font-medium">
+          <AlertTriangle size={14} />
+          <span>{t("setup.title", { done: doneCount, total: items.length })}</span>
+        </div>
+        <ul className="flex flex-wrap items-center gap-x-4 gap-y-1">
+          {items.map((item) => {
+            const done = steps[item.key];
+            return (
+              <li key={item.key} className="flex items-center gap-1.5">
+                {done ? (
+                  <Check size={14} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                ) : (
+                  <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border border-current text-[9px]">
+                    {items.indexOf(item) + 1}
+                  </span>
+                )}
+                <span className={done ? "line-through opacity-60" : ""}>{item.label}</span>
+              </li>
+            );
+          })}
+        </ul>
+        {nextItem && (
+          <NavLink
+            to={nextItem.to}
+            className="ml-auto inline-flex items-center gap-1 rounded border border-current px-2 py-0.5 hover:bg-amber-500/10"
+          >
+            {t("setup.step.go")}
+            <ChevronRight size={14} />
+          </NavLink>
+        )}
       </div>
     </div>
   );
