@@ -1,7 +1,21 @@
 import { useEffect, useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { ArrowLeft, Loader2, Settings, Snowflake, Unlock, WifiOff } from "lucide-react";
+import {
+  ArrowLeft,
+  BookOpen,
+  FileText,
+  GitBranchPlus,
+  Layers,
+  Loader2,
+  Scale,
+  Settings,
+  Settings2,
+  Shield,
+  Snowflake,
+  Unlock,
+  WifiOff
+} from "lucide-react";
 import { api } from "../../api";
 import { useRoomEvents } from "../../hooks";
 import { useUIStore } from "../../store";
@@ -119,6 +133,21 @@ export function RoomShell() {
                 </div>
               </div>
               <div className="flex flex-shrink-0 items-center gap-2">
+                {/* Quick-access icons for the right-rail panels — only visible
+                    when the right column is hidden by viewport. */}
+                <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1">
+                  {PANEL_SHORTCUTS.map((entry) => (
+                    <button
+                      key={entry.key}
+                      className="btn h-9 w-9 px-0"
+                      type="button"
+                      onClick={() => openSettings(entry.key)}
+                      title={t(entry.labelKey)}
+                    >
+                      <entry.icon size={16} />
+                    </button>
+                  ))}
+                </div>
                 {state.runtime.frozen ? (
                   <button className="btn" type="button" onClick={() => unfreeze.mutate()} disabled={unfreeze.isPending}>
                     <Unlock size={16} />
@@ -189,6 +218,16 @@ export function RoomShell() {
     </div>
   );
 }
+
+const PANEL_SHORTCUTS = [
+  { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen },
+  { key: "decisions", labelKey: "room.panel.decisions", icon: Scale },
+  { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield },
+  { key: "phase", labelKey: "room.panel.phase", icon: Layers },
+  { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus },
+  { key: "upload", labelKey: "room.panel.upload", icon: FileText },
+  { key: "limits", labelKey: "room.panel.limits", icon: Settings2 }
+] as const;
 
 function ConnectionBanner() {
   const status = useUIStore((s) => s.connectionStatus);
