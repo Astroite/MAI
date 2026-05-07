@@ -38,7 +38,9 @@ Desktop packaging: `.\scripts\build-sidecar.ps1` builds the PyInstaller backend 
 
 ## Schema management
 
-There is no migrations system (no Alembic). Schema is created by `Base.metadata.create_all` plus a self-healing column-add pass in `app/db.py::_ensure_runtime_state_columns` — it inspects the live table via SQLAlchemy's `inspect()` and only emits `ALTER TABLE ... ADD COLUMN` for columns missing from an older DB. Each entry in `_RUNTIME_STATE_ADDED_COLUMNS` carries dialect-specific DDL so PostgreSQL and SQLite stay in sync. When you add a column to an existing table model, append a tuple to that list (or move the column model itself to satisfy `create_all` for fresh DBs).
+There is no migrations system (no Alembic). Schema is created by `Base.metadata.create_all` plus a self-healing column-add pass in `app/db.py::_ensure_added_columns` — it inspects the live table via SQLAlchemy's `inspect()` and only emits `ALTER TABLE ... ADD COLUMN` for columns missing from an older DB. Each entry in `_ADDED_COLUMNS` carries dialect-specific DDL so PostgreSQL and SQLite stay in sync. When you add a column to an existing table model, append a tuple to that list (or move the column model itself to satisfy `create_all` for fresh DBs).
+
+One-shot data migrations live beside the app (`migrate_personas.py`, `migrate_settings.py`, `migrate_api_models.py`) and record completion in `_migrations`. New data migrations should be idempotent and called from `create_schema`.
 
 Cross-dialect JSON columns use `JSONType = JSON().with_variant(JSONB(), "postgresql")` (defined in `app/models.py`) — PG users still get JSONB; SQLite gets the standard JSON type.
 
@@ -61,9 +63,15 @@ Two system roles run on a cadence rather than per-turn:
 
 Token accounting is intentionally crude — `estimate_tokens` is `len(text)//4`. Per-message and per-room caps live in `RoomRuntimeState.max_message_tokens` / `max_room_tokens`; a stream that would exceed the room cap mid-flight gets truncated with `truncated_reason="limit_exceeded"`.
 
+## API provider/model model
+
+The current API configuration is three-layered: user-facing `vendor`, LiteLLM `provider_slug`, and one or more `ApiModel` rows under each provider. Settings should point at `AppSettings.default_api_model_id`; persona templates and room persona instances can also carry `api_model_id`. `backing_model` and `api_provider_id` remain as legacy mirror/fallback fields, and route helpers keep them in sync when `api_model_id` is selected. New UI should prefer model selection over free-text model/provider pairs.
+
 ## Built-ins are content, not code paths
 
-`app/seed.py` defines all built-in personas, phase templates, debate formats, and recipes. They are inserted on first startup keyed by deterministic UUIDv5 ids (`builtin_id(kind, key)`), and `seed_builtins` only runs when the table is empty — there is no upsert. To change a built-in payload after the dev DB is seeded you have to either delete the row or change the seed key. Built-ins reference each other by these deterministic ids (e.g. format → phase template), so renaming a key is a breaking change.
+`app/seed.py` defines all built-in personas, phase templates, debate formats, and recipes. They are inserted on first startup keyed by deterministic UUIDv5 ids (`builtin_id(kind, key)`), and `seed_builtins` only seeds a template table when that table is empty — there is no upsert. To change a built-in payload after the dev DB is seeded you have to either delete the row/table or change the seed key. Built-ins reference each other by these deterministic ids (e.g. format → phase template), so renaming a key is a breaking change.
+
+Built-ins are read-only at the API layer. The product flow is duplicate-then-edit: template pages show editable instances by default, and the Add action copies from the immutable built-in library.
 
 ## Backend ↔ frontend contract
 
@@ -76,6 +84,8 @@ Single-process serve: when `frontend/dist/index.html` exists, `MAI_FRONTEND_DIST
 Tauri desktop shell: `frontend/src-tauri` creates the window manually after spawning the `mai-backend` sidecar on an ephemeral localhost port. It injects `window.__MAI_API_BASE__` before the SPA loads; `frontend/src/api.ts` must keep that value ahead of `VITE_API_BASE` and `/api`.
 
 Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory only holds primitive bits (`MarkdownBlock`, `StatusPill`).
+
+Frontend internationalization lives in `frontend/src/i18n.tsx` (`I18nProvider`, `useI18n`, `LanguageToggle`, `t`, `display`). User-visible strings and internal enum labels should go through i18n; user-authored room/template/message content should not be auto-translated.
 
 ## Trace + uploads
 

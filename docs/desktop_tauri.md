@@ -1,6 +1,6 @@
 # MAI 桌面壳安装与打包清单
 
-> 当前状态：Tauri v2 壳与 FastAPI PyInstaller sidecar 已接入，Windows NSIS 安装包已在本机完成构建验证；正式无窗口 sidecar 已通过 `/health` 运行时探活。
+> 当前状态：Tauri v2 壳与 FastAPI PyInstaller sidecar 已接入，Windows NSIS 安装包已完成构建验证；无窗口 sidecar 已通过 `/health` 运行时探活。
 
 ## 1. 你需要安装的东西
 
@@ -65,9 +65,9 @@ cd ..
 
 当前基线应为：
 
-- 后端测试：`27 passed`
+- 后端测试：通过。测试会调用真实 LLM，请先在 `backend/tests/.env.test` 写入 `OPENAI_API_KEY`
 - 前端构建：成功；Vite 可能提示大 chunk warning，这不是失败
-- Tauri 构建：成功生成 `frontend/src-tauri/target/release/bundle/nsis/MAI_0.1.0_x64-setup.exe`
+- Tauri 构建：成功生成 `frontend/src-tauri/target/release/bundle/nsis/` 下的 NSIS 安装包
 
 ## 3. 构建后端 sidecar
 
@@ -120,5 +120,6 @@ frontend/src-tauri/target/release/bundle/nsis/
 | `pnpm tauri` 不存在 | 在 `frontend/` 重新执行 `pnpm install` |
 | 找不到 `mai-backend-<triple>.exe` | 先运行 `.\scripts\build-sidecar.ps1 -TargetTriple x86_64-pc-windows-msvc` |
 | 桌面应用启动后白屏或 API 不通 | 检查 sidecar 是否启动；Tauri 壳会向前端注入 `window.__MAI_API_BASE__` 指向本地临时端口 |
+| 设置页提示未配置默认模型 | 打开 `模板 -> API 配置`，先新建 API 配置和模型，再回到 `设置` 选择默认模型 |
 | `ModuleNotFoundError: No module named 'app'` | 重新构建 sidecar；`mai_backend_main.py` 必须直接导入 `app.main`，`mai-backend.spec` 必须显式收集 `app.*` |
 | 提示 WebView2 缺失 | 安装 Microsoft Edge WebView2 Evergreen Runtime |

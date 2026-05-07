@@ -1,176 +1,155 @@
 # MAI - 多模型协作讨论平台
 
-This repository contains a v1 development implementation following the product and technical design documents in `docs/`.
+MAI 是一个本地优先的多模型协作讨论工具：用户创建讨论室，拉入多个 AI 人设，按阶段和赛制推进讨论，并由书记官、主持信号、裁决与子讨论机制沉淀可追溯结论。
 
-## Current Status
+当前形态已经从早期原型收敛为：
 
-The app currently runs as a FastAPI backend plus a Vite React frontend. All LLM calls go through LiteLLM — provide credentials via `backend/.env` (e.g. `OPENAI_API_KEY`) or by creating an ApiProvider in the Settings page and binding it to a persona.
+- FastAPI 单进程后端，默认 SQLite，本地文件即可运行；PostgreSQL 仍可通过 `DATABASE_URL` 启用。
+- Vite + React + TypeScript 前端，支持中英文切换、暗色模式、Markdown/KaTeX/Shiki 渲染。
+- Tauri v2 桌面壳，使用 PyInstaller sidecar 自动启动后端。
+- LiteLLM 统一模型调用。API 配置拆成三层：供应商 vendor、LiteLLM provider、具体 model。
+- 模板系统已稳定：内置模板只读；用户点击“添加”时从内置库复制一份可编辑实例；人设、阶段、赛制、配方页里的卡片都按可编辑实例管理。
 
-Recent support includes:
+## 快速开始
 
-- LiteLLM-backed streaming responses for any persona
-- structured tool-call outputs for scribe and facilitator roles
-- phase and ScribeState context injected into AI turns
-- facilitator signal cooldown plus a manual "ask facilitator" endpoint
-- autodrive after user-authored messages, including `mention_driven` @-mention resolution plus round-robin fallback
-- a three-column chat-first room UI with a right-side settings drawer
-- a Tauri v2 desktop shell that launches the FastAPI backend as a PyInstaller sidecar and builds an NSIS installer
-
-## Prerequisites
-
-- Python 3.12+ (verified on 3.13)
-- Node.js 20+ with `pnpm`
-- Optional desktop packaging: Rust/Cargo, Microsoft C++ Build Tools, and WebView2 Runtime. See `docs/desktop_tauri.md`.
-
-Default storage is a local SQLite file — no PostgreSQL needed. The file lands at:
-
-- Dev mode: `backend/mai.sqlite3`
-- Packaged mode (`MAI_PACKAGED=1` or PyInstaller-frozen): `%APPDATA%\MAI\mai.sqlite3` (Windows), `~/Library/Application Support/MAI/mai.sqlite3` (macOS), `${XDG_DATA_HOME:-~/.local/share}/MAI/mai.sqlite3` (Linux)
-
-To opt into PostgreSQL instead, uncomment `DATABASE_URL` in `backend/.env` (point it at e.g. `postgresql+asyncpg://mai:mai_dev_password@localhost:5432/mai`) and ensure the database exists:
-
-```bash
-sudo -u postgres psql
-CREATE USER mai WITH PASSWORD 'mai_dev_password';
-CREATE DATABASE mai OWNER mai;
-\q
-```
-
-## Local Development
-
-One-command Windows startup:
+Windows 一键开发启动：
 
 ```powershell
-.\scripts\dev.ps1
+.\scripts\dev.ps1 -SkipPostgres
 ```
 
-Backend:
+脚本会创建后端 `.venv`、安装依赖、初始化数据库、安装前端依赖，并分别启动后端和前端开发服务。
 
-```bash
+手动启动后端：
+
+```powershell
 cd backend
-python3.12 -m venv .venv
-source .venv/bin/activate
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env
+Copy-Item .env.example .env
 python -m app.init_db
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Frontend:
+手动启动前端：
 
-```bash
+```powershell
 cd frontend
 pnpm install
 pnpm dev --host 0.0.0.0 --port 5173
 ```
 
-Open the frontend at:
+打开：
 
 ```text
 http://localhost:5173
 ```
 
-The Vite dev server proxies `/api` to `http://127.0.0.1:8000`.
+开发模式下，Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 
-### Single-process serve (no Vite)
+## 配置模型
 
-After `pnpm build`, the FastAPI process can host the built SPA itself — useful for production deployment, packaging, or kicking the tires without two terminals:
+推荐通过 UI 配置，不再直接在人设里手写一个裸模型名。
 
-```bash
-cd frontend && pnpm build           # produces frontend/dist/
-cd ../backend && uvicorn app.main:app --host 127.0.0.1 --port 8000
-# open http://127.0.0.1:8000
+1. 打开 `模板 -> API 配置`。
+2. 新建 API 配置，填写：
+   - `供应商 vendor`：面向用户的归类，例如 OpenAI、Anthropic、OpenRouter、Local。
+   - `Provider`：LiteLLM 路由名，例如 `openai`、`anthropic`、`gemini`、`openrouter`。
+   - API Key 与可选 API Base。
+3. 在该 API 配置下添加一个或多个模型，填写显示名称和 LiteLLM 模型名，例如 `openai/gpt-4o-mini`。
+4. 打开 `设置`，选择默认模型。
+5. 在 `模板 -> 人设` 或房间成员编辑器中，为具体人设选择模型；留空则使用设置页默认模型。
+
+环境变量仍适合开发兜底：
+
+```text
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GEMINI_API_KEY=...
 ```
 
-When `frontend/dist/index.html` exists (or `MAI_FRONTEND_DIST` points at one), the backend mounts it at `/` with SPA fallback. The same backend strips `/api` from incoming paths so the frontend's existing `/api/...` calls work without any rebuild.
+未绑定模型的人设会优先使用设置页默认模型；旧的 `backing_model + api_provider_id` 字段仍保留用于兼容和迁移，但新 UI 以 `api_model_id` 为主。
 
-## LLM Configuration
+## 模板工作流
 
-All LLM traffic goes through LiteLLM. Two ways to provide credentials:
+`app/seed.py` 里定义的内置人设、阶段、赛制和配方是只读内容。
 
-1. Fill provider keys in `backend/.env` (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`). These act as defaults for any persona without a bound `ApiProvider`.
-2. Open Settings → API 配置, create an `ApiProvider` with the key, then bind it to one or more personas. Provider-bound credentials override the env defaults at call time.
+- 默认列表显示用户自己的可编辑实例。
+- 点击“添加”会打开内置库，从内置模板复制一份。
+- 复制出来的条目可修改、删除、导出。
+- 阶段的 `ordering_rule`、`allowed_speakers`、`exit_conditions` 等内部标记在 UI 中会显示为用户友好的中英文标签。
+- 模板支持 tag 过滤，赛制支持拖拽排序阶段。
 
-Built-in personas default to `openai/gpt-4o-mini`. Edit a persona to switch models — any LiteLLM-compatible name works (`openai/<model>`, `anthropic/<model>`, `gemini/<model>`, …).
+## 单进程托管
 
-Create a discussant persona via API:
+前端构建后，后端可以直接托管 SPA，不需要单独启动 Vite：
 
-```bash
-curl -X POST http://127.0.0.1:8000/templates/personas \
-  -H 'Content-Type: application/json' \
-  -d '{
-    "kind": "discussant",
-    "name": "Real Model Reviewer",
-    "description": "Concise technical reviewer.",
-    "backing_model": "openai/gpt-4o-mini",
-    "system_prompt": "You are a concise technical reviewer.",
-    "temperature": 0.4,
-    "tags": ["custom"]
-  }'
+```powershell
+cd frontend
+pnpm build
+cd ..\backend
+uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Then create a room with that persona selected from the UI or via `POST /rooms`.
+当 `frontend/dist/index.html` 存在、`MAI_FRONTEND_DIST` 指向构建目录，或 PyInstaller 包中存在 `frontend-dist` 时，`app.main` 会把前端挂载到 `/`，并把前端请求的 `/api/...` 重写到后端根路由。
 
-## Verification
+## 验证
 
-Backend tests:
+前端：
 
-```bash
-cd backend
-source .venv/bin/activate
-pytest -q
-```
-
-Tests hit real LLM endpoints — put your provider key in `backend/tests/.env.test` (gitignored). Without a token, pytest exits early with a clear message.
-
-Frontend build:
-
-```bash
+```powershell
 cd frontend
 pnpm build
 ```
 
-The frontend build currently emits a Vite chunk-size warning because the Markdown/KaTeX/Shiki bundle is large. It is not a build failure.
+Vite 可能提示 Markdown/KaTeX/Shiki 相关 chunk 较大，这是 warning，不是失败。
 
-## Packaging
+后端：
 
-Single-process bundle:
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+pytest -q
+```
+
+测试会调用真实 LLM。请在 `backend/tests/.env.test` 写入 `OPENAI_API_KEY`；缺少 key 时测试会直接给出清晰提示并退出。
+
+## 打包
+
+普通 release 包：
 
 ```powershell
 .\scripts\package.ps1 -Version v0.1.0
 ```
 
-The package is written under `release/`. GitHub Releases are generated by `.github/workflows/release.yml` when a `v*.*.*` tag is pushed.
-
-Desktop shell (Tauri):
+桌面安装包：
 
 ```powershell
 .\scripts\build-sidecar.ps1
 .\scripts\package-tauri.ps1
 ```
 
-The Tauri package uses the built React app plus a PyInstaller sidecar for the FastAPI backend. It requires Rust/Cargo, Node.js/pnpm, WebView2, the Microsoft C++ build tools, and the backend Python environment. Full setup steps live in `docs/desktop_tauri.md`. If the target triple cannot be detected automatically, pass it explicitly, for example:
+桌面打包需要 Rust/Cargo、Microsoft C++ Build Tools 和 WebView2 Runtime，详见 `docs/desktop_tauri.md`。
 
-```powershell
-.\scripts\package-tauri.ps1 -TargetTriple x86_64-pc-windows-msvc
-```
+## 运行时数据
 
-## Runtime Data
+默认 SQLite 与本地数据路径：
 
-Local runtime files are written under the backend working directory:
+- 开发模式：`backend/mai.sqlite3`
+- 打包模式：系统用户数据目录下的 `MAI/mai.sqlite3`
 
-- `trace_payloads/` stores JSON payloads referenced by `trace_events`
-- `uploads/` stores uploaded MD/TXT/PDF files
+上传和 trace：
 
-Both directories are ignored by Git.
+- 开发模式：`backend/uploads/`、`backend/trace_payloads/`
+- 打包模式：用户数据目录下的 `MAI/uploads/`、`MAI/trace_payloads/`
 
-## Common Issues
+这些运行时文件都被 Git 忽略。
 
-| Symptom | Check |
-|---|---|
-| `health` reports database failure | SQLite: parent directory of `mai.sqlite3` is writable. Postgres: service is running and `DATABASE_URL` matches the created user/database |
-| Provider authentication error | The matching provider API key is present in `backend/.env` (or in the bound `ApiProvider`) and the backend was restarted |
-| Browser cannot reach backend | Frontend is running on port 5173 and backend on port 8000, or `VITE_API_BASE` points to the deployed API |
-| Single-process serve returns API JSON for `/` | `frontend/dist/index.html` is missing — run `pnpm build` first, or set `MAI_FRONTEND_DIST` to an existing built dir |
-| Tauri packaging says `rustc` is missing | Install Rust/Cargo, reopen PowerShell, then run `rustc --version` |
-| Tauri packaging says `link.exe` is missing | Install Visual Studio Build Tools with the C++ desktop workload |
+## 文档
+
+- `docs/usage.md`：本地运行、模型配置、打包、安装与常见问题。
+- `docs/product_design.md`：稳定后的产品概念和边界。
+- `docs/technical_design.md`：当前架构、数据模型和前后端契约。
+- `docs/progress.md`：当前实现状态快照。
+- `docs/desktop_tauri.md`：桌面壳依赖与打包清单。
