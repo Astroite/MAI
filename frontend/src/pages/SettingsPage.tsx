@@ -14,38 +14,52 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="max-w-3xl">
+      <div>
         <h1 className="text-xl font-semibold">{t("settings.title")}</h1>
         <p className="mt-1 text-sm text-muted">{t("settings.subtitle")}</p>
       </div>
-      <DefaultApiSection />
-      <section className="panel max-w-3xl p-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="font-medium">{t("settings.backendStatus")}</div>
-            <div className="mt-1 text-sm text-muted">FastAPI · SQLite/PostgreSQL · LiteLLM</div>
-          </div>
-          <StatusPill tone={health.data?.status === "ok" ? "brand" : "danger"}>{health.data?.status ?? "checking"}</StatusPill>
-        </div>
-        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-          <div className="rounded-md border border-border p-3">
-            <dt className="label">{t("settings.database")}</dt>
-            <dd className="mt-1">{health.data?.database ?? "-"}</dd>
-          </div>
-          <div className="rounded-md border border-border p-3">
-            <dt className="label">{t("settings.setupReady")}</dt>
-            <dd className="mt-1">
-              {health.data?.setup_complete ? (
-                <span className="text-brand">{t("common.yes")}</span>
-              ) : (
-                <span className="text-danger">{t("settings.notReady")}</span>
-              )}
-            </dd>
-          </div>
-        </dl>
-      </section>
+      <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4 max-lg:grid-cols-1">
+        <DefaultApiSection />
+        <BackendStatusCard health={health.data} />
+      </div>
       <ApiProvidersView />
     </div>
+  );
+}
+
+function BackendStatusCard({
+  health
+}: {
+  health?: { status: string; database: string; setup_complete: boolean };
+}) {
+  const { t } = useI18n();
+
+  return (
+    <section className="panel p-4">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <div className="font-medium">{t("settings.backendStatus")}</div>
+          <div className="mt-1 text-sm text-muted">FastAPI · SQLite/PostgreSQL · LiteLLM</div>
+        </div>
+        <StatusPill tone={health?.status === "ok" ? "brand" : "danger"}>{health?.status ?? "checking"}</StatusPill>
+      </div>
+      <dl className="mt-4 space-y-3 text-sm">
+        <div className="rounded-md border border-border p-3">
+          <dt className="label">{t("settings.database")}</dt>
+          <dd className="mt-1 break-all">{health?.database ?? "-"}</dd>
+        </div>
+        <div className="rounded-md border border-border p-3">
+          <dt className="label">{t("settings.setupReady")}</dt>
+          <dd className="mt-1">
+            {health?.setup_complete ? (
+              <span className="text-brand">{t("common.yes")}</span>
+            ) : (
+              <span className="text-danger">{t("settings.notReady")}</span>
+            )}
+          </dd>
+        </div>
+      </dl>
+    </section>
   );
 }
 
@@ -116,8 +130,8 @@ function DefaultApiSection() {
         : t("api.statusUntested");
 
   return (
-    <section className="panel max-w-3xl p-4">
-      <div className="flex items-center justify-between">
+    <section className="panel p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="font-medium">{t("settings.defaultApi")}</div>
           <div className="mt-1 text-sm text-muted">
