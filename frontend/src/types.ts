@@ -8,6 +8,7 @@ export interface PersonaTemplate {
   description: string;
   backing_model: string;
   api_provider_id?: string | null;
+  api_model_id?: string | null;
   system_prompt: string;
   temperature: number;
   config: Record<string, unknown>;
@@ -28,6 +29,7 @@ export interface PersonaInstance {
   description: string;
   backing_model: string;
   api_provider_id?: string | null;
+  api_model_id?: string | null;
   system_prompt: string;
   temperature: number;
   config: Record<string, unknown>;
@@ -37,6 +39,7 @@ export interface PersonaInstance {
 export interface ApiProvider {
   id: string;
   name: string;
+  vendor: string;
   provider_slug: string;
   api_key_preview: string;
   has_api_key: boolean;
@@ -59,9 +62,26 @@ export interface ApiProviderTestResult {
   tested_at: string;
 }
 
+export interface ApiModel {
+  id: string;
+  api_provider_id: string;
+  display_name: string;
+  model_name: string;
+  enabled: boolean;
+  is_default: boolean;
+  context_window?: number | null;
+  tags: string[];
+  last_tested_ok?: boolean | null;
+  last_tested_at?: string | null;
+  last_tested_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface AppSettings {
   default_backing_model?: string | null;
   default_api_provider_id?: string | null;
+  default_api_model_id?: string | null;
   setup_complete: boolean;
   updated_at?: string | null;
 }
@@ -71,6 +91,7 @@ export interface PhaseTemplate {
   version: number;
   name: string;
   description: string;
+  declared_variables: Array<{ name: string; description: string; cardinality: "one" | "many"; required: boolean }>;
   allowed_speakers: Record<string, unknown>;
   ordering_rule: { type: string };
   exit_conditions: Array<Record<string, unknown>>;
@@ -99,6 +120,7 @@ export interface DebateFormat {
 
 export interface Recipe {
   id: string;
+  version: number;
   name: string;
   description: string;
   persona_ids: string[];

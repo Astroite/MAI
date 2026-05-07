@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Ban, Gavel, MessageSquarePlus, MoreHorizontal, UserRoundCheck } from "lucide-react";
 import { api } from "../../api";
+import { useI18n } from "../../i18n";
 
 type Mode = "normal" | "judge" | "dead_end" | "masquerade";
 
@@ -14,9 +15,10 @@ export function Composer({
   frozen: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { t, display } = useI18n();
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<Mode>("normal");
-  const [guestName, setGuestName] = useState("群友");
+  const [guestName, setGuestName] = useState(() => t("message.guest"));
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
@@ -34,7 +36,7 @@ export function Composer({
     mutationFn: async () => {
       if (mode === "judge") return api.verdict(roomId, content, true);
       if (mode === "dead_end") return api.verdict(roomId, content, false, { dead_end: true });
-      if (mode === "masquerade") return api.masquerade(roomId, guestName.trim() || "群友", content);
+      if (mode === "masquerade") return api.masquerade(roomId, guestName.trim() || t("message.guest"), content);
       return api.appendMessage(roomId, content);
     },
     onSuccess: () => {
@@ -54,12 +56,6 @@ export function Composer({
     }
   };
 
-  const modeLabel: Record<Mode, string> = {
-    normal: "普通发言",
-    judge: "裁决锁定",
-    dead_end: "标记死路",
-    masquerade: "群友发言"
-  };
   const modeIcon = (m: Mode) =>
     m === "judge" ? <Gavel size={14} /> : m === "dead_end" ? <Ban size={14} /> : m === "masquerade" ? <UserRoundCheck size={14} /> : <MessageSquarePlus size={14} />;
 
@@ -69,19 +65,19 @@ export function Composer({
         <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2 text-xs">
           <div className="flex items-center gap-2">
             {modeIcon(mode)}
-            <span>当前模式：{modeLabel[mode]}</span>
+            <span>{t("composer.mode", { mode: display("mode", mode) })}</span>
             {mode === "masquerade" && (
               <input
                 name="masquerade-guest-name"
                 className="input h-7 w-32 text-xs"
                 value={guestName}
                 onChange={(event) => setGuestName(event.target.value)}
-                placeholder="群友昵称"
+                placeholder={t("composer.guestName")}
               />
             )}
           </div>
           <button className="text-xs text-muted underline" type="button" onClick={() => setMode("normal")}>
-            取消
+            {t("common.cancel")}
           </button>
         </div>
       )}
@@ -92,7 +88,7 @@ export function Composer({
             className="btn h-9 w-9 px-0"
             onClick={() => setMenuOpen((open) => !open)}
             disabled={frozen}
-            title="更多模式"
+            title={t("composer.moreModes")}
           >
             <MoreHorizontal size={16} />
           </button>
@@ -104,7 +100,7 @@ export function Composer({
                   setMenuOpen(false);
                 }}
                 icon={<Gavel size={14} />}
-                label="裁决锁定"
+                label={t("composer.judge")}
               />
               <ModeOption
                 onClick={() => {
@@ -112,7 +108,7 @@ export function Composer({
                   setMenuOpen(false);
                 }}
                 icon={<Ban size={14} />}
-                label="标记死路"
+                label={t("composer.deadEnd")}
               />
               <ModeOption
                 onClick={() => {
@@ -120,7 +116,7 @@ export function Composer({
                   setMenuOpen(false);
                 }}
                 icon={<UserRoundCheck size={14} />}
-                label="群友发言"
+                label={t("composer.masquerade")}
               />
             </div>
           )}
@@ -133,7 +129,7 @@ export function Composer({
           onChange={(event) => setContent(event.target.value)}
           onKeyDown={handleKeyDown}
           rows={2}
-          placeholder={frozen ? "房间已冻结" : "输入消息（Enter 发送，Shift+Enter 换行）"}
+          placeholder={frozen ? t("composer.frozenPlaceholder") : t("composer.placeholder")}
           disabled={frozen}
         />
         <button
@@ -142,7 +138,7 @@ export function Composer({
           onClick={() => submit.mutate()}
         >
           {modeIcon(mode)}
-          发送
+          {t("composer.send")}
         </button>
       </div>
     </div>

@@ -5,18 +5,20 @@ import { Plus, RefreshCw } from "lucide-react";
 import { api } from "../api";
 import type { DebateFormat, PersonaTemplate } from "../types";
 import { StatusPill } from "../components/StatusPill";
+import { useI18n } from "../i18n";
 
 export function DashboardPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { t, display } = useI18n();
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
-  const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
+  const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
+  const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
   const personas = useQuery({
     queryKey: ["persona-templates", "discussant"],
     queryFn: () => api.personaTemplates("discussant")
   });
-  const [title, setTitle] = useState("方案评审讨论");
+  const [title, setTitle] = useState(() => t("dashboard.defaultTitle"));
   const solutionReview = formats.data?.find((item) => item.name === "方案评审")?.id;
   const defaultRecipe = recipes.data?.find((item) => item.name === "方案评审默认配方")?.id;
   const [recipeId, setRecipeId] = useState("__default__");
@@ -50,12 +52,12 @@ export function DashboardPage() {
       <section className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-xl font-semibold">讨论室</h1>
-            <p className="mt-1 text-sm text-muted">房间保存消息、phase 计划、书记官状态和副手信号。</p>
+            <h1 className="text-xl font-semibold">{t("dashboard.title")}</h1>
+            <p className="mt-1 text-sm text-muted">{t("dashboard.subtitle")}</p>
           </div>
           <button className="btn" onClick={() => void rooms.refetch()}>
             <RefreshCw size={16} />
-            刷新
+            {t("common.refresh")}
           </button>
         </div>
         <div className="panel divide-y divide-border">
@@ -65,25 +67,27 @@ export function DashboardPage() {
                 <div className="font-medium">{room.title}</div>
                 <div className="mt-1 text-xs text-muted">{new Date(room.created_at).toLocaleString()}</div>
               </div>
-              <StatusPill tone={room.status === "frozen" ? "danger" : "brand"}>{room.status}</StatusPill>
+              <StatusPill tone={room.status === "frozen" ? "danger" : "brand"}>
+                {display("roomStatus", room.status)}
+              </StatusPill>
             </Link>
           ))}
-          {!rooms.data?.length && <div className="px-4 py-10 text-center text-sm text-muted">暂无讨论室</div>}
+          {!rooms.data?.length && <div className="px-4 py-10 text-center text-sm text-muted">{t("dashboard.emptyRooms")}</div>}
         </div>
       </section>
 
       <aside className="panel p-4">
-        <h2 className="text-base font-semibold">新建房间</h2>
+        <h2 className="text-base font-semibold">{t("dashboard.newRoom")}</h2>
         <div className="mt-4 space-y-4">
           <label className="block">
-            <span className="label">标题</span>
+            <span className="label">{t("dashboard.roomTitle")}</span>
             <input name="room-title" className="input mt-1 w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
           </label>
           <label className="block">
-            <span className="label">配方</span>
+            <span className="label">{t("dashboard.recipe")}</span>
             <select name="room-recipe" className="input mt-1 w-full" value={recipeId} onChange={(event) => setRecipeId(event.target.value)}>
-              <option value="__default__">默认配方</option>
-              <option value="__none__">不使用配方</option>
+              <option value="__default__">{t("dashboard.defaultRecipe")}</option>
+              <option value="__none__">{t("dashboard.noRecipe")}</option>
               {(recipes.data ?? []).map((recipe) => (
                 <option key={recipe.id} value={recipe.id}>
                   {recipe.name}
@@ -92,7 +96,7 @@ export function DashboardPage() {
             </select>
           </label>
           <label className="block">
-            <span className="label">赛制</span>
+            <span className="label">{t("dashboard.format")}</span>
             <select
               name="room-format"
               className="input mt-1 w-full"
@@ -108,7 +112,7 @@ export function DashboardPage() {
             </select>
           </label>
           <div>
-            <div className="label">参辩人设</div>
+            <div className="label">{t("dashboard.personas")}</div>
             <div className="mt-2 max-h-72 space-y-2 overflow-auto pr-1">
               {(personas.data ?? []).map((persona: PersonaTemplate) => {
                 const checked = effectivePersonaIds.includes(persona.id);
@@ -135,7 +139,7 @@ export function DashboardPage() {
           </div>
           <button className="btn btn-primary w-full" onClick={() => createRoom.mutate()} disabled={createRoom.isPending || !title.trim()}>
             <Plus size={16} />
-            创建
+            {t("common.create")}
           </button>
         </div>
       </aside>

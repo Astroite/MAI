@@ -2,6 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { MessageSquarePlus } from "lucide-react";
 import { api } from "../../../api";
 import { StatusPill } from "../../../components/StatusPill";
+import { useI18n } from "../../../i18n";
 
 interface FacilitatorSignal {
   id: string;
@@ -20,6 +21,7 @@ export function FacilitatorPanel({
   signals: FacilitatorSignal[];
 }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const ask = useMutation({
     mutationFn: () => api.askFacilitator(roomId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
@@ -27,15 +29,15 @@ export function FacilitatorPanel({
   return (
     <section>
       <div className="flex items-center justify-between gap-2">
-        <div className="label">上帝副手</div>
+        <div className="label">{t("panel.facilitator.title")}</div>
         <button
           className="btn h-8 px-2 text-xs"
           disabled={frozen || ask.isPending}
           onClick={() => ask.mutate()}
-          title="请求当前讨论健康度"
+          title={t("panel.facilitator.askTitle")}
         >
           <MessageSquarePlus size={14} />
-          询问
+          {t("panel.facilitator.ask")}
         </button>
       </div>
       <div className="mt-3 space-y-2">
@@ -48,7 +50,7 @@ export function FacilitatorPanel({
             <div className="mt-1 text-xs text-muted">{signal.pacing_note}</div>
           </div>
         ))}
-        {!signals.length && <div className="text-sm text-muted">暂无信号</div>}
+        {!signals.length && <div className="text-sm text-muted">{t("panel.facilitator.empty")}</div>}
       </div>
     </section>
   );

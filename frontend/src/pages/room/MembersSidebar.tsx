@@ -1,9 +1,10 @@
-import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Save, Users, X } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
-import type { PersonaInstance } from "../../types";
+import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
+import { useI18n } from "../../i18n";
 
 function personaColor(id?: string | null): string {
   if (!id) return "rgb(var(--muted))";
@@ -20,6 +21,59 @@ function personaInitial(name?: string | null): string {
   return trimmed.slice(0, 2);
 }
 
+function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
+  if (!provider) return t("room.noProvider");
+  return `${provider.name} · ${provider.vendor || provider.provider_slug}`;
+}
+
+function apiModelOptionLabel(model: ApiModel, t: (key: string) => string): string {
+  const name =
+    model.display_name && model.display_name !== model.model_name
+      ? `${model.display_name} · ${model.model_name}`
+      : model.model_name;
+  const markers = [
+    model.is_default ? t("common.default") : "",
+    model.enabled ? "" : t("common.disabled")
+  ].filter(Boolean);
+  return markers.length ? `${name} (${markers.join(", ")})` : name;
+}
+
+function personaModelLabel(
+  persona: { api_model_id?: string | null; backing_model?: string | null },
+  modelById: Map<string, ApiModel>,
+  providerById: Map<string, ApiProvider>,
+  t: (key: string) => string
+): string {
+  if (persona.api_model_id) {
+    const model = modelById.get(persona.api_model_id);
+    if (model) return `${providerDisplayName(providerById.get(model.api_provider_id), t)} · ${apiModelOptionLabel(model, t)}`;
+  }
+  return persona.backing_model?.trim() || t("room.defaultModel");
+}
+
+function renderApiModelOptions(models: ApiModel[], providerById: Map<string, ApiProvider>, t: (key: string) => string) {
+  const groups = new Map<string, ApiModel[]>();
+  for (const model of models) {
+    groups.set(model.api_provider_id, [...(groups.get(model.api_provider_id) ?? []), model]);
+  }
+  return Array.from(groups.entries())
+    .sort(([left], [right]) =>
+      providerDisplayName(providerById.get(left), t).localeCompare(providerDisplayName(providerById.get(right), t))
+    )
+    .map(([providerId, group]) => (
+      <optgroup key={providerId} label={providerDisplayName(providerById.get(providerId), t)}>
+        {group
+          .slice()
+          .sort((left, right) => Number(right.is_default) - Number(left.is_default) || left.display_name.localeCompare(right.display_name))
+          .map((model) => (
+            <option key={model.id} value={model.id} disabled={!model.enabled}>
+              {apiModelOptionLabel(model, t)}
+            </option>
+          ))}
+      </optgroup>
+    ));
+}
+
 export function MembersSidebar({
   roomId,
   personas,
@@ -30,7 +84,18 @@ export function MembersSidebar({
   compact?: boolean;
 }) {
   const streaming = useUIStore((state) => state.streaming);
+  const { t } = useI18n();
+  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
+  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
   const [editingId, setEditingId] = useState<string | null>(null);
+  const providerById = useMemo(
+    () => new Map((providers.data ?? []).map((provider) => [provider.id, provider])),
+    [providers.data]
+  );
+  const modelById = useMemo(
+    () => new Map((models.data ?? []).map((model) => [model.id, model])),
+    [models.data]
+  );
   const activePersonaIds = new Set(
     Object.values(streaming)
       .filter((item) => item.roomId === roomId)
@@ -44,7 +109,7 @@ export function MembersSidebar({
       <div className="border-b border-border px-3 py-2">
         <div className="mb-1 flex items-center gap-1 text-xs font-semibold text-muted">
           <Users size={12} />
-          成员 · {discussants.length}
+          {t("room.members", { count: discussants.length })}
         </div>
         <div className="flex flex-wrap gap-1">
           {discussants.map((persona) => (
@@ -75,7 +140,7 @@ export function MembersSidebar({
   return (
     <aside className="flex h-full min-h-0 flex-col border-l border-border bg-panel">
       <div className="border-b border-border px-3 py-3 text-sm font-semibold">
-        成员 · {discussants.length}
+        {t("room.members", { count: discussants.length })}
       </div>
       <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
         {discussants.map((persona) => (
@@ -83,6 +148,10 @@ export function MembersSidebar({
             key={persona.id}
             roomId={roomId}
             persona={persona}
+            apiModels={models.data ?? []}
+            modelById={modelById}
+            providerById={providerById}
+            t={t}
             speaking={activePersonaIds.has(persona.id)}
             isEditing={editingId === persona.id}
             onEditOpen={() => setEditingId(persona.id)}
@@ -91,12 +160,16 @@ export function MembersSidebar({
         ))}
         {systemPersonas.length > 0 && (
           <>
-            <div className="mt-4 px-2 text-xs uppercase tracking-wider text-muted">系统角色</div>
+            <div className="mt-4 px-2 text-xs uppercase tracking-wider text-muted">{t("room.systemRoles")}</div>
             {systemPersonas.map((persona) => (
               <PersonaRow
                 key={persona.id}
                 roomId={roomId}
                 persona={persona}
+                apiModels={models.data ?? []}
+                modelById={modelById}
+                providerById={providerById}
+                t={t}
                 speaking={false}
                 muted
                 isEditing={editingId === persona.id}
@@ -114,6 +187,10 @@ export function MembersSidebar({
 function PersonaRow({
   roomId,
   persona,
+  apiModels,
+  modelById,
+  providerById,
+  t,
   speaking,
   muted = false,
   isEditing,
@@ -122,6 +199,10 @@ function PersonaRow({
 }: {
   roomId: string;
   persona: PersonaInstance;
+  apiModels: ApiModel[];
+  modelById: Map<string, ApiModel>;
+  providerById: Map<string, ApiProvider>;
+  t: (key: string, params?: Record<string, string | number | null | undefined>) => string;
   speaking: boolean;
   muted?: boolean;
   isEditing: boolean;
@@ -153,20 +234,27 @@ function PersonaRow({
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium">{persona.name}</div>
-          <div className="mt-0.5 truncate text-xs text-muted">{persona.backing_model}</div>
-          {speaking && <div className="mt-0.5 text-xs text-brand">正在发言</div>}
+          <div className="mt-0.5 truncate text-xs text-muted">{personaModelLabel(persona, modelById, providerById, t)}</div>
+          {speaking && <div className="mt-0.5 text-xs text-brand">{t("room.speaking")}</div>}
         </div>
         <button
           type="button"
           className="btn h-7 px-2 text-xs"
           onClick={isEditing ? onEditClose : onEditOpen}
-          aria-label={isEditing ? "关闭编辑" : "编辑人设"}
+          aria-label={isEditing ? t("room.closeEdit") : t("room.editPersona")}
         >
           {isEditing ? <X size={12} /> : <Pencil size={12} />}
         </button>
       </div>
       {isEditing && (
-        <PersonaInstanceEditor roomId={roomId} persona={persona} onClose={onEditClose} />
+        <PersonaInstanceEditor
+          roomId={roomId}
+          persona={persona}
+          apiModels={apiModels}
+          providerById={providerById}
+          t={t}
+          onClose={onEditClose}
+        />
       )}
     </div>
   );
@@ -175,24 +263,33 @@ function PersonaRow({
 function PersonaInstanceEditor({
   roomId,
   persona,
+  apiModels,
+  providerById,
+  t,
   onClose
 }: {
   roomId: string;
   persona: PersonaInstance;
+  apiModels: ApiModel[];
+  providerById: Map<string, ApiProvider>;
+  t: (key: string, params?: Record<string, string | number | null | undefined>) => string;
   onClose: () => void;
 }) {
   const queryClient = useQueryClient();
   const [description, setDescription] = useState(persona.description);
-  const [backingModel, setBackingModel] = useState(persona.backing_model);
+  const [apiModelId, setApiModelId] = useState(persona.api_model_id ?? "");
   const [temperature, setTemperature] = useState(persona.temperature);
   const [systemPrompt, setSystemPrompt] = useState(persona.system_prompt);
   const [error, setError] = useState<string | null>(null);
+  const selectedApiModel = apiModels.find((model) => model.id === apiModelId);
 
   const save = useMutation({
     mutationFn: () =>
       api.updatePersonaInstance(roomId, persona.id, {
         description,
-        backing_model: backingModel,
+        api_model_id: selectedApiModel?.id ?? null,
+        api_provider_id: selectedApiModel?.api_provider_id ?? null,
+        backing_model: selectedApiModel?.model_name ?? "",
         temperature,
         system_prompt: systemPrompt
       }),
@@ -200,7 +297,7 @@ function PersonaInstanceEditor({
       void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
       onClose();
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "保存失败")
+    onError: (err) => setError(err instanceof Error ? err.message : t("api.saveFailed"))
   });
 
   return (
@@ -211,9 +308,9 @@ function PersonaInstanceEditor({
         save.mutate();
       }}
     >
-      <p className="text-muted">仅本房间生效。名称和角色继承自模板，不可修改。</p>
+      <p className="text-muted">{t("room.instanceHelp")}</p>
       <label className="block">
-        <span className="label">描述</span>
+        <span className="label">{t("common.description")}</span>
         <textarea
           name="instance-description"
           className="textarea mt-1 w-full"
@@ -223,16 +320,19 @@ function PersonaInstanceEditor({
         />
       </label>
       <label className="block">
-        <span className="label">Backing model</span>
-        <input
-          name="instance-backing-model"
+        <span className="label">{t("common.model")}</span>
+        <select
+          name="instance-api-model"
           className="input mt-1 w-full"
-          value={backingModel}
-          onChange={(event) => setBackingModel(event.target.value)}
-        />
+          value={apiModelId}
+          onChange={(event) => setApiModelId(event.target.value)}
+        >
+          <option value="">{t("room.defaultModel")}</option>
+          {renderApiModelOptions(apiModels, providerById, t)}
+        </select>
       </label>
       <label className="block">
-        <span className="label">Temperature</span>
+        <span className="label">{t("templates.temperature")}</span>
         <input
           name="instance-temperature"
           className="input mt-1 w-full"
@@ -245,7 +345,7 @@ function PersonaInstanceEditor({
         />
       </label>
       <label className="block">
-        <span className="label">System prompt</span>
+        <span className="label">{t("templates.systemPrompt")}</span>
         <textarea
           name="instance-system-prompt"
           className="textarea mt-1 w-full font-mono"
@@ -257,10 +357,10 @@ function PersonaInstanceEditor({
       {error && <p className="text-danger">{error}</p>}
       <div className="flex gap-2">
         <button className="btn btn-primary h-8 px-2" type="submit" disabled={save.isPending}>
-          <Save size={12} /> 保存
+          <Save size={12} /> {t("common.save")}
         </button>
         <button className="btn h-8 px-2" type="button" onClick={onClose}>
-          取消
+          {t("common.cancel")}
         </button>
       </div>
     </form>

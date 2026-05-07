@@ -5,37 +5,40 @@ import { CheckCircle2, Save, Wifi, XCircle } from "lucide-react";
 import { api } from "../api";
 import { StatusPill } from "../components/StatusPill";
 import { ApiProvidersView } from "./TemplatesPage";
+import type { ApiModel, ApiProvider } from "../types";
+import { useI18n } from "../i18n";
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 10000 });
+  const { t } = useI18n();
 
   return (
     <div className="space-y-4">
       <div className="max-w-3xl">
-        <h1 className="text-xl font-semibold">设置</h1>
-        <p className="mt-1 text-sm text-muted">默认 API、本机后端状态、外部 LLM 凭据。房间 limit 仍在房间侧调整。</p>
+        <h1 className="text-xl font-semibold">{t("settings.title")}</h1>
+        <p className="mt-1 text-sm text-muted">{t("settings.subtitle")}</p>
       </div>
       <DefaultApiSection />
       <section className="panel max-w-3xl p-4">
         <div className="flex items-center justify-between">
           <div>
-            <div className="font-medium">后端状态</div>
+            <div className="font-medium">{t("settings.backendStatus")}</div>
             <div className="mt-1 text-sm text-muted">FastAPI · SQLite/PostgreSQL · LiteLLM</div>
           </div>
           <StatusPill tone={health.data?.status === "ok" ? "brand" : "danger"}>{health.data?.status ?? "checking"}</StatusPill>
         </div>
         <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-md border border-border p-3">
-            <dt className="label">数据库</dt>
+            <dt className="label">{t("settings.database")}</dt>
             <dd className="mt-1">{health.data?.database ?? "-"}</dd>
           </div>
           <div className="rounded-md border border-border p-3">
-            <dt className="label">配置就绪</dt>
+            <dt className="label">{t("settings.setupReady")}</dt>
             <dd className="mt-1">
               {health.data?.setup_complete ? (
-                <span className="text-brand">是</span>
+                <span className="text-brand">{t("common.yes")}</span>
               ) : (
-                <span className="text-danger">否（请先填写默认 API）</span>
+                <span className="text-danger">{t("settings.notReady")}</span>
               )}
             </dd>
           </div>
@@ -48,136 +51,113 @@ export function SettingsPage() {
 
 function DefaultApiSection() {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const settings = useQuery({ queryKey: ["app-settings"], queryFn: api.appSettings });
   const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
-  const [providerId, setProviderId] = useState("");
-  const [model, setModel] = useState("");
+  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
+  const [apiModelId, setApiModelId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
 
   // Sync local state with server-side once loaded.
   useEffect(() => {
     if (!settings.data) return;
-    setProviderId(settings.data.default_api_provider_id ?? "");
-    setModel(settings.data.default_backing_model ?? "");
-  }, [settings.data?.default_api_provider_id, settings.data?.default_backing_model]);
+    setApiModelId(settings.data.default_api_model_id ?? "");
+  }, [settings.data?.default_api_model_id]);
 
-  const selectedProvider = useMemo(
-    () => providers.data?.find((p) => p.id === providerId),
-    [providers.data, providerId]
+  const providerById = useMemo(
+    () => new Map((providers.data ?? []).map((provider) => [provider.id, provider])),
+    [providers.data]
+  );
+  const selectedModel = useMemo(
+    () => models.data?.find((model) => model.id === apiModelId),
+    [models.data, apiModelId]
   );
 
   const save = useMutation({
     mutationFn: () =>
       api.updateAppSettings({
-        default_api_provider_id: providerId || null,
-        default_backing_model: model.trim() || null
+        default_api_model_id: apiModelId || null
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["app-settings"] });
       void queryClient.invalidateQueries({ queryKey: ["health"] });
       setError(null);
     },
-    onError: (err) => setError(err instanceof Error ? err.message : "保存失败")
+    onError: (err) => setError(err instanceof Error ? err.message : t("api.saveFailed"))
   });
 
   const testConfig = useMutation({
-    mutationFn: () => api.testApiProvider(providerId, model.trim()),
+    mutationFn: () => api.testApiModel(apiModelId),
     onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
+      void queryClient.invalidateQueries({ queryKey: ["api-models"] });
       setTestResult({
         ok: result.ok,
         message: result.ok
-          ? "连接 OK，模型可用"
-          : result.error || "测试失败"
+          ? t("api.connectionOk")
+          : result.error || t("api.testFailed")
       });
     },
     onError: (err) =>
       setTestResult({
         ok: false,
-        message: err instanceof Error ? err.message : "测试请求失败"
+        message: err instanceof Error ? err.message : t("api.testRequestFailed")
       })
   });
 
-  const status = selectedProvider?.last_tested_ok;
+  const status = selectedModel?.last_tested_ok;
   const statusColor =
     status === true ? "bg-emerald-500" : status === false ? "bg-rose-500" : "bg-zinc-400";
   const statusLabel =
     status === true
-      ? `已测试 OK · ${selectedProvider?.last_tested_at?.slice(0, 19).replace("T", " ")}`
+      ? t("api.statusOk", { time: selectedModel?.last_tested_at?.slice(0, 19).replace("T", " ") })
       : status === false
-        ? `测试失败：${selectedProvider?.last_tested_error ?? "未知"}`
-        : "尚未测试";
-
-  // litellm needs a provider prefix in the model string. Warn the user when
-  // they enter a bare name — the runtime will reject it with "LLM Provider
-  // NOT provided" otherwise.
-  const trimmedModel = model.trim();
-  const missingPrefix = trimmedModel.length > 0 && !trimmedModel.includes("/");
+        ? t("api.statusFailed", { error: selectedModel?.last_tested_error ?? t("common.unknown") })
+        : t("api.statusUntested");
 
   return (
     <section className="panel max-w-3xl p-4">
       <div className="flex items-center justify-between">
         <div>
-          <div className="font-medium">默认 API</div>
+          <div className="font-medium">{t("settings.defaultApi")}</div>
           <div className="mt-1 text-sm text-muted">
-            所有未单独绑定 API 的人设都走这里。修改后立即生效，不需要改人设。
+            {t("settings.defaultApiHelp")}
           </div>
         </div>
       </div>
       <div className="mt-4 space-y-3">
         <label className="block">
-          <span className="label">API 提供商</span>
+          <span className="label">{t("settings.defaultModel")}</span>
           <select
-            name="default-api-provider"
+            name="default-api-model"
             className="input mt-1 w-full"
-            value={providerId}
+            value={apiModelId}
             onChange={(event) => {
-              setProviderId(event.target.value);
+              setApiModelId(event.target.value);
               setTestResult(null);
             }}
           >
-            <option value="">-- 选择一个 --</option>
-            {(providers.data ?? []).map((provider) => (
-              <option key={provider.id} value={provider.id}>
-                {provider.name} · {provider.provider_slug}
-              </option>
-            ))}
+            <option value="">{t("common.unset")}</option>
+            {renderSettingsModelOptions(models.data ?? [], providerById, t)}
           </select>
-          {(providers.data?.length ?? 0) === 0 && (
+          {(models.data?.length ?? 0) === 0 && (
             <p className="mt-1 text-xs text-muted">
-              还没有 API 提供商，<NavLink className="text-brand underline" to="/templates/api">前往新增</NavLink>。
+              {t("settings.noModelGoAdd")} <NavLink className="text-brand underline" to="/templates/api">{t("common.add")}</NavLink>
             </p>
           )}
-          {providerId && (
+          {apiModelId && (
             <div className="mt-2 flex items-center gap-2 text-xs text-muted">
               <span className={`inline-block h-2 w-2 rounded-full ${statusColor}`} aria-hidden="true" />
               <span>{statusLabel}</span>
             </div>
           )}
         </label>
-        <label className="block">
-          <span className="label">默认模型名</span>
-          <input
-            name="default-backing-model"
-            className="input mt-1 w-full"
-            value={model}
-            onChange={(event) => {
-              setModel(event.target.value);
-              setTestResult(null);
-            }}
-            placeholder="openai/gpt-4o-mini"
-          />
-          <p className="mt-1 text-xs text-muted">
-            发往 litellm 的 model 字符串。<strong>OpenAI 兼容代理必须加 <code>openai/</code> 前缀</strong>——
-            它告诉 litellm 用什么 API 格式（仅 <code>openai/</code>、<code>anthropic/</code>、<code>gemini/</code> 等已知 provider 才能识别）。
-          </p>
-          {missingPrefix && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
-              ⚠ 看起来缺少 provider 前缀，建议改成 <code>openai/{trimmedModel}</code>（如果你的代理是 OpenAI 兼容）
-            </p>
-          )}
-        </label>
+        {selectedModel && (
+          <div className="rounded-md border border-border bg-surface p-3 text-xs text-muted">
+            <div className="font-medium text-foreground">{settingsModelLabel(selectedModel, providerById.get(selectedModel.api_provider_id), t)}</div>
+            <div className="mt-1 font-mono">{selectedModel.model_name}</div>
+          </div>
+        )}
         {error && <p className="text-xs text-danger">{error}</p>}
         {testResult && (
           <div
@@ -195,23 +175,71 @@ function DefaultApiSection() {
           <button
             className="btn btn-primary flex-1"
             onClick={() => save.mutate()}
-            disabled={save.isPending || !providerId || !model.trim()}
+            disabled={save.isPending}
           >
             <Save size={14} />
-            保存
+            {t("common.save")}
           </button>
           <button
             className="btn flex-1"
             type="button"
             onClick={() => testConfig.mutate()}
-            disabled={testConfig.isPending || !providerId || !model.trim()}
-            title="发一条 max_tokens=1 的 ping 走全链路"
+            disabled={testConfig.isPending || !apiModelId}
+            title={t("settings.testConfigTitle")}
           >
             <Wifi size={14} className={testConfig.isPending ? "animate-pulse" : ""} />
-            {testConfig.isPending ? "测试中…" : "测试配置"}
+            {testConfig.isPending ? t("common.testing") : t("settings.testConfig")}
           </button>
         </div>
       </div>
     </section>
   );
+}
+
+function settingsProviderName(provider: ApiProvider | undefined, t: (key: string) => string): string {
+  if (!provider) return t("room.noProvider");
+  return `${provider.name} · ${provider.vendor || provider.provider_slug}`;
+}
+
+function settingsModelOptionLabel(model: ApiModel, t: (key: string) => string): string {
+  const label =
+    model.display_name && model.display_name !== model.model_name
+      ? `${model.display_name} · ${model.model_name}`
+      : model.model_name;
+  const markers = [
+    model.is_default ? t("api.providerDefault") : "",
+    model.enabled ? "" : t("common.disabled")
+  ].filter(Boolean);
+  return markers.length ? `${label} (${markers.join(", ")})` : label;
+}
+
+function settingsModelLabel(model: ApiModel, provider: ApiProvider | undefined, t: (key: string) => string): string {
+  return `${settingsProviderName(provider, t)} · ${settingsModelOptionLabel(model, t)}`;
+}
+
+function renderSettingsModelOptions(
+  models: ApiModel[],
+  providerById: Map<string, ApiProvider>,
+  t: (key: string) => string
+) {
+  const groups = new Map<string, ApiModel[]>();
+  for (const model of models) {
+    groups.set(model.api_provider_id, [...(groups.get(model.api_provider_id) ?? []), model]);
+  }
+  return Array.from(groups.entries())
+    .sort(([left], [right]) =>
+      settingsProviderName(providerById.get(left), t).localeCompare(settingsProviderName(providerById.get(right), t))
+    )
+    .map(([providerId, group]) => (
+      <optgroup key={providerId} label={settingsProviderName(providerById.get(providerId), t)}>
+        {group
+          .slice()
+          .sort((left, right) => Number(right.is_default) - Number(left.is_default) || left.display_name.localeCompare(right.display_name))
+          .map((model) => (
+            <option key={model.id} value={model.id} disabled={!model.enabled}>
+              {settingsModelOptionLabel(model, t)}
+            </option>
+          ))}
+      </optgroup>
+    ));
 }

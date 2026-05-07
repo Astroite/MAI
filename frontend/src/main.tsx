@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import "katex/dist/katex.min.css";
 import "./styles.css";
 import { App } from "./App";
+import { I18nProvider } from "./i18n";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -19,7 +20,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <App />
+        <I18nProvider>
+          <App />
+        </I18nProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>

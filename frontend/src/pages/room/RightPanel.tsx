@@ -10,21 +10,23 @@ import { FacilitatorPanel } from "./panels/FacilitatorPanel";
 import { DecisionsPanel } from "./panels/DecisionsPanel";
 import { UploadPanel } from "./panels/UploadPanel";
 import { SubroomPanel } from "./panels/SubroomPanel";
+import { useI18n } from "../../i18n";
 
 const TABS = [
-  { key: "phase", label: "阶段", icon: Layers },
-  { key: "scribe", label: "书记", icon: BookOpen },
-  { key: "facilitator", label: "主持", icon: Shield },
-  { key: "decisions", label: "决议", icon: Scale },
-  { key: "limits", label: "限额", icon: Settings2 },
-  { key: "upload", label: "文档", icon: FileText },
-  { key: "subroom", label: "子房间", icon: GitBranchPlus }
+  { key: "phase", labelKey: "room.panel.phase", icon: Layers },
+  { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen },
+  { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield },
+  { key: "decisions", labelKey: "room.panel.decisions", icon: Scale },
+  { key: "limits", labelKey: "room.panel.limits", icon: Settings2 },
+  { key: "upload", labelKey: "room.panel.upload", icon: FileText },
+  { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus }
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
 
 export function RightPanel({ state, childRooms }: { state: RoomState; childRooms: Room[] }) {
   const [params, setParams] = useSearchParams();
+  const { t } = useI18n();
   const panelParam = params.get("panel");
   const tab: TabKey | null = useMemo(() => {
     const candidate = panelParam as TabKey | null;
@@ -52,6 +54,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
       <nav className="flex flex-wrap items-center gap-0.5 border-b border-border bg-surface px-1.5 py-1.5">
         {TABS.map((entry) => {
           const Icon = entry.icon;
+          const label = t(entry.labelKey);
           return (
             <button
               key={entry.key}
@@ -60,10 +63,10 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
                 tab === entry.key ? "bg-brand text-white" : "text-muted hover:bg-panel"
               }`}
               onClick={() => setTab(entry.key)}
-              title={entry.label}
+              title={label}
             >
               <Icon size={12} />
-              {entry.label}
+              {label}
             </button>
           );
         })}
@@ -99,7 +102,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
         )}
         {!tab && (
           <div className="flex h-full items-center justify-center text-xs text-muted">
-            选择上方标签查看设置
+            {t("room.panel.empty")}
           </div>
         )}
       </div>

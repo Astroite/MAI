@@ -4,6 +4,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { GitBranchPlus, Merge } from "lucide-react";
 import { api } from "../../../api";
 import type { Room } from "../../../types";
+import { useI18n } from "../../../i18n";
 
 export function SubroomPanel({
   roomId,
@@ -22,7 +23,8 @@ export function SubroomPanel({
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [subroomTitle, setSubroomTitle] = useState(`子讨论：${title}`);
+  const { t, display } = useI18n();
+  const [subroomTitle, setSubroomTitle] = useState(`${t("room.childRoom")}: ${title}`);
   const [conclusion, setConclusion] = useState("");
   const [keyReasoning, setKeyReasoning] = useState("");
   const [unresolved, setUnresolved] = useState("");
@@ -65,10 +67,10 @@ export function SubroomPanel({
   if (parentRoomId) {
     return (
       <section>
-        <div className="label">合并回父讨论</div>
+        <div className="label">{t("panel.subroom.merge")}</div>
         <div className="mt-3 space-y-3">
           <label className="block">
-            <span className="text-xs text-muted">结论</span>
+            <span className="text-xs text-muted">{t("panel.subroom.conclusion")}</span>
             <textarea
               name="merge-conclusion"
               className="textarea mt-1 w-full"
@@ -77,7 +79,7 @@ export function SubroomPanel({
             />
           </label>
           <label className="block">
-            <span className="text-xs text-muted">关键推理，每行一条</span>
+            <span className="text-xs text-muted">{t("panel.subroom.keyReasoning")}</span>
             <textarea
               name="merge-key-reasoning"
               className="textarea mt-1 w-full"
@@ -86,7 +88,7 @@ export function SubroomPanel({
             />
           </label>
           <label className="block">
-            <span className="text-xs text-muted">未解决问题，每行一条</span>
+            <span className="text-xs text-muted">{t("panel.subroom.unresolved")}</span>
             <textarea
               name="merge-unresolved"
               className="textarea mt-1 w-full"
@@ -100,7 +102,7 @@ export function SubroomPanel({
             onClick={() => merge.mutate()}
           >
             <Merge size={16} />
-            合并
+            {t("panel.subroom.submitMerge")}
           </button>
         </div>
       </section>
@@ -109,7 +111,7 @@ export function SubroomPanel({
 
   return (
     <section>
-      <div className="label">子讨论</div>
+      <div className="label">{t("panel.subroom.title")}</div>
       <div className="mt-3 space-y-2">
         {childRooms.map((room) => (
           <Link
@@ -118,10 +120,10 @@ export function SubroomPanel({
             to={`/rooms/${roomId}/sub/${room.id}`}
           >
             <span className="font-medium">{room.title}</span>
-            <span className="mt-0.5 block text-xs text-muted">{room.status}</span>
+            <span className="mt-0.5 block text-xs text-muted">{display("roomStatus", room.status)}</span>
           </Link>
         ))}
-        {!childRooms.length && <div className="text-sm text-muted">暂无子讨论</div>}
+        {!childRooms.length && <div className="text-sm text-muted">{t("panel.subroom.empty")}</div>}
       </div>
       <div className="mt-4 space-y-2">
         <input
@@ -132,7 +134,7 @@ export function SubroomPanel({
         />
         <button className="btn w-full" disabled={!subroomTitle.trim() || create.isPending} onClick={() => create.mutate()}>
           <GitBranchPlus size={16} />
-          开子讨论
+          {t("panel.subroom.open")}
         </button>
       </div>
     </section>

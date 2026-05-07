@@ -9,15 +9,16 @@ import { FacilitatorPanel } from "./panels/FacilitatorPanel";
 import { DecisionsPanel } from "./panels/DecisionsPanel";
 import { UploadPanel } from "./panels/UploadPanel";
 import { SubroomPanel } from "./panels/SubroomPanel";
+import { useI18n } from "../../i18n";
 
 const TABS = [
-  { key: "phase", label: "阶段" },
-  { key: "limits", label: "限额" },
-  { key: "scribe", label: "书记" },
-  { key: "facilitator", label: "主持" },
-  { key: "decisions", label: "决议" },
-  { key: "upload", label: "文档" },
-  { key: "subroom", label: "子房间" }
+  { key: "phase", labelKey: "room.panel.phase" },
+  { key: "limits", labelKey: "room.panel.limits" },
+  { key: "scribe", labelKey: "room.panel.scribe" },
+  { key: "facilitator", labelKey: "room.panel.facilitator" },
+  { key: "decisions", labelKey: "room.panel.decisions" },
+  { key: "upload", labelKey: "room.panel.upload" },
+  { key: "subroom", labelKey: "room.panel.subroom" }
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -30,6 +31,7 @@ export function RoomSettingsDrawer({
   childRooms: Room[];
 }) {
   const [params, setParams] = useSearchParams();
+  const { t } = useI18n();
   const settingsParam = params.get("settings");
   const open = settingsParam !== null;
   const tab: TabKey = useMemo(() => {
@@ -72,8 +74,8 @@ export function RoomSettingsDrawer({
       <div className="flex-1 bg-black/40" onClick={close} />
       <div className="flex h-full w-[480px] max-w-full flex-col border-l border-border bg-panel shadow-soft drawer-enter">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <div className="text-sm font-semibold">房间设置</div>
-          <button className="btn h-8 w-8 px-0" type="button" onClick={close} title="关闭">
+          <div className="text-sm font-semibold">{t("drawer.title")}</div>
+          <button className="btn h-8 w-8 px-0" type="button" onClick={close} title={t("common.close")}>
             <X size={16} />
           </button>
         </div>
@@ -87,7 +89,7 @@ export function RoomSettingsDrawer({
               }`}
               onClick={() => setTab(entry.key)}
             >
-              {entry.label}
+              {t(entry.labelKey)}
             </button>
           ))}
         </nav>

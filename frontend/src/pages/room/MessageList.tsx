@@ -6,6 +6,7 @@ import { useUIStore } from "../../store";
 import type { Message, PersonaInstance } from "../../types";
 import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
+import { useI18n } from "../../i18n";
 
 function personaColor(id?: string | null): string {
   if (!id) return "rgb(var(--muted))";
@@ -34,6 +35,7 @@ export function MessageList({
   personas: PersonaInstance[];
 }) {
   const streaming = useUIStore((state) => state.streaming);
+  const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const personaById = useMemo(() => new Map(personas.map((persona) => [persona.id, persona])), [personas]);
   const revokedMessageIds = useMemo(
@@ -79,7 +81,9 @@ export function MessageList({
               side="left"
               avatar={{ label: personaInitial(persona?.name), color: personaColor(persona?.id) }}
             >
-              <div className="text-xs font-medium text-brand">{persona?.name ?? "AI"} 正在发言…</div>
+              <div className="text-xs font-medium text-brand">
+                {t("message.streaming", { name: persona?.name ?? "AI" })}
+              </div>
               <div className="mt-1">
                 <MarkdownBlock content={item.text} />
               </div>
@@ -88,7 +92,7 @@ export function MessageList({
         })}
         {!messages.length && !streamed.length && (
           <div className="mt-12 text-center text-sm text-muted">
-            还没有消息，下面发条消息开始讨论吧。
+            {t("message.empty")}
           </div>
         )}
       </div>
@@ -110,9 +114,10 @@ function MessageRow({
   revoked: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { t, display } = useI18n();
   const revoke = useMutation({
     mutationFn: () =>
-      api.verdict(roomId, `撤销裁决：${message.content}`, false, { revoke_message_id: message.id }),
+      api.verdict(roomId, t("message.revokeVerdict", { content: message.content }), false, { revoke_message_id: message.id }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
   });
 
@@ -123,7 +128,7 @@ function MessageRow({
     message.author_actual === "system"
   ) {
     const label =
-      message.message_type === "dead_end" ? `死路：${message.content}` : message.content;
+      message.message_type === "dead_end" ? t("message.deadEndPrefix", { content: message.content }) : message.content;
     return (
       <div className="my-1 flex items-center justify-center gap-2 text-xs text-muted">
         <div className="h-px flex-1 bg-border" />
@@ -135,9 +140,9 @@ function MessageRow({
 
   const isUser = message.author_actual === "user" || message.author_actual === "user_as_judge";
   const side: "left" | "right" = isUser ? "right" : "left";
-  const masqueradeName = message.user_masquerade_name || persona?.name || "群友";
+  const masqueradeName = message.user_masquerade_name || persona?.name || t("message.guest");
   const avatar = isUser
-    ? { label: message.author_actual === "user_as_judge" ? "裁" : "我", color: "rgb(var(--accent))" }
+    ? { label: message.author_actual === "user_as_judge" ? t("message.judgeShort") : t("message.me"), color: "rgb(var(--accent))" }
     : {
         label: personaInitial(masqueradeName),
         color: personaColor(persona?.id ?? message.user_masquerade_name)
@@ -145,9 +150,9 @@ function MessageRow({
 
   const authorName =
     message.author_actual === "user"
-      ? "我"
+      ? t("message.me")
       : message.author_actual === "user_as_judge"
-        ? "裁决者"
+        ? t("message.judge")
         : message.author_actual === "user_as_persona"
           ? masqueradeName
           : persona?.name ?? "AI";
@@ -164,23 +169,23 @@ function MessageRow({
         <span className="font-semibold">{authorName}</span>
         {message.message_type !== "speech" && (
           <StatusPill tone={message.message_type === "facilitator_signal" ? "accent" : "neutral"}>
-            {message.message_type}
+            {display("messageType", message.message_type)}
           </StatusPill>
         )}
         {message.author_actual === "user_as_persona" && (
-          <StatusPill tone="brand">{message.user_revealed_at ? "已揭示" : "群友"}</StatusPill>
+          <StatusPill tone="brand">{message.user_revealed_at ? t("message.revealed") : t("message.guest")}</StatusPill>
         )}
-        {revoked && <StatusPill tone="danger">已撤销</StatusPill>}
-        {message.truncated_reason && <StatusPill tone="danger">{message.truncated_reason}</StatusPill>}
+        {revoked && <StatusPill tone="danger">{t("message.revoked")}</StatusPill>}
+        {message.truncated_reason && <StatusPill tone="danger">{display("truncatedReason", message.truncated_reason)}</StatusPill>}
         {message.message_type === "verdict" && message.author_actual === "user_as_judge" && !revoked && (
           <button
             className="btn h-7 px-2 text-xs"
             disabled={frozen || revoke.isPending}
             onClick={() => revoke.mutate()}
-            title="撤销裁决"
+            title={t("message.revokeTitle")}
           >
             <RotateCcw size={13} />
-            撤销
+            {t("message.revoke")}
           </button>
         )}
       </div>

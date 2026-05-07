@@ -94,6 +94,54 @@ def test_update_persona_and_format_templates(client):
     assert format_payload["phase_sequence"][0]["phase_template_id"] == phases[1]["id"]
 
 
+def test_builtin_library_duplicate_filter_and_delete(client):
+    builtin_personas = client.get("/templates/personas?builtin=true").json()
+    assert builtin_personas
+    assert all(item["is_builtin"] for item in builtin_personas)
+    editable_personas = client.get("/templates/personas?builtin=false").json()
+    assert all(not item["is_builtin"] for item in editable_personas)
+
+    builtin_persona = builtin_personas[0]
+    rejected_persona = client.patch(
+        f"/templates/personas/{builtin_persona['id']}",
+        json={"name": "should not mutate builtin"},
+    )
+    assert rejected_persona.status_code == 403
+    persona_copy = client.post(f"/templates/personas/{builtin_persona['id']}/duplicate").json()
+    assert persona_copy["is_builtin"] is False
+    assert persona_copy["forked_from_id"] == builtin_persona["id"]
+    assert client.delete(f"/templates/personas/{persona_copy['id']}").status_code == 200
+
+    builtin_phase = client.get("/templates/phases?builtin=true").json()[0]
+    rejected_phase = client.patch(
+        f"/templates/phases/{builtin_phase['id']}",
+        json={"name": "should not mutate builtin"},
+    )
+    assert rejected_phase.status_code == 403
+    phase_copy = client.post(f"/templates/phases/{builtin_phase['id']}/duplicate").json()
+    edited_phase = client.patch(
+        f"/templates/phases/{phase_copy['id']}",
+        json={"name": "pytest editable phase copy"},
+    )
+    assert edited_phase.status_code == 200
+    assert edited_phase.json()["version"] == 2
+    assert client.delete(f"/templates/phases/{phase_copy['id']}").status_code == 200
+
+    builtin_format = client.get("/templates/formats?builtin=true").json()[0]
+    assert client.patch(f"/templates/formats/{builtin_format['id']}", json={"name": "nope"}).status_code == 403
+    format_copy = client.post(f"/templates/formats/{builtin_format['id']}/duplicate").json()
+    assert format_copy["is_builtin"] is False
+    assert format_copy["forked_from_id"] == builtin_format["id"]
+    assert client.delete(f"/templates/formats/{format_copy['id']}").status_code == 200
+
+    builtin_recipe = client.get("/templates/recipes?builtin=true").json()[0]
+    assert client.patch(f"/templates/recipes/{builtin_recipe['id']}", json={"name": "nope"}).status_code == 403
+    recipe_copy = client.post(f"/templates/recipes/{builtin_recipe['id']}/duplicate").json()
+    assert recipe_copy["is_builtin"] is False
+    assert recipe_copy["forked_from_id"] == builtin_recipe["id"]
+    assert client.delete(f"/templates/recipes/{recipe_copy['id']}").status_code == 200
+
+
 def test_api_provider_crud_and_persona_link(client):
     created = client.post(
         "/templates/api-providers",
@@ -154,8 +202,92 @@ def test_api_provider_crud_and_persona_link(client):
         row for row in client.get("/templates/personas").json() if row["id"] == persona.json()["id"]
     )
     assert refreshed["api_provider_id"] is None
+    assert refreshed["api_model_id"] is None
+    assert refreshed["backing_model"] == ""
 
     assert client.get(f"/templates/api-providers/{provider_id}").status_code == 404
+
+
+def test_api_models_drive_settings_and_persona_snapshots(client):
+    provider = client.post(
+        "/templates/api-providers",
+        json={
+            "name": "pytest model provider",
+            "vendor": "openai",
+            "provider_slug": "openai",
+            "api_key": "sk-model-test",
+        },
+    ).json()
+    provider_id = provider["id"]
+
+    created_model = client.post(
+        "/templates/api-models",
+        json={
+            "api_provider_id": provider_id,
+            "display_name": "GPT 4o mini",
+            "model_name": "openai/gpt-4o-mini",
+            "is_default": True,
+            "tags": ["pytest", "fast"],
+        },
+    )
+    assert created_model.status_code == 200
+    api_model = created_model.json()
+    assert api_model["api_provider_id"] == provider_id
+    assert api_model["enabled"] is True
+
+    settings = client.patch("/settings", json={"default_api_model_id": api_model["id"]})
+    assert settings.status_code == 200
+    settings_payload = settings.json()
+    assert settings_payload["default_api_model_id"] == api_model["id"]
+    assert settings_payload["default_api_provider_id"] == provider_id
+    assert settings_payload["default_backing_model"] == "openai/gpt-4o-mini"
+
+    persona = client.post(
+        "/templates/personas",
+        json={
+            "kind": "discussant",
+            "name": "pytest api model persona",
+            "description": "",
+            "api_model_id": api_model["id"],
+            "backing_model": "",
+            "system_prompt": "test",
+            "temperature": 0.4,
+            "config": {},
+            "tags": ["pytest"],
+        },
+    )
+    assert persona.status_code == 200
+    persona_payload = persona.json()
+    assert persona_payload["api_model_id"] == api_model["id"]
+    assert persona_payload["api_provider_id"] == provider_id
+    assert persona_payload["backing_model"] == "openai/gpt-4o-mini"
+
+    updated_model = client.patch(
+        f"/templates/api-models/{api_model['id']}",
+        json={"display_name": "GPT 4o", "model_name": "openai/gpt-4o"},
+    )
+    assert updated_model.status_code == 200
+    assert updated_model.json()["model_name"] == "openai/gpt-4o"
+
+    refreshed_persona = next(
+        row for row in client.get("/templates/personas?builtin=false").json() if row["id"] == persona_payload["id"]
+    )
+    assert refreshed_persona["backing_model"] == "openai/gpt-4o"
+    refreshed_settings = client.get("/settings").json()
+    assert refreshed_settings["default_backing_model"] == "openai/gpt-4o"
+
+    deleted_model = client.delete(f"/templates/api-models/{api_model['id']}")
+    assert deleted_model.status_code == 200
+    cleared_persona = next(
+        row for row in client.get("/templates/personas?builtin=false").json() if row["id"] == persona_payload["id"]
+    )
+    assert cleared_persona["api_model_id"] is None
+    assert cleared_persona["api_provider_id"] is None
+    assert cleared_persona["backing_model"] == ""
+    cleared_settings = client.get("/settings").json()
+    assert cleared_settings["default_api_model_id"] is None
+    assert cleared_settings["default_api_provider_id"] is None
+    assert cleared_settings["default_backing_model"] is None
 
 
 def test_api_provider_credentials_reach_llm_adapter(client, review_format, instance_for_template, monkeypatch):

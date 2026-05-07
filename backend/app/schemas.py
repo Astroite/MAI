@@ -140,6 +140,7 @@ class PersonaOut(APIModel):
     description: str
     backing_model: str
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str
     temperature: float
     config: dict[str, Any] = Field(default_factory=dict)
@@ -154,6 +155,7 @@ class PersonaCreate(APIModel):
     description: str = ""
     backing_model: str = "openai/gpt-4o-mini"
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str
     temperature: float = 0.4
     config: dict[str, Any] = Field(default_factory=dict)
@@ -166,6 +168,7 @@ class PersonaUpdate(APIModel):
     description: str | None = None
     backing_model: str | None = None
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
     config: dict[str, Any] | None = None
@@ -189,6 +192,7 @@ class PersonaTemplateOut(APIModel):
     description: str
     backing_model: str
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str
     temperature: float
     config: dict[str, Any] = Field(default_factory=dict)
@@ -203,6 +207,7 @@ class PersonaTemplateCreate(APIModel):
     description: str = ""
     backing_model: str = "openai/gpt-4o-mini"
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str
     temperature: float = 0.4
     config: dict[str, Any] = Field(default_factory=dict)
@@ -217,6 +222,7 @@ class PersonaTemplateUpdate(APIModel):
     description: str | None = None
     backing_model: str | None = None
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
     config: dict[str, Any] | None = None
@@ -234,6 +240,7 @@ class PersonaInstanceOut(APIModel):
     description: str
     backing_model: str
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str
     temperature: float
     config: dict[str, Any] = Field(default_factory=dict)
@@ -251,6 +258,7 @@ class PersonaInstanceUpdate(APIModel):
     description: str | None = None
     backing_model: str | None = None
     api_provider_id: str | None = None
+    api_model_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
     config: dict[str, Any] | None = None
@@ -274,6 +282,7 @@ def _mask_api_key(key: str) -> str:
 class ApiProviderOut(APIModel):
     id: str
     name: str
+    vendor: str = "custom"
     provider_slug: str
     api_key_preview: str
     has_api_key: bool
@@ -289,6 +298,7 @@ class ApiProviderOut(APIModel):
         return cls(
             id=provider.id,
             name=provider.name,
+            vendor=getattr(provider, "vendor", None) or provider.provider_slug or "custom",
             provider_slug=provider.provider_slug,
             api_key_preview=_mask_api_key(provider.api_key or ""),
             has_api_key=bool(provider.api_key),
@@ -309,6 +319,7 @@ class ApiProviderDetailOut(ApiProviderOut):
         return cls(
             id=provider.id,
             name=provider.name,
+            vendor=getattr(provider, "vendor", None) or provider.provider_slug or "custom",
             provider_slug=provider.provider_slug,
             api_key_preview=_mask_api_key(provider.api_key or ""),
             has_api_key=bool(provider.api_key),
@@ -329,9 +340,46 @@ class ApiProviderTestResult(APIModel):
     tested_at: datetime
 
 
+class ApiModelOut(APIModel):
+    id: str
+    api_provider_id: str
+    display_name: str
+    model_name: str
+    enabled: bool
+    is_default: bool
+    context_window: int | None = None
+    tags: list[str] = Field(default_factory=list)
+    last_tested_ok: bool | None = None
+    last_tested_at: datetime | None = None
+    last_tested_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ApiModelCreate(APIModel):
+    api_provider_id: str
+    display_name: str = ""
+    model_name: str
+    enabled: bool = True
+    is_default: bool = False
+    context_window: int | None = Field(default=None, ge=1)
+    tags: list[str] = Field(default_factory=list)
+
+
+class ApiModelUpdate(APIModel):
+    api_provider_id: str | None = None
+    display_name: str | None = None
+    model_name: str | None = None
+    enabled: bool | None = None
+    is_default: bool | None = None
+    context_window: int | None = Field(default=None, ge=1)
+    tags: list[str] | None = None
+
+
 class AppSettingsOut(APIModel):
     default_backing_model: str | None = None
     default_api_provider_id: str | None = None
+    default_api_model_id: str | None = None
     setup_complete: bool
     updated_at: datetime | None = None
 
@@ -339,10 +387,12 @@ class AppSettingsOut(APIModel):
 class AppSettingsUpdate(APIModel):
     default_backing_model: str | None = None
     default_api_provider_id: str | None = None
+    default_api_model_id: str | None = None
 
 
 class ApiProviderCreate(APIModel):
     name: str
+    vendor: str = "custom"
     provider_slug: str
     api_key: str = ""
     api_base: str | None = None
@@ -350,6 +400,7 @@ class ApiProviderCreate(APIModel):
 
 class ApiProviderUpdate(APIModel):
     name: str | None = None
+    vendor: str | None = None
     provider_slug: str | None = None
     api_key: str | None = None
     api_base: str | None = None
@@ -389,6 +440,19 @@ class PhaseTemplateCreate(APIModel):
     role_constraints: str = ""
     prompt_template: str = ""
     tags: list[str] = Field(default_factory=list)
+
+
+class PhaseTemplateUpdate(APIModel):
+    name: str | None = None
+    description: str | None = None
+    declared_variables: list[VariableDeclaration] | None = None
+    allowed_speakers: AllowedSpeakers | None = None
+    ordering_rule: OrderingRule | None = None
+    exit_conditions: list[ExitCondition] | None = None
+    auto_discuss: bool | None = None
+    role_constraints: str | None = None
+    prompt_template: str | None = None
+    tags: list[str] | None = None
 
 
 class DebateFormatOut(APIModel):
@@ -450,6 +514,16 @@ class RecipeCreate(APIModel):
     format_version: int | None = None
     initial_settings: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+
+
+class RecipeUpdate(APIModel):
+    name: str | None = None
+    description: str | None = None
+    persona_ids: list[str] | None = None
+    format_id: str | None = None
+    format_version: int | None = None
+    initial_settings: dict[str, Any] | None = None
+    tags: list[str] | None = None
 
 
 class RoomOut(APIModel):

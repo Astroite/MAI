@@ -83,9 +83,19 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
         ("api_provider_id", "varchar(36)", "VARCHAR(36)"),
     ],
     "api_providers": [
+        ("vendor", "varchar(64) DEFAULT 'custom' NOT NULL", "VARCHAR(64) DEFAULT 'custom' NOT NULL"),
         ("last_tested_ok", "boolean", "BOOLEAN"),
         ("last_tested_at", "timestamp with time zone", "DATETIME"),
         ("last_tested_error", "text", "TEXT"),
+    ],
+    "app_settings": [
+        ("default_api_model_id", "varchar(36)", "VARCHAR(36)"),
+    ],
+    "persona_templates": [
+        ("api_model_id", "varchar(36)", "VARCHAR(36)"),
+    ],
+    "persona_instances": [
+        ("api_model_id", "varchar(36)", "VARCHAR(36)"),
     ],
     "messages": [
         ("user_masquerade_name", "varchar(120)", "VARCHAR(120)"),
@@ -113,6 +123,7 @@ def _ensure_added_columns(sync_conn: Connection) -> None:
 
 async def create_schema() -> None:
     from . import models  # noqa: F401
+    from . import migrate_api_models
     from . import migrate_personas
     from . import migrate_settings
 
@@ -121,3 +132,4 @@ async def create_schema() -> None:
         await conn.run_sync(_ensure_added_columns)
         await conn.run_sync(migrate_personas.run)
         await conn.run_sync(migrate_settings.run)
+        await conn.run_sync(migrate_api_models.run)

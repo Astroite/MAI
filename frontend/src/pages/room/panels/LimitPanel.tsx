@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../api";
 import type { Runtime } from "../../../types";
+import { useI18n } from "../../../i18n";
 
 export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const [maxMessageTokens, setMaxMessageTokens] = useState(runtime.max_message_tokens);
   const [maxRoomTokens, setMaxRoomTokens] = useState(runtime.max_room_tokens);
   const [maxPhaseRounds, setMaxPhaseRounds] = useState(runtime.max_phase_rounds);
@@ -36,10 +38,10 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
   });
   return (
     <section>
-      <div className="label">Limit 与阶段切换</div>
+      <div className="label">{t("panel.limits.title")}</div>
       <div className="mt-3 grid grid-cols-2 gap-2">
         <label className="block">
-          <span className="text-xs text-muted">单条 tokens</span>
+          <span className="text-xs text-muted">{t("panel.limits.maxMessageTokens")}</span>
           <input
             className="input mt-1 w-full"
             name="max-message-tokens"
@@ -50,7 +52,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           />
         </label>
         <label className="block">
-          <span className="text-xs text-muted">房间 tokens</span>
+          <span className="text-xs text-muted">{t("panel.limits.maxRoomTokens")}</span>
           <input
             className="input mt-1 w-full"
             name="max-room-tokens"
@@ -61,7 +63,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           />
         </label>
         <label className="block">
-          <span className="text-xs text-muted">Phase 最大轮次</span>
+          <span className="text-xs text-muted">{t("panel.limits.maxPhaseRounds")}</span>
           <input
             className="input mt-1 w-full"
             name="max-phase-rounds"
@@ -72,7 +74,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           />
         </label>
         <label className="block">
-          <span className="text-xs text-muted">账号日 tokens</span>
+          <span className="text-xs text-muted">{t("panel.limits.dailyTokens")}</span>
           <input
             className="input mt-1 w-full"
             name="max-account-daily-tokens"
@@ -83,7 +85,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           />
         </label>
         <label className="block">
-          <span className="text-xs text-muted">账号月 tokens</span>
+          <span className="text-xs text-muted">{t("panel.limits.monthlyTokens")}</span>
           <input
             className="input mt-1 w-full"
             name="max-account-monthly-tokens"
@@ -95,7 +97,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
         </label>
       </div>
       <label className="mt-3 block">
-        <span className="text-xs text-muted">AI 连续发言上限</span>
+        <span className="text-xs text-muted">{t("panel.limits.maxAiTurns")}</span>
         <input
           className="input mt-1 w-full"
           name="max-consecutive-ai-turns"
@@ -106,9 +108,9 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
         />
       </label>
       <div className="mt-3 rounded-md border border-border p-3 text-xs text-muted">
-        当前房间用量：{runtime.token_counter_total} / {runtime.max_room_tokens} tokens
+        {t("panel.limits.usage", { used: runtime.token_counter_total, max: runtime.max_room_tokens })}
         {runtime.consecutive_ai_turns != null && (
-          <span className="ml-3">AI 连续轮次：{runtime.consecutive_ai_turns} / {runtime.max_consecutive_ai_turns}</span>
+          <span className="ml-3">{t("panel.limits.aiTurns", { used: runtime.consecutive_ai_turns, max: runtime.max_consecutive_ai_turns ?? "" })}</span>
         )}
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm">
@@ -118,10 +120,10 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           checked={autoTransition}
           onChange={(event) => setAutoTransition(event.target.checked)}
         />
-        自动进入下一阶段
+        {t("panel.limits.autoNext")}
       </label>
       <button className="btn mt-3 w-full" onClick={() => update.mutate()} disabled={update.isPending}>
-        保存
+        {t("common.save")}
       </button>
     </section>
   );

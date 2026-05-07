@@ -12,10 +12,12 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
+import { LanguageToggle, useI18n } from "../../i18n";
 
 export function RoomShell() {
   const { roomId, subId } = useParams();
   const activeRoomId = subId ?? roomId;
+  const { t, display } = useI18n();
   useRoomEvents(activeRoomId);
   const queryClient = useQueryClient();
   const room = useQuery({
@@ -24,7 +26,7 @@ export function RoomShell() {
     enabled: Boolean(activeRoomId)
   });
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const phases = useQuery({ queryKey: ["phases"], queryFn: api.phases });
+  const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
   const [params, setParams] = useSearchParams();
   const state = room.data;
   const hydrateStream = useUIStore((store) => store.hydrateStream);
@@ -65,7 +67,7 @@ export function RoomShell() {
       <section className="flex min-w-0 flex-col overflow-hidden bg-panel">
         {!activeRoomId || !state ? (
           <div className="grid flex-1 place-items-center text-sm text-muted">
-            {room.isLoading ? "加载中..." : "在左侧选择或新建一个讨论房间"}
+            {room.isLoading ? t("common.loading") : t("room.selectOrCreate")}
           </div>
         ) : (
           <>
@@ -76,17 +78,17 @@ export function RoomShell() {
                     <Link
                       to={`/rooms/${state.room.parent_room_id}`}
                       className="btn h-7 px-2 text-xs"
-                      title="返回父讨论"
+                      title={t("room.backToParent")}
                     >
                       <ArrowLeft size={13} />
-                      父
+                      {t("room.parent")}
                     </Link>
                   )}
                   <h1 className="truncate text-base font-semibold">{state.room.title}</h1>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
                   <StatusPill tone={state.room.status === "frozen" ? "danger" : "brand"}>
-                    {state.room.status}
+                    {display("roomStatus", state.room.status)}
                   </StatusPill>
                   {currentPhaseTemplate && (
                     <button
@@ -94,18 +96,18 @@ export function RoomShell() {
                       className="text-muted underline hover:text-brand"
                       onClick={() => openSettings("phase")}
                     >
-                      Phase: {currentPhaseTemplate.name}
+                      {t("room.phase", { name: currentPhaseTemplate.name })}
                     </button>
                   )}
-                  <span>≈{state.runtime.token_counter_total} tokens</span>
-                  {state.room.parent_room_id && <StatusPill tone="accent">子讨论</StatusPill>}
+                  <span>{t("room.tokens", { count: state.runtime.token_counter_total })}</span>
+                  {state.room.parent_room_id && <StatusPill tone="accent">{t("room.childRoom")}</StatusPill>}
                 </div>
               </div>
               <div className="flex flex-shrink-0 items-center gap-2">
                 {state.runtime.frozen ? (
                   <button className="btn" type="button" onClick={() => unfreeze.mutate()} disabled={unfreeze.isPending}>
                     <Unlock size={16} />
-                    解冻
+                    {t("room.unfreeze")}
                   </button>
                 ) : (
                   <button
@@ -113,17 +115,18 @@ export function RoomShell() {
                     type="button"
                     onClick={() => freeze.mutate()}
                     disabled={freeze.isPending}
-                    title="立即停止当前发言"
+                    title={t("room.freezeTitle")}
                   >
                     <Snowflake size={16} />
-                    冻结
+                    {t("room.freeze")}
                   </button>
                 )}
+                <LanguageToggle compact />
                 <button
                   className="btn h-9 w-9 px-0"
                   type="button"
                   onClick={() => openSettings("phase")}
-                  title="房间设置"
+                  title={t("room.settings")}
                 >
                   <Settings size={16} />
                 </button>

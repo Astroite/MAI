@@ -71,6 +71,9 @@ class PersonaTemplate(Base):
     api_provider_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True
     )
+    api_model_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_models.id", ondelete="SET NULL"), nullable=True
+    )
     system_prompt: Mapped[str] = mapped_column(Text)
     temperature: Mapped[float] = mapped_column(default=0.4)
     config: Mapped[dict] = mapped_column(JSONType, default=dict)
@@ -98,6 +101,9 @@ class PersonaInstance(Base):
     api_provider_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True
     )
+    api_model_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_models.id", ondelete="SET NULL"), nullable=True
+    )
     system_prompt: Mapped[str] = mapped_column(Text)
     temperature: Mapped[float] = mapped_column(default=0.4)
     config: Mapped[dict] = mapped_column(JSONType, default=dict)
@@ -124,6 +130,7 @@ class ApiProvider(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(120))
+    vendor: Mapped[str] = mapped_column(String(64), default="custom")
     provider_slug: Mapped[str] = mapped_column(String(64))
     api_key: Mapped[str] = mapped_column(Text)
     api_base: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -132,6 +139,30 @@ class ApiProvider(Base):
     last_tested_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class ApiModel(Base):
+    __tablename__ = "api_models"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    api_provider_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("api_providers.id", ondelete="CASCADE"), index=True
+    )
+    display_name: Mapped[str] = mapped_column(String(120))
+    model_name: Mapped[str] = mapped_column(String(240))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_default: Mapped[bool] = mapped_column(Boolean, default=False)
+    context_window: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tags: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    last_tested_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_tested_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        Index("ix_api_models_provider_model", "api_provider_id", "model_name"),
+    )
 
 
 class AppSettings(Base):
@@ -143,6 +174,9 @@ class AppSettings(Base):
     default_backing_model: Mapped[str | None] = mapped_column(String(160), nullable=True)
     default_api_provider_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("api_providers.id", ondelete="SET NULL"), nullable=True
+    )
+    default_api_model_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("api_models.id", ondelete="SET NULL"), nullable=True
     )
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 

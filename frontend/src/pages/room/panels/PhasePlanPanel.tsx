@@ -3,10 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { api } from "../../../api";
 import type { RoomState } from "../../../types";
+import { useI18n } from "../../../i18n";
 
 export function PhasePlanPanel({ state }: { state: RoomState }) {
   const queryClient = useQueryClient();
-  const phases = useQuery({ queryKey: ["phases"], queryFn: api.phases });
+  const { t } = useI18n();
+  const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
   const [insertPhaseId, setInsertPhaseId] = useState("");
   const insertPhase = useMutation({
     mutationFn: () => api.insertPhase(state.room.id, insertPhaseId),
@@ -15,7 +17,7 @@ export function PhasePlanPanel({ state }: { state: RoomState }) {
   const currentPhaseTemplate = phases.data?.find((phase) => phase.id === state.current_phase?.phase_template_id);
   return (
     <section>
-      <div className="label">当前 Phase</div>
+      <div className="label">{t("panel.phase.current")}</div>
       <div className="mt-2 font-medium">{currentPhaseTemplate?.name ?? "-"}</div>
       <p className="mt-1 text-sm text-muted">{currentPhaseTemplate?.description}</p>
       <ol className="mt-4 space-y-2">
@@ -42,7 +44,7 @@ export function PhasePlanPanel({ state }: { state: RoomState }) {
           value={insertPhaseId}
           onChange={(event) => setInsertPhaseId(event.target.value)}
         >
-          <option value="">插入 phase</option>
+          <option value="">{t("panel.phase.insert")}</option>
           {(phases.data ?? []).map((phase) => (
             <option key={phase.id} value={phase.id}>
               {phase.name}
@@ -53,7 +55,7 @@ export function PhasePlanPanel({ state }: { state: RoomState }) {
           className="btn w-9 px-0"
           disabled={!insertPhaseId || state.runtime.frozen}
           onClick={() => insertPhase.mutate()}
-          title="插入"
+          title={t("panel.phase.insert")}
         >
           <Plus size={16} />
         </button>

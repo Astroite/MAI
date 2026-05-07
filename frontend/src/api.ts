@@ -2,6 +2,7 @@ import type {
   ApiProvider,
   ApiProviderDetail,
   ApiProviderTestResult,
+  ApiModel,
   AppSettings,
   DebateFormat,
   Decision,
@@ -44,7 +45,11 @@ export const api = {
   health: () =>
     request<{ status: string; database: string; setup_complete: boolean }>("/health"),
   appSettings: () => request<AppSettings>("/settings"),
-  updateAppSettings: (body: { default_backing_model?: string | null; default_api_provider_id?: string | null }) =>
+  updateAppSettings: (body: {
+    default_backing_model?: string | null;
+    default_api_provider_id?: string | null;
+    default_api_model_id?: string | null;
+  }) =>
     request<AppSettings>("/settings", { method: "PATCH", body: JSON.stringify(body) }),
   testApiProvider: (providerId: string, model?: string) => {
     const qs = model ? `?model=${encodeURIComponent(model)}` : "";
@@ -63,14 +68,21 @@ export const api = {
     roomId: string,
     body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }
   ) => request<RoomState>(`/rooms/${roomId}/subrooms`, { method: "POST", body: JSON.stringify(body) }),
-  personaTemplates: (kind?: string) =>
-    request<PersonaTemplate[]>(`/templates/personas${kind ? `?kind=${kind}` : ""}`),
+  personaTemplates: (kind?: string, builtin?: boolean) => {
+    const params = new URLSearchParams();
+    if (kind) params.set("kind", kind);
+    if (builtin !== undefined) params.set("builtin", String(builtin));
+    const qs = params.toString();
+    return request<PersonaTemplate[]>(`/templates/personas${qs ? `?${qs}` : ""}`);
+  },
   createPersonaTemplate: (body: unknown) =>
     request<PersonaTemplate>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
   updatePersonaTemplate: (templateId: string, body: unknown) =>
     request<PersonaTemplate>(`/templates/personas/${templateId}`, { method: "PATCH", body: JSON.stringify(body) }),
   duplicatePersonaTemplate: (templateId: string) =>
     request<PersonaTemplate>(`/templates/personas/${templateId}/duplicate`, { method: "POST" }),
+  deletePersonaTemplate: (templateId: string) =>
+    request<{ status: string }>(`/templates/personas/${templateId}`, { method: "DELETE" }),
   addRoomPersonaInstances: (roomId: string, template_ids: string[]) =>
     request<RoomState>(`/rooms/${roomId}/personas`, {
       method: "POST",
@@ -88,6 +100,7 @@ export const api = {
     request<ApiProviderDetail>(`/templates/api-providers/${providerId}`),
   createApiProvider: (body: {
     name: string;
+    vendor?: string;
     provider_slug: string;
     api_key: string;
     api_base?: string | null;
@@ -98,7 +111,7 @@ export const api = {
     }),
   updateApiProvider: (
     providerId: string,
-    body: { name?: string; provider_slug?: string; api_key?: string; api_base?: string | null }
+    body: { name?: string; vendor?: string; provider_slug?: string; api_key?: string; api_base?: string | null }
   ) =>
     request<ApiProviderDetail>(`/templates/api-providers/${providerId}`, {
       method: "PATCH",
@@ -106,14 +119,73 @@ export const api = {
     }),
   deleteApiProvider: (providerId: string) =>
     request<{ status: string }>(`/templates/api-providers/${providerId}`, { method: "DELETE" }),
-  phases: () => request<PhaseTemplate[]>("/templates/phases"),
-  formats: () => request<DebateFormat[]>("/templates/formats"),
+  apiModels: (providerId?: string, enabled?: boolean) => {
+    const params = new URLSearchParams();
+    if (providerId) params.set("provider_id", providerId);
+    if (enabled !== undefined) params.set("enabled", String(enabled));
+    const qs = params.toString();
+    return request<ApiModel[]>(`/templates/api-models${qs ? `?${qs}` : ""}`);
+  },
+  createApiModel: (body: {
+    api_provider_id: string;
+    display_name?: string;
+    model_name: string;
+    enabled?: boolean;
+    is_default?: boolean;
+    context_window?: number | null;
+    tags?: string[];
+  }) =>
+    request<ApiModel>("/templates/api-models", {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  updateApiModel: (
+    modelId: string,
+    body: {
+      api_provider_id?: string;
+      display_name?: string;
+      model_name?: string;
+      enabled?: boolean;
+      is_default?: boolean;
+      context_window?: number | null;
+      tags?: string[];
+    }
+  ) =>
+    request<ApiModel>(`/templates/api-models/${modelId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  deleteApiModel: (modelId: string) =>
+    request<{ status: string }>(`/templates/api-models/${modelId}`, { method: "DELETE" }),
+  testApiModel: (modelId: string) =>
+    request<ApiProviderTestResult>(`/templates/api-models/${modelId}/test`, { method: "POST" }),
+  phases: (builtin?: boolean) =>
+    request<PhaseTemplate[]>(`/templates/phases${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
+  formats: (builtin?: boolean) =>
+    request<DebateFormat[]>(`/templates/formats${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
   createFormat: (body: unknown) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),
   updateFormat: (formatId: string, body: unknown) =>
     request<DebateFormat>(`/templates/formats/${formatId}`, { method: "PATCH", body: JSON.stringify(body) }),
-  recipes: () => request<Recipe[]>("/templates/recipes"),
+  duplicateFormat: (formatId: string) =>
+    request<DebateFormat>(`/templates/formats/${formatId}/duplicate`, { method: "POST" }),
+  deleteFormat: (formatId: string) =>
+    request<{ status: string }>(`/templates/formats/${formatId}`, { method: "DELETE" }),
+  recipes: (builtin?: boolean) =>
+    request<Recipe[]>(`/templates/recipes${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
   createRecipe: (body: unknown) => request<Recipe>("/templates/recipes", { method: "POST", body: JSON.stringify(body) }),
+  updateRecipe: (recipeId: string, body: unknown) =>
+    request<Recipe>(`/templates/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  duplicateRecipe: (recipeId: string) =>
+    request<Recipe>(`/templates/recipes/${recipeId}/duplicate`, { method: "POST" }),
+  deleteRecipe: (recipeId: string) =>
+    request<{ status: string }>(`/templates/recipes/${recipeId}`, { method: "DELETE" }),
   createPhase: (body: unknown) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),
+  updatePhase: (phaseId: string, body: unknown) =>
+    request<PhaseTemplate>(`/templates/phases/${phaseId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  duplicatePhase: (phaseId: string) =>
+    request<PhaseTemplate>(`/templates/phases/${phaseId}/duplicate`, { method: "POST" }),
+  deletePhase: (phaseId: string) =>
+    request<{ status: string }>(`/templates/phases/${phaseId}`, { method: "DELETE" }),
   appendMessage: (roomId: string, content: string) =>
     request<Message>(`/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
   verdict: (

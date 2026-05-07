@@ -5,19 +5,21 @@ import { MessagesSquare, Plus, Settings, Trash2, Workflow } from "lucide-react";
 import { api } from "../../api";
 import { StatusPill } from "../../components/StatusPill";
 import type { Room } from "../../types";
+import { useI18n } from "../../i18n";
 
 export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { t } = useI18n();
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const formats = useQuery({ queryKey: ["formats"], queryFn: api.formats });
-  const recipes = useQuery({ queryKey: ["recipes"], queryFn: api.recipes });
+  const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
+  const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
   const personas = useQuery({
     queryKey: ["persona-templates", "discussant"],
     queryFn: () => api.personaTemplates("discussant")
   });
   const [creating, setCreating] = useState(false);
-  const [title, setTitle] = useState("新讨论");
+  const [title, setTitle] = useState(() => t("room.newDiscussion"));
 
   const defaultRecipeId = useMemo(
     () => recipes.data?.find((item) => item.name === "方案评审默认配方")?.id,
@@ -32,7 +34,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const create = useMutation({
     mutationFn: () =>
       api.createRoom({
-        title: title.trim() || "新讨论",
+        title: title.trim() || t("room.newDiscussion"),
         recipe_id: defaultRecipeId,
         format_id: defaultRecipeId ? undefined : fallbackFormatId,
         persona_ids: defaultRecipeId ? [] : fallbackPersonaIds
@@ -40,7 +42,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
     onSuccess: (state) => {
       void queryClient.invalidateQueries({ queryKey: ["rooms"] });
       setCreating(false);
-      setTitle("新讨论");
+      setTitle(t("room.newDiscussion"));
       navigate(`/rooms/${state.room.id}`);
     }
   });
@@ -55,7 +57,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   });
 
   const handleDelete = (room: Room) => {
-    if (window.confirm(`删除房间「${room.title}」？所有消息和子房间状态会一并清除，不可撤销。`)) {
+    if (window.confirm(t("room.deleteConfirm", { title: room.title }))) {
       remove.mutate(room.id);
     }
   };
@@ -84,12 +86,12 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
         <div className="flex items-center gap-2 font-semibold">
           <MessagesSquare size={16} />
-          <span>讨论</span>
+          <span>{t("dashboard.title")}</span>
         </div>
         <button
           type="button"
           className="btn h-8 w-8 px-0"
-          title="新建房间"
+          title={t("dashboard.newRoom")}
           onClick={() => setCreating((value) => !value)}
         >
           <Plus size={16} />
@@ -107,14 +109,14 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
               if (event.key === "Enter" && !create.isPending) create.mutate();
               if (event.key === "Escape") setCreating(false);
             }}
-            placeholder="房间标题"
+            placeholder={t("dashboard.roomTitle")}
           />
           <div className="flex gap-2">
             <button className="btn btn-primary flex-1" disabled={create.isPending} onClick={() => create.mutate()}>
-              创建
+              {t("common.create")}
             </button>
             <button className="btn flex-1" onClick={() => setCreating(false)}>
-              取消
+              {t("common.cancel")}
             </button>
           </div>
         </div>
@@ -122,7 +124,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {topLevel.length === 0 && (
           <div className="px-2 py-6 text-center text-sm text-muted">
-            还没有房间。点 <Plus size={12} className="inline" /> 创建一个。
+            {t("dashboard.emptyRooms")} <Plus size={12} className="inline" /> {t("common.create")}
           </div>
         )}
         {topLevel.map((room) => (
@@ -145,11 +147,11 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       <nav className="flex items-center gap-1 border-t border-border bg-surface px-2 py-2">
         <NavLink to="/templates/personas" className="btn h-8 flex-1 px-2 text-xs">
           <Workflow size={14} />
-          模板
+          {t("nav.templates")}
         </NavLink>
         <NavLink to="/settings" className="btn h-8 flex-1 px-2 text-xs">
           <Settings size={14} />
-          设置
+          {t("nav.settings")}
         </NavLink>
       </nav>
     </aside>
@@ -169,6 +171,7 @@ function RoomEntry({
   parentId?: string;
   onDelete: () => void;
 }) {
+  const { t, display } = useI18n();
   const to = parentId ? `/rooms/${parentId}/sub/${room.id}` : `/rooms/${room.id}`;
   return (
     <div className={`group relative ${indent ? "ml-4" : ""}`}>
@@ -183,9 +186,9 @@ function RoomEntry({
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium">{room.title}</div>
-          <div className="mt-0.5 text-xs text-muted">{room.status}</div>
+          <div className="mt-0.5 text-xs text-muted">{display("roomStatus", room.status)}</div>
         </div>
-        {room.status === "frozen" && <StatusPill tone="danger">冻</StatusPill>}
+        {room.status === "frozen" && <StatusPill tone="danger">{display("roomStatus", room.status)}</StatusPill>}
       </NavLink>
       <button
         type="button"
@@ -195,8 +198,8 @@ function RoomEntry({
           event.stopPropagation();
           onDelete();
         }}
-        title="删除房间"
-        aria-label={`删除房间 ${room.title}`}
+        title={t("common.delete")}
+        aria-label={`${t("common.delete")} ${room.title}`}
       >
         <Trash2 size={14} />
       </button>

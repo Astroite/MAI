@@ -11,6 +11,7 @@ from .ids import new_id
 from .llm import llm_adapter
 from .models import (
     ApiProvider,
+    ApiModel,
     AppSettings,
     Decision,
     FacilitatorSignal,
@@ -209,6 +210,10 @@ async def get_phase_template(session: AsyncSession, phase_instance: RoomPhaseIns
 
 
 async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) -> ApiProvider | None:
+    if persona.api_model_id:
+        api_model = await session.get(ApiModel, persona.api_model_id)
+        if api_model is not None:
+            return await session.get(ApiProvider, api_model.api_provider_id)
     if not persona.api_provider_id:
         return None
     return await session.get(ApiProvider, persona.api_provider_id)
@@ -217,34 +222,45 @@ async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) 
 async def resolve_persona_runtime(
     session: AsyncSession, persona: PersonaInstance
 ) -> tuple[PersonaInstance, ApiProvider | None]:
-    """Overlay user-level defaults from AppSettings onto an empty persona
-    backing_model / api_provider_id. Persona instance is detached from the
-    session before mutation so the override doesn't accidentally persist.
+    """Overlay resolved model/provider settings without persisting them.
 
     Resolution order:
-      backing_model:    persona.backing_model || settings.default_backing_model
-      api_provider_id:  persona.api_provider_id || settings.default_api_provider_id
+      api_model_id:     persona.api_model_id || settings.default_api_model_id
+      legacy fallback:  persona.backing_model/api_provider_id || app settings
 
     Raises ValueError if neither persona nor settings supply a model or a
     provider — the engine treats this as a "system not configured yet" error
     that surfaces clearly to the user (no env-var fallback).
     """
     settings_row = await session.get(AppSettings, 1)
+    default_model_id = settings_row.default_api_model_id if settings_row else None
     default_model = (settings_row.default_backing_model or "").strip() if settings_row else ""
     default_provider_id = settings_row.default_api_provider_id if settings_row else None
 
-    effective_model = (persona.backing_model or "").strip() or default_model
-    effective_provider_id = persona.api_provider_id or default_provider_id
+    persona_has_legacy_model = bool((persona.backing_model or "").strip() or persona.api_provider_id)
+    effective_api_model_id = persona.api_model_id or (None if persona_has_legacy_model else default_model_id)
+    effective_model = (persona.backing_model or "").strip()
+    effective_provider_id = persona.api_provider_id
+
+    if effective_api_model_id:
+        api_model = await session.get(ApiModel, effective_api_model_id)
+        if api_model is None:
+            raise ValueError(f"api model {effective_api_model_id} not found")
+        if not api_model.enabled:
+            raise ValueError(f"api model {api_model.display_name} is disabled")
+        effective_model = api_model.model_name
+        effective_provider_id = api_model.api_provider_id
+    else:
+        effective_model = effective_model or default_model
+        effective_provider_id = effective_provider_id or default_provider_id
 
     if not effective_model:
         raise ValueError(
-            "no backing model configured: set persona.backing_model or "
-            "AppSettings.default_backing_model"
+            "no model configured: select persona.api_model_id or AppSettings.default_api_model_id"
         )
     if not effective_provider_id:
         raise ValueError(
-            "no API provider configured: set persona.api_provider_id or "
-            "AppSettings.default_api_provider_id"
+            "no API provider configured: select a model with an API provider"
         )
 
     provider = await session.get(ApiProvider, effective_provider_id)
@@ -255,6 +271,7 @@ async def resolve_persona_runtime(
     session.expunge(persona)
     persona.backing_model = effective_model
     persona.api_provider_id = provider.id
+    persona.api_model_id = effective_api_model_id
     return persona, provider
 
 

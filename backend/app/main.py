@@ -34,6 +34,7 @@ from .event_bus import event_bus
 from .ids import new_id
 from .models import (
     ApiProvider,
+    ApiModel,
     AppSettings,
     DebateFormat,
     Decision,
@@ -53,6 +54,9 @@ from .models import (
 )
 from .schemas import (
     AddPersonaInstancesRequest,
+    ApiModelCreate,
+    ApiModelOut,
+    ApiModelUpdate,
     ApiProviderCreate,
     ApiProviderDetailOut,
     ApiProviderOut,
@@ -81,9 +85,11 @@ from .schemas import (
     PersonaTemplateUpdate,
     PhaseTemplateCreate,
     PhaseTemplateOut,
+    PhaseTemplateUpdate,
     PhaseTransitionRequest,
     RecipeCreate,
     RecipeOut,
+    RecipeUpdate,
     RoomCreate,
     RoomOut,
     RoomPhaseInstanceOut,
@@ -115,7 +121,7 @@ async def lifespan(app: FastAPI):
     await engine.dispose()
 
 
-app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -149,7 +155,8 @@ async def health(session: AsyncSession = Depends(get_session)) -> dict:
     await session.scalar(select(func.count(PersonaTemplate.id)))
     settings_row = await _get_or_create_app_settings(session)
     setup_complete = bool(
-        settings_row.default_backing_model and settings_row.default_api_provider_id
+        settings_row.default_api_model_id
+        or (settings_row.default_backing_model and settings_row.default_api_provider_id)
     )
     return {"status": "ok", "database": "ok", "setup_complete": setup_complete}
 
@@ -164,13 +171,97 @@ async def _get_or_create_app_settings(session: AsyncSession) -> AppSettings:
     return row
 
 
+def _template_copy_name(source) -> str:
+    return source.name if source.is_builtin else f"{source.name} 副本"
+
+
+def _apply_template_changes(row, changes: dict) -> None:
+    if not changes:
+        return
+    row.version += 1
+    for key, value in changes.items():
+        setattr(row, key, value)
+
+
+def _model_display_name(model_name: str) -> str:
+    return model_name.split("/")[-1] or model_name
+
+
+async def _api_model_or_404(session: AsyncSession, model_id: str) -> ApiModel:
+    api_model = await session.get(ApiModel, model_id)
+    if not api_model:
+        raise HTTPException(404, "api model not found")
+    return api_model
+
+
+async def _sync_api_model_snapshot(session: AsyncSession, payload: dict) -> dict:
+    """Keep legacy model/provider columns in sync when api_model_id is used."""
+    model_id = payload.get("api_model_id")
+    if not model_id:
+        return payload
+    api_model = await _api_model_or_404(session, model_id)
+    if not api_model.enabled:
+        raise HTTPException(400, "api model is disabled")
+    payload = dict(payload)
+    payload["backing_model"] = api_model.model_name
+    payload["api_provider_id"] = api_model.api_provider_id
+    return payload
+
+
+async def _ensure_api_model_for_legacy(
+    session: AsyncSession,
+    provider_id: str | None,
+    model_name: str | None,
+    *,
+    is_default: bool = False,
+) -> ApiModel | None:
+    model_name = (model_name or "").strip()
+    if not provider_id or not model_name:
+        return None
+    provider = await session.get(ApiProvider, provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    api_model = await session.scalar(
+        select(ApiModel).where(
+            ApiModel.api_provider_id == provider_id,
+            ApiModel.model_name == model_name,
+        )
+    )
+    if api_model is None:
+        api_model = ApiModel(
+            id=new_id(),
+            api_provider_id=provider_id,
+            display_name=_model_display_name(model_name),
+            model_name=model_name,
+            enabled=True,
+            is_default=is_default,
+            tags=[],
+        )
+        session.add(api_model)
+        await session.flush()
+    elif is_default and not api_model.is_default:
+        api_model.is_default = True
+        await session.flush()
+    return api_model
+
+
+async def _set_single_default_api_model(session: AsyncSession, api_model: ApiModel) -> None:
+    await session.execute(
+        update(ApiModel)
+        .where(ApiModel.api_provider_id == api_model.api_provider_id, ApiModel.id != api_model.id)
+        .values(is_default=False)
+    )
+    api_model.is_default = True
+
+
 @app.get("/settings", response_model=AppSettingsOut)
 async def get_app_settings(session: AsyncSession = Depends(get_session)):
     row = await _get_or_create_app_settings(session)
     return AppSettingsOut(
         default_backing_model=row.default_backing_model,
         default_api_provider_id=row.default_api_provider_id,
-        setup_complete=bool(row.default_backing_model and row.default_api_provider_id),
+        default_api_model_id=row.default_api_model_id,
+        setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
         updated_at=row.updated_at,
     )
 
@@ -179,10 +270,26 @@ async def get_app_settings(session: AsyncSession = Depends(get_session)):
 async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = Depends(get_session)):
     row = await _get_or_create_app_settings(session)
     changes = body.model_dump(mode="json", exclude_unset=True)
+    if "default_api_model_id" in changes and changes["default_api_model_id"]:
+        api_model = await _api_model_or_404(session, changes["default_api_model_id"])
+        changes["default_api_provider_id"] = api_model.api_provider_id
+        changes["default_backing_model"] = api_model.model_name
+    elif "default_api_model_id" in changes and not changes["default_api_model_id"]:
+        changes["default_api_provider_id"] = None
+        changes["default_backing_model"] = None
     if "default_api_provider_id" in changes and changes["default_api_provider_id"]:
         provider = await session.get(ApiProvider, changes["default_api_provider_id"])
         if not provider:
             raise HTTPException(404, "api provider not found")
+    if "default_api_model_id" not in changes:
+        api_model = await _ensure_api_model_for_legacy(
+            session,
+            changes.get("default_api_provider_id", row.default_api_provider_id),
+            changes.get("default_backing_model", row.default_backing_model),
+            is_default=True,
+        )
+        if api_model is not None:
+            changes["default_api_model_id"] = api_model.id
     for key, value in changes.items():
         setattr(row, key, value or None)
     await session.commit()
@@ -190,28 +297,42 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
     return AppSettingsOut(
         default_backing_model=row.default_backing_model,
         default_api_provider_id=row.default_api_provider_id,
-        setup_complete=bool(row.default_backing_model and row.default_api_provider_id),
+        default_api_model_id=row.default_api_model_id,
+        setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
         updated_at=row.updated_at,
     )
 
 
 @app.get("/templates/personas", response_model=list[PersonaTemplateOut])
-async def list_persona_templates(kind: str | None = None, session: AsyncSession = Depends(get_session)):
+async def list_persona_templates(
+    kind: str | None = None,
+    builtin: bool | None = None,
+    session: AsyncSession = Depends(get_session),
+):
     stmt = select(PersonaTemplate).order_by(PersonaTemplate.is_builtin.desc(), PersonaTemplate.name)
     if kind:
         stmt = stmt.where(PersonaTemplate.kind == kind)
+    if builtin is not None:
+        stmt = stmt.where(PersonaTemplate.is_builtin == builtin)
     return (await session.scalars(stmt)).all()
 
 
 @app.post("/templates/personas", response_model=PersonaTemplateOut)
 async def create_persona_template(body: PersonaTemplateCreate, session: AsyncSession = Depends(get_session)):
+    payload = await _sync_api_model_snapshot(session, body.model_dump(mode="json"))
+    if not payload.get("api_model_id"):
+        api_model = await _ensure_api_model_for_legacy(
+            session, payload.get("api_provider_id"), payload.get("backing_model")
+        )
+        if api_model is not None:
+            payload["api_model_id"] = api_model.id
     template = PersonaTemplate(
         id=new_id(),
         version=1,
         schema_version=1,
         status="published",
         is_builtin=False,
-        **body.model_dump(),
+        **payload,
     )
     session.add(template)
     await session.commit()
@@ -231,9 +352,16 @@ async def update_persona_template(
     changes = body.model_dump(mode="json", exclude_unset=True)
     if not changes:
         return template
-    template.version += 1
-    for key, value in changes.items():
-        setattr(template, key, value)
+    changes = await _sync_api_model_snapshot(session, changes)
+    if "api_model_id" not in changes:
+        api_model = await _ensure_api_model_for_legacy(
+            session,
+            changes.get("api_provider_id", template.api_provider_id),
+            changes.get("backing_model", template.backing_model),
+        )
+        if api_model is not None:
+            changes["api_model_id"] = api_model.id
+    _apply_template_changes(template, changes)
     await session.commit()
     await session.refresh(template)
     return template
@@ -253,19 +381,37 @@ async def duplicate_persona_template(template_id: str, session: AsyncSession = D
         forked_from_version=source.version,
         is_builtin=False,
         kind=source.kind,
-        name=f"{source.name} 副本",
+        name=_template_copy_name(source),
         description=source.description,
         backing_model=source.backing_model,
         api_provider_id=source.api_provider_id,
+        api_model_id=source.api_model_id,
         system_prompt=source.system_prompt,
         temperature=source.temperature,
-        config=source.config,
-        tags=source.tags,
+        config=dict(source.config or {}),
+        tags=list(source.tags or []),
     )
     session.add(copy)
     await session.commit()
     await session.refresh(copy)
     return copy
+
+
+@app.delete("/templates/personas/{template_id}")
+async def delete_persona_template(template_id: str, session: AsyncSession = Depends(get_session)):
+    template = await session.get(PersonaTemplate, template_id)
+    if not template:
+        raise HTTPException(404, "persona template not found")
+    if template.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only")
+    usage_count = await session.scalar(
+        select(func.count(PersonaInstance.id)).where(PersonaInstance.template_id == template_id)
+    )
+    if usage_count:
+        raise HTTPException(409, "persona template is used by one or more rooms")
+    await session.delete(template)
+    await session.commit()
+    return {"status": "deleted"}
 
 
 @app.get("/templates/api-providers", response_model=list[ApiProviderOut])
@@ -279,6 +425,7 @@ async def create_api_provider(body: ApiProviderCreate, session: AsyncSession = D
     provider = ApiProvider(
         id=new_id(),
         name=body.name,
+        vendor=(body.vendor or body.provider_slug).strip(),
         provider_slug=body.provider_slug.strip(),
         api_key=body.api_key,
         api_base=body.api_base or None,
@@ -307,7 +454,7 @@ async def update_api_provider(
     changes = body.model_dump(mode="json", exclude_unset=True)
     creds_touched = any(key in changes for key in ("api_key", "api_base"))
     for key, value in changes.items():
-        if key == "provider_slug" and isinstance(value, str):
+        if key in {"provider_slug", "vendor"} and isinstance(value, str):
             value = value.strip()
         setattr(provider, key, value)
     if creds_touched:
@@ -325,11 +472,34 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     provider = await session.get(ApiProvider, provider_id)
     if not provider:
         raise HTTPException(404, "api provider not found")
+    model_ids = (
+        await session.scalars(select(ApiModel.id).where(ApiModel.api_provider_id == provider_id))
+    ).all()
     await session.execute(
-        update(PersonaTemplate).where(PersonaTemplate.api_provider_id == provider_id).values(api_provider_id=None)
+        update(PersonaTemplate)
+        .where(PersonaTemplate.api_provider_id == provider_id)
+        .values(api_provider_id=None, api_model_id=None, backing_model="")
     )
     await session.execute(
-        update(PersonaInstance).where(PersonaInstance.api_provider_id == provider_id).values(api_provider_id=None)
+        update(PersonaInstance)
+        .where(PersonaInstance.api_provider_id == provider_id)
+        .values(api_provider_id=None, api_model_id=None, backing_model="")
+    )
+    if model_ids:
+        await session.execute(
+            update(PersonaTemplate).where(PersonaTemplate.api_model_id.in_(model_ids)).values(api_model_id=None)
+        )
+        await session.execute(
+            update(PersonaInstance).where(PersonaInstance.api_model_id.in_(model_ids)).values(api_model_id=None)
+        )
+        await session.execute(
+            update(AppSettings).where(AppSettings.default_api_model_id.in_(model_ids)).values(default_api_model_id=None)
+        )
+        await session.execute(delete(ApiModel).where(ApiModel.id.in_(model_ids)))
+    await session.execute(
+        update(AppSettings)
+        .where(AppSettings.default_api_provider_id == provider_id)
+        .values(default_api_provider_id=None, default_api_model_id=None, default_backing_model=None)
     )
     await session.delete(provider)
     await session.commit()
@@ -410,6 +580,143 @@ async def test_api_provider(
     return ApiProviderTestResult(ok=ok, status_code=status_code, error=error, tested_at=tested_at)
 
 
+@app.get("/templates/api-models", response_model=list[ApiModelOut])
+async def list_api_models(
+    provider_id: str | None = None,
+    enabled: bool | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    stmt = select(ApiModel).order_by(ApiModel.api_provider_id, ApiModel.is_default.desc(), ApiModel.display_name)
+    if provider_id:
+        stmt = stmt.where(ApiModel.api_provider_id == provider_id)
+    if enabled is not None:
+        stmt = stmt.where(ApiModel.enabled == enabled)
+    return (await session.scalars(stmt)).all()
+
+
+@app.post("/templates/api-models", response_model=ApiModelOut)
+async def create_api_model(body: ApiModelCreate, session: AsyncSession = Depends(get_session)):
+    provider = await session.get(ApiProvider, body.api_provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    model_name = body.model_name.strip()
+    if not model_name:
+        raise HTTPException(400, "model name is required")
+    api_model = ApiModel(
+        id=new_id(),
+        api_provider_id=body.api_provider_id,
+        display_name=body.display_name.strip() or _model_display_name(model_name),
+        model_name=model_name,
+        enabled=body.enabled,
+        is_default=body.is_default,
+        context_window=body.context_window,
+        tags=body.tags,
+    )
+    session.add(api_model)
+    await session.flush()
+    if api_model.is_default:
+        await _set_single_default_api_model(session, api_model)
+    await session.commit()
+    await session.refresh(api_model)
+    return api_model
+
+
+@app.patch("/templates/api-models/{model_id}", response_model=ApiModelOut)
+async def update_api_model(model_id: str, body: ApiModelUpdate, session: AsyncSession = Depends(get_session)):
+    api_model = await _api_model_or_404(session, model_id)
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "api_provider_id" in changes and changes["api_provider_id"]:
+        provider = await session.get(ApiProvider, changes["api_provider_id"])
+        if not provider:
+            raise HTTPException(404, "api provider not found")
+    if "model_name" in changes and changes["model_name"] is not None:
+        changes["model_name"] = changes["model_name"].strip()
+        if not changes["model_name"]:
+            raise HTTPException(400, "model name is required")
+    if "display_name" in changes and changes["display_name"] is not None:
+        changes["display_name"] = changes["display_name"].strip()
+    for key, value in changes.items():
+        setattr(api_model, key, value)
+    if not api_model.display_name:
+        api_model.display_name = _model_display_name(api_model.model_name)
+    if api_model.is_default:
+        await _set_single_default_api_model(session, api_model)
+    await session.execute(
+        update(PersonaTemplate)
+        .where(PersonaTemplate.api_model_id == model_id)
+        .values(backing_model=api_model.model_name, api_provider_id=api_model.api_provider_id)
+    )
+    await session.execute(
+        update(PersonaInstance)
+        .where(PersonaInstance.api_model_id == model_id)
+        .values(backing_model=api_model.model_name, api_provider_id=api_model.api_provider_id)
+    )
+    await session.execute(
+        update(AppSettings)
+        .where(AppSettings.default_api_model_id == model_id)
+        .values(default_backing_model=api_model.model_name, default_api_provider_id=api_model.api_provider_id)
+    )
+    await session.commit()
+    await session.refresh(api_model)
+    return api_model
+
+
+@app.delete("/templates/api-models/{model_id}")
+async def delete_api_model(model_id: str, session: AsyncSession = Depends(get_session)):
+    api_model = await _api_model_or_404(session, model_id)
+    await session.execute(
+        update(PersonaTemplate)
+        .where(PersonaTemplate.api_model_id == model_id)
+        .values(api_model_id=None, api_provider_id=None, backing_model="")
+    )
+    await session.execute(
+        update(PersonaInstance)
+        .where(PersonaInstance.api_model_id == model_id)
+        .values(api_model_id=None, api_provider_id=None, backing_model="")
+    )
+    await session.execute(
+        update(AppSettings)
+        .where(AppSettings.default_api_model_id == model_id)
+        .values(default_api_model_id=None, default_api_provider_id=None, default_backing_model=None)
+    )
+    await session.delete(api_model)
+    await session.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/templates/api-models/{model_id}/test", response_model=ApiProviderTestResult)
+async def test_api_model(model_id: str, session: AsyncSession = Depends(get_session)):
+    api_model = await _api_model_or_404(session, model_id)
+    provider = await session.get(ApiProvider, api_model.api_provider_id)
+    if not provider:
+        raise HTTPException(404, "api provider not found")
+    tested_at = datetime.now(timezone.utc)
+    ok = False
+    error: str | None = None
+    from litellm import acompletion
+
+    try:
+        response = await acompletion(
+            model=api_model.model_name,
+            messages=[{"role": "user", "content": "ping"}],
+            max_tokens=1,
+            api_key=provider.api_key,
+            api_base=provider.api_base or None,
+        )
+        if response and getattr(response, "choices", None):
+            ok = True
+        else:
+            error = "litellm 返回空响应"
+    except Exception as exc:  # noqa: BLE001 — surface to user
+        error = _summarize_litellm_error(exc)
+
+    api_model.last_tested_ok = ok
+    api_model.last_tested_at = tested_at
+    api_model.last_tested_error = None if ok else error
+    await session.commit()
+    return ApiProviderTestResult(ok=ok, status_code=None, error=error, tested_at=tested_at)
+
+
 def _summarize_litellm_error(exc: Exception) -> str:
     """litellm appends a verbose 'Provider List: https://docs...' footer plus
     sometimes a request_id. Strip both so the UI gets the actionable line."""
@@ -428,8 +735,11 @@ def _summarize_litellm_error(exc: Exception) -> str:
 
 
 @app.get("/templates/phases", response_model=list[PhaseTemplateOut])
-async def list_phases(session: AsyncSession = Depends(get_session)):
-    return (await session.scalars(select(PhaseTemplate).order_by(PhaseTemplate.is_builtin.desc(), PhaseTemplate.name))).all()
+async def list_phases(builtin: bool | None = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(PhaseTemplate).order_by(PhaseTemplate.is_builtin.desc(), PhaseTemplate.name)
+    if builtin is not None:
+        stmt = stmt.where(PhaseTemplate.is_builtin == builtin)
+    return (await session.scalars(stmt)).all()
 
 
 @app.post("/templates/phases", response_model=PhaseTemplateOut)
@@ -446,6 +756,54 @@ async def create_phase(body: PhaseTemplateCreate, session: AsyncSession = Depend
     await session.commit()
     await session.refresh(phase)
     return phase
+
+
+@app.patch("/templates/phases/{phase_id}", response_model=PhaseTemplateOut)
+async def update_phase(
+    phase_id: str, body: PhaseTemplateUpdate, session: AsyncSession = Depends(get_session)
+):
+    phase = await session.get(PhaseTemplate, phase_id)
+    if not phase:
+        raise HTTPException(404, "phase not found")
+    if phase.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only; duplicate to customize")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if not changes:
+        return phase
+    _apply_template_changes(phase, changes)
+    await session.commit()
+    await session.refresh(phase)
+    return phase
+
+
+@app.post("/templates/phases/{phase_id}/duplicate", response_model=PhaseTemplateOut)
+async def duplicate_phase(phase_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(PhaseTemplate, phase_id)
+    if not source:
+        raise HTTPException(404, "phase not found")
+    copy = PhaseTemplate(
+        id=new_id(),
+        version=1,
+        schema_version=source.schema_version,
+        status="published",
+        forked_from_id=source.id,
+        forked_from_version=source.version,
+        is_builtin=False,
+        name=_template_copy_name(source),
+        description=source.description,
+        declared_variables=list(source.declared_variables or []),
+        allowed_speakers=dict(source.allowed_speakers or {"type": "all"}),
+        ordering_rule=dict(source.ordering_rule or {"type": "user_picks"}),
+        exit_conditions=list(source.exit_conditions or []),
+        auto_discuss=source.auto_discuss,
+        role_constraints=source.role_constraints,
+        prompt_template=source.prompt_template,
+        tags=list(source.tags or []),
+    )
+    session.add(copy)
+    await session.commit()
+    await session.refresh(copy)
+    return copy
 
 
 @app.get("/templates/phases/{phase_id}", response_model=PhaseTemplateOut)
@@ -468,9 +826,40 @@ async def export_phase(phase_id: str, session: AsyncSession = Depends(get_sessio
     )
 
 
+@app.delete("/templates/phases/{phase_id}")
+async def delete_phase(phase_id: str, session: AsyncSession = Depends(get_session)):
+    phase = await session.get(PhaseTemplate, phase_id)
+    if not phase:
+        raise HTTPException(404, "phase not found")
+    if phase.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only")
+    plan_refs = await session.scalar(
+        select(func.count(RoomPhasePlan.room_id)).where(RoomPhasePlan.phase_template_id == phase_id)
+    )
+    instance_refs = await session.scalar(
+        select(func.count(RoomPhaseInstance.id)).where(RoomPhaseInstance.phase_template_id == phase_id)
+    )
+    if plan_refs or instance_refs:
+        raise HTTPException(409, "phase is used by one or more rooms")
+    formats = (await session.scalars(select(DebateFormat))).all()
+    format_refs = [
+        debate_format.name
+        for debate_format in formats
+        if any(slot.get("phase_template_id") == phase_id for slot in (debate_format.phase_sequence or []))
+    ]
+    if format_refs:
+        raise HTTPException(409, f"phase is used by formats: {', '.join(format_refs[:3])}")
+    await session.delete(phase)
+    await session.commit()
+    return {"status": "deleted"}
+
+
 @app.get("/templates/formats", response_model=list[DebateFormatOut])
-async def list_formats(session: AsyncSession = Depends(get_session)):
-    return (await session.scalars(select(DebateFormat).order_by(DebateFormat.is_builtin.desc(), DebateFormat.name))).all()
+async def list_formats(builtin: bool | None = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(DebateFormat).order_by(DebateFormat.is_builtin.desc(), DebateFormat.name)
+    if builtin is not None:
+        stmt = stmt.where(DebateFormat.is_builtin == builtin)
+    return (await session.scalars(stmt)).all()
 
 
 @app.post("/templates/formats", response_model=DebateFormatOut)
@@ -494,36 +883,63 @@ async def update_format(format_id: str, body: DebateFormatUpdate, session: Async
     debate_format = await session.get(DebateFormat, format_id)
     if not debate_format:
         raise HTTPException(404, "format not found")
+    if debate_format.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only; duplicate to customize")
     changes = body.model_dump(mode="json", exclude_unset=True)
     if not changes:
         return debate_format
-    if debate_format.is_builtin:
-        debate_format = DebateFormat(
-            id=new_id(),
-            version=1,
-            schema_version=debate_format.schema_version,
-            status="published",
-            forked_from_id=debate_format.id,
-            forked_from_version=debate_format.version,
-            is_builtin=False,
-            name=debate_format.name,
-            description=debate_format.description,
-            phase_sequence=debate_format.phase_sequence,
-            tags=debate_format.tags,
-        )
-        session.add(debate_format)
-    else:
-        debate_format.version += 1
-    for key, value in changes.items():
-        setattr(debate_format, key, value)
+    _apply_template_changes(debate_format, changes)
     await session.commit()
     await session.refresh(debate_format)
     return debate_format
 
 
+@app.post("/templates/formats/{format_id}/duplicate", response_model=DebateFormatOut)
+async def duplicate_format(format_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(DebateFormat, format_id)
+    if not source:
+        raise HTTPException(404, "format not found")
+    copy = DebateFormat(
+        id=new_id(),
+        version=1,
+        schema_version=source.schema_version,
+        status="published",
+        forked_from_id=source.id,
+        forked_from_version=source.version,
+        is_builtin=False,
+        name=_template_copy_name(source),
+        description=source.description,
+        phase_sequence=list(source.phase_sequence or []),
+        tags=list(source.tags or []),
+    )
+    session.add(copy)
+    await session.commit()
+    await session.refresh(copy)
+    return copy
+
+
+@app.delete("/templates/formats/{format_id}")
+async def delete_format(format_id: str, session: AsyncSession = Depends(get_session)):
+    debate_format = await session.get(DebateFormat, format_id)
+    if not debate_format:
+        raise HTTPException(404, "format not found")
+    if debate_format.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only")
+    recipe_refs = await session.scalar(select(func.count(Recipe.id)).where(Recipe.format_id == format_id))
+    room_refs = await session.scalar(select(func.count(Room.id)).where(Room.format_id == format_id))
+    if recipe_refs or room_refs:
+        raise HTTPException(409, "format is used by one or more recipes or rooms")
+    await session.delete(debate_format)
+    await session.commit()
+    return {"status": "deleted"}
+
+
 @app.get("/templates/recipes", response_model=list[RecipeOut])
-async def list_recipes(session: AsyncSession = Depends(get_session)):
-    return (await session.scalars(select(Recipe).order_by(Recipe.is_builtin.desc(), Recipe.name))).all()
+async def list_recipes(builtin: bool | None = None, session: AsyncSession = Depends(get_session)):
+    stmt = select(Recipe).order_by(Recipe.is_builtin.desc(), Recipe.name)
+    if builtin is not None:
+        stmt = stmt.where(Recipe.is_builtin == builtin)
+    return (await session.scalars(stmt)).all()
 
 
 @app.post("/templates/recipes", response_model=RecipeOut)
@@ -542,6 +958,49 @@ async def create_recipe(body: RecipeCreate, session: AsyncSession = Depends(get_
     return recipe
 
 
+@app.patch("/templates/recipes/{recipe_id}", response_model=RecipeOut)
+async def update_recipe(recipe_id: str, body: RecipeUpdate, session: AsyncSession = Depends(get_session)):
+    recipe = await session.get(Recipe, recipe_id)
+    if not recipe:
+        raise HTTPException(404, "recipe not found")
+    if recipe.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only; duplicate to customize")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if not changes:
+        return recipe
+    _apply_template_changes(recipe, changes)
+    await session.commit()
+    await session.refresh(recipe)
+    return recipe
+
+
+@app.post("/templates/recipes/{recipe_id}/duplicate", response_model=RecipeOut)
+async def duplicate_recipe(recipe_id: str, session: AsyncSession = Depends(get_session)):
+    source = await session.get(Recipe, recipe_id)
+    if not source:
+        raise HTTPException(404, "recipe not found")
+    copy = Recipe(
+        id=new_id(),
+        version=1,
+        schema_version=source.schema_version,
+        status="published",
+        forked_from_id=source.id,
+        forked_from_version=source.version,
+        is_builtin=False,
+        name=_template_copy_name(source),
+        description=source.description,
+        persona_ids=list(source.persona_ids or []),
+        format_id=source.format_id,
+        format_version=source.format_version,
+        initial_settings=dict(source.initial_settings or {}),
+        tags=list(source.tags or []),
+    )
+    session.add(copy)
+    await session.commit()
+    await session.refresh(copy)
+    return copy
+
+
 @app.get("/templates/recipes/{recipe_id}/export")
 async def export_recipe(recipe_id: str, session: AsyncSession = Depends(get_session)):
     recipe = await session.get(Recipe, recipe_id)
@@ -552,6 +1011,21 @@ async def export_recipe(recipe_id: str, session: AsyncSession = Depends(get_sess
         payload,
         headers={"Content-Disposition": f'attachment; filename="{recipe.name}.recipe.json"'},
     )
+
+
+@app.delete("/templates/recipes/{recipe_id}")
+async def delete_recipe(recipe_id: str, session: AsyncSession = Depends(get_session)):
+    recipe = await session.get(Recipe, recipe_id)
+    if not recipe:
+        raise HTTPException(404, "recipe not found")
+    if recipe.is_builtin:
+        raise HTTPException(403, "builtin templates are read-only")
+    room_refs = await session.scalar(select(func.count(Room.id)).where(Room.recipe_id == recipe_id))
+    if room_refs:
+        raise HTTPException(409, "recipe is used by one or more rooms")
+    await session.delete(recipe)
+    await session.commit()
+    return {"status": "deleted"}
 
 
 @app.get("/rooms", response_model=list[RoomOut])
@@ -658,6 +1132,15 @@ async def update_persona_instance(
     if not instance or instance.room_id != room_id:
         raise HTTPException(404, "persona instance not found")
     changes = body.model_dump(mode="json", exclude_unset=True)
+    changes = await _sync_api_model_snapshot(session, changes)
+    if "api_model_id" not in changes:
+        api_model = await _ensure_api_model_for_legacy(
+            session,
+            changes.get("api_provider_id", instance.api_provider_id),
+            changes.get("backing_model", instance.backing_model),
+        )
+        if api_model is not None:
+            changes["api_model_id"] = api_model.id
     for key, value in changes.items():
         setattr(instance, key, value)
     await trace_record(
@@ -1208,6 +1691,7 @@ async def _create_persona_instances(
             description=template.description,
             backing_model=template.backing_model,
             api_provider_id=template.api_provider_id,
+            api_model_id=template.api_model_id,
             system_prompt=template.system_prompt,
             temperature=template.temperature,
             config=dict(template.config or {}),
