@@ -7,6 +7,7 @@ interface StreamingMessage {
   personaId: string;
   text: string;
   lastChunkIndex: number;
+  lastChunkAt: number;
 }
 
 export type ConnectionStatus = "connected" | "reconnecting" | "offline";
@@ -50,7 +51,8 @@ export const useUIStore = create<UIState>()(
                 messageId,
                 personaId,
                 text: `${current?.text ?? ""}${text}`,
-                lastChunkIndex: chunkIndex ?? current?.lastChunkIndex ?? -1
+                lastChunkIndex: chunkIndex ?? current?.lastChunkIndex ?? -1,
+                lastChunkAt: Date.now()
               }
             }
           };
@@ -64,7 +66,7 @@ export const useUIStore = create<UIState>()(
           return {
             streaming: {
               ...state.streaming,
-              [messageId]: { roomId, messageId, personaId, text, lastChunkIndex }
+              [messageId]: { roomId, messageId, personaId, text, lastChunkIndex, lastChunkAt: Date.now() }
             }
           };
         }),

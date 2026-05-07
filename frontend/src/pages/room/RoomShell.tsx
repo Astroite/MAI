@@ -38,6 +38,21 @@ export function RoomShell() {
     }
   }, [activeRoomId, hydrateStream, state?.in_flight_partial]);
 
+  // Watchdog: SSE may keep the connection alive (heartbeats) while a backend
+  // call silently dies, leaving a "typing…" bubble forever. If we haven't seen
+  // a chunk for STREAM_STALE_MS, drop the bubble so the UI doesn't lie.
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const STREAM_STALE_MS = 60_000;
+      const now = Date.now();
+      const { streaming, clearStream } = useUIStore.getState();
+      for (const entry of Object.values(streaming)) {
+        if (now - entry.lastChunkAt > STREAM_STALE_MS) clearStream(entry.messageId);
+      }
+    }, 5_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", activeRoomId] });
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
   const continuePhase = useMutation({ mutationFn: () => api.continuePhase(activeRoomId!), onSuccess: invalidate });
