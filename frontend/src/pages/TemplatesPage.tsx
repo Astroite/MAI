@@ -7,6 +7,8 @@ import { CheckCircle2, Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, 
 import { api } from "../api";
 import type { ApiModel, ApiProvider, DebateFormat, PersonaKind, PersonaTemplate, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
+import { toast } from "../components/Toaster";
+import { useConfirm } from "../components/ConfirmDialog";
 import { useI18n } from "../i18n";
 
 export function TemplatesPage() {
@@ -41,6 +43,7 @@ function TemplateNav({ to, label }: { to: string; label: string }) {
 function PersonasView() {
   const queryClient = useQueryClient();
   const { t, display } = useI18n();
+  const confirm = useConfirm();
   const personas = useQuery({ queryKey: ["persona-templates", "editable"], queryFn: () => api.personaTemplates(undefined, false) });
   const builtinPersonas = useQuery({ queryKey: ["persona-templates", "builtin"], queryFn: () => api.personaTemplates(undefined, true) });
   const apiProviders = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
@@ -140,11 +143,15 @@ function PersonasView() {
       resetPersonaForm();
       void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
     },
-    onError: (err) => window.alert(err instanceof Error ? err.message : t("api.deleteFailed"))
+    onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
-  const deletePersona = (persona: PersonaTemplate, event: MouseEvent<HTMLButtonElement>) => {
+  const deletePersona = async (persona: PersonaTemplate, event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (window.confirm(t("templates.deletePersonaConfirm", { name: persona.name }))) {
+    if (await confirm({
+      title: t("templates.deletePersonaConfirm", { name: persona.name }),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       remove.mutate(persona.id);
     }
   };
@@ -327,6 +334,7 @@ interface FormatSlotDraft {
 function FormatsView() {
   const queryClient = useQueryClient();
   const { t } = useI18n();
+  const confirm = useConfirm();
   const formats = useQuery({ queryKey: ["formats", "editable"], queryFn: () => api.formats(false) });
   const builtinFormats = useQuery({ queryKey: ["formats", "builtin"], queryFn: () => api.formats(true) });
   const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
@@ -394,11 +402,15 @@ function FormatsView() {
       resetFormatForm();
       void queryClient.invalidateQueries({ queryKey: ["formats"] });
     },
-    onError: (err) => window.alert(err instanceof Error ? err.message : t("api.deleteFailed"))
+    onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
-  const deleteFormat = (format: DebateFormat, event: MouseEvent<HTMLButtonElement>) => {
+  const deleteFormat = async (format: DebateFormat, event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (window.confirm(t("templates.deleteFormatConfirm", { name: format.name }))) {
+    if (await confirm({
+      title: t("templates.deleteFormatConfirm", { name: format.name }),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       remove.mutate(format.id);
     }
   };
@@ -617,6 +629,7 @@ function FormatPhaseCard({
 function PhasesView() {
   const queryClient = useQueryClient();
   const { t, display } = useI18n();
+  const confirm = useConfirm();
   const phases = useQuery({ queryKey: ["phases", "editable"], queryFn: () => api.phases(false) });
   const builtinPhases = useQuery({ queryKey: ["phases", "builtin"], queryFn: () => api.phases(true) });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -750,11 +763,15 @@ function PhasesView() {
       resetPhaseForm();
       void queryClient.invalidateQueries({ queryKey: ["phases"] });
     },
-    onError: (err) => window.alert(err instanceof Error ? err.message : t("api.deleteFailed"))
+    onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
-  const deletePhase = (phase: PhaseTemplate, event: MouseEvent<HTMLButtonElement>) => {
+  const deletePhase = async (phase: PhaseTemplate, event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (window.confirm(t("templates.deletePhaseConfirm", { name: phase.name }))) {
+    if (await confirm({
+      title: t("templates.deletePhaseConfirm", { name: phase.name }),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       remove.mutate(phase.id);
     }
   };
@@ -956,6 +973,7 @@ function PhasesView() {
 function RecipesView() {
   const queryClient = useQueryClient();
   const { t } = useI18n();
+  const confirm = useConfirm();
   const recipes = useQuery({ queryKey: ["recipes", "editable"], queryFn: () => api.recipes(false) });
   const builtinRecipes = useQuery({ queryKey: ["recipes", "builtin"], queryFn: () => api.recipes(true) });
   const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
@@ -1029,11 +1047,15 @@ function RecipesView() {
       resetRecipeForm();
       void queryClient.invalidateQueries({ queryKey: ["recipes"] });
     },
-    onError: (err) => window.alert(err instanceof Error ? err.message : t("api.deleteFailed"))
+    onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
-  const deleteRecipe = (recipe: Recipe, event: MouseEvent<HTMLButtonElement>) => {
+  const deleteRecipe = async (recipe: Recipe, event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
-    if (window.confirm(t("templates.deleteRecipeConfirm", { name: recipe.name }))) {
+    if (await confirm({
+      title: t("templates.deleteRecipeConfirm", { name: recipe.name }),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       remove.mutate(recipe.id);
     }
   };
@@ -1188,6 +1210,7 @@ function RecipesView() {
 export function ApiProvidersView() {
   const queryClient = useQueryClient();
   const { t } = useI18n();
+  const confirm = useConfirm();
   const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
   const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1298,8 +1321,12 @@ export function ApiProvidersView() {
     mutationFn: (id: string) => api.testApiProvider(id),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-providers"] })
   });
-  const handleDelete = (id: string) => {
-    if (window.confirm(t("api.deleteProviderConfirm"))) {
+  const handleDelete = async (id: string) => {
+    if (await confirm({
+      title: t("api.deleteProviderConfirm"),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       remove.mutate(id);
     }
   };
@@ -1352,8 +1379,12 @@ export function ApiProvidersView() {
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-models"] }),
     onError: (err) => setModelError(err instanceof Error ? err.message : t("api.testFailed"))
   });
-  const handleDeleteModel = (model: ApiModel) => {
-    if (window.confirm(t("api.deleteModelConfirm", { name: model.display_name || model.model_name }))) {
+  const handleDeleteModel = async (model: ApiModel) => {
+    if (await confirm({
+      title: t("api.deleteModelConfirm", { name: model.display_name || model.model_name }),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       removeModel.mutate(model.id);
     }
   };

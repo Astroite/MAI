@@ -6,6 +6,8 @@ import "katex/dist/katex.min.css";
 import "./styles.css";
 import { App } from "./App";
 import { I18nProvider } from "./i18n";
+import { Toaster } from "./components/Toaster";
+import { ConfirmProvider } from "./components/ConfirmDialog";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,7 +23,10 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <I18nProvider>
-          <App />
+          <ConfirmProvider>
+            <App />
+            <Toaster />
+          </ConfirmProvider>
         </I18nProvider>
       </BrowserRouter>
     </QueryClientProvider>

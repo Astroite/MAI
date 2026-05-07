@@ -4,6 +4,8 @@ import { NavLink, useNavigate } from "react-router-dom";
 import { MessagesSquare, Plus, Settings, Trash2, Workflow } from "lucide-react";
 import { api } from "../../api";
 import { StatusPill } from "../../components/StatusPill";
+import { useConfirm } from "../../components/ConfirmDialog";
+import { toast } from "../../components/Toaster";
 import type { Room } from "../../types";
 import { useI18n } from "../../i18n";
 
@@ -11,6 +13,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { t } = useI18n();
+  const confirm = useConfirm();
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
@@ -53,11 +56,16 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       void queryClient.invalidateQueries({ queryKey: ["rooms"] });
       // If we just deleted the room we're viewing, kick back to the list.
       if (roomId === activeRoomId) navigate("/");
-    }
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
 
-  const handleDelete = (room: Room) => {
-    if (window.confirm(t("room.deleteConfirm", { title: room.title }))) {
+  const handleDelete = async (room: Room) => {
+    if (await confirm({
+      title: t("room.deleteConfirm", { title: room.title }),
+      danger: true,
+      confirmLabel: t("common.delete")
+    })) {
       remove.mutate(room.id);
     }
   };
