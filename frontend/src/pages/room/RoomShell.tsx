@@ -14,7 +14,8 @@ import {
   Shield,
   Snowflake,
   Unlock,
-  WifiOff
+  WifiOff,
+  Wrench
 } from "lucide-react";
 import { api } from "../../api";
 import { useRoomEvents } from "../../hooks";
@@ -222,6 +223,7 @@ export function RoomShell() {
 const PANEL_SHORTCUTS = [
   { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen },
   { key: "decisions", labelKey: "room.panel.decisions", icon: Scale },
+  { key: "tools", labelKey: "room.panel.tools", icon: Wrench },
   { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield },
   { key: "phase", labelKey: "room.panel.phase", icon: Layers },
   { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus },

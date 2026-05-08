@@ -27,6 +27,7 @@ from .models import (
     now_utc,
 )
 from .schemas import FacilitatorEvaluation, ScribeUpdate
+from .tools import execute_tool, list_tool_schemas, tool_definitions_for_llm, tool_result_as_text
 from .trace import trace_record
 
 
@@ -347,6 +348,10 @@ async def pick_next_speaker(
     allowed = await allowed_persona_ids(session, room.id, template, plan)
     if not allowed:
         return NextSpeakerResult("wait", [], "no discussants in room")
+    if requested_persona_id is None:
+        allowed = await _auto_reply_enabled_persona_ids(session, allowed)
+        if not allowed:
+            return NextSpeakerResult("wait", [], "all discussants disabled auto reply")
 
     ordering = (template.ordering_rule if template else {"type": "mention_driven"})["type"]
     if requested_persona_id:
@@ -454,6 +459,14 @@ async def _resolve_question_paired(
     if last_visible is None or last_visible.message_type != "question":
         return None
     return await _match_at_mention_in_text(session, last_visible.content, allowed_ids)
+
+
+async def _auto_reply_enabled_persona_ids(session: AsyncSession, persona_ids: list[str]) -> list[str]:
+    if not persona_ids:
+        return []
+    personas = (await session.scalars(select(PersonaInstance).where(PersonaInstance.id.in_(persona_ids)))).all()
+    enabled = {persona.id for persona in personas if (persona.config or {}).get("auto_reply_enabled", True) is not False}
+    return [persona_id for persona_id in persona_ids if persona_id in enabled]
 
 
 async def _last_ai_speaker(
@@ -604,55 +617,106 @@ async def _stream_one_message(
 
     truncated_reason = None
     persona, api_provider = await resolve_persona_runtime(session, persona)
-    stream_iter = llm_adapter.stream(
-        persona, context, template, runtime.max_message_tokens, scribe_state, api_provider=api_provider
-    ).__aiter__()
     try:
-        while True:
-            try:
-                chunk = await asyncio.wait_for(
-                    stream_iter.__anext__(), timeout=CHUNK_IDLE_TIMEOUT_SECONDS
+        tools_enabled = bool((persona.config or {}).get("tools_enabled"))
+        tools_allow_write = bool((persona.config or {}).get("tools_allow_write"))
+        tool_schemas = await list_tool_schemas(session) if tools_enabled else []
+        tool_definitions = (
+            tool_definitions_for_llm(tool_schemas, allow_write=tools_allow_write) if tool_schemas else []
+        )
+        if tool_definitions:
+            async def _execute_llm_tool(name: str, arguments: dict[str, Any]) -> str:
+                invocation = await execute_tool(
+                    session,
+                    room.id,
+                    name,
+                    arguments,
+                    parent_message_id=tmp_message_id,
+                    allow_write=tools_allow_write,
                 )
-            except StopAsyncIteration:
-                break
-            except asyncio.TimeoutError:
-                truncated_reason = "timeout"
-                break
+                await session.commit()
+                return tool_result_as_text(invocation)
+
+            completion = await asyncio.wait_for(
+                llm_adapter.complete_with_tools(
+                    persona,
+                    context,
+                    template,
+                    runtime.max_message_tokens,
+                    tool_definitions,
+                    _execute_llm_tool,
+                    scribe_state,
+                    api_provider=api_provider,
+                ),
+                timeout=max(CHUNK_IDLE_TIMEOUT_SECONDS, 180.0),
+            )
+            partial = completion.content
+            if partial:
+                chunk_count = 1
+                call.append_chunk(partial, 0)
+                await event_bus.publish(
+                    room.id,
+                    {
+                        "type": "message.streaming",
+                        "message_id": tmp_message_id,
+                        "persona_id": persona.id,
+                        "chunk_text": partial,
+                        "chunk_index": 0,
+                        "cumulative_tokens_estimate": estimate_tokens(partial),
+                    },
+                )
             if call.cancel_reason:
                 truncated_reason = call.cancel_reason
-                break
-            partial += chunk.text
-            chunk_count += 1
-            call.append_chunk(chunk.text, chunk.index)
-            await event_bus.publish(
-                room.id,
-                {
-                    "type": "message.streaming",
-                    "message_id": tmp_message_id,
-                    "persona_id": persona.id,
-                    "chunk_text": chunk.text,
-                    "chunk_index": chunk.index,
-                    "cumulative_tokens_estimate": estimate_tokens(partial),
-                },
-            )
-            generated_tokens = prompt_tokens + estimate_tokens(partial)
-            if _token_limit_exceeded(
-                runtime,
-                runtime.token_counter_total + generated_tokens,
-                account_daily_total + generated_tokens,
-                account_monthly_total + generated_tokens,
-            ):
-                truncated_reason = "limit_exceeded"
-                break
+        else:
+            stream_iter = llm_adapter.stream(
+                persona, context, template, runtime.max_message_tokens, scribe_state, api_provider=api_provider
+            ).__aiter__()
+            try:
+                while True:
+                    try:
+                        chunk = await asyncio.wait_for(
+                            stream_iter.__anext__(), timeout=CHUNK_IDLE_TIMEOUT_SECONDS
+                        )
+                    except StopAsyncIteration:
+                        break
+                    if call.cancel_reason:
+                        truncated_reason = call.cancel_reason
+                        break
+                    partial += chunk.text
+                    chunk_count += 1
+                    call.append_chunk(chunk.text, chunk.index)
+                    await event_bus.publish(
+                        room.id,
+                        {
+                            "type": "message.streaming",
+                            "message_id": tmp_message_id,
+                            "persona_id": persona.id,
+                            "chunk_text": chunk.text,
+                            "chunk_index": chunk.index,
+                            "cumulative_tokens_estimate": estimate_tokens(partial),
+                        },
+                    )
+                    generated_tokens = prompt_tokens + estimate_tokens(partial)
+                    if _token_limit_exceeded(
+                        runtime,
+                        runtime.token_counter_total + generated_tokens,
+                        account_daily_total + generated_tokens,
+                        account_monthly_total + generated_tokens,
+                    ):
+                        truncated_reason = "limit_exceeded"
+                        break
+            finally:
+                aclose = getattr(stream_iter, "aclose", None)
+                if aclose is not None:
+                    try:
+                        await aclose()
+                    except Exception:
+                        pass
+    except asyncio.TimeoutError:
+        truncated_reason = "timeout"
     except asyncio.CancelledError:
         truncated_reason = call.cancel_reason or "cancelled"
     finally:
-        aclose = getattr(stream_iter, "aclose", None)
-        if aclose is not None:
-            try:
-                await aclose()
-            except Exception:
-                pass
         _unregister_active_call(call)
 
     completion_tokens = estimate_tokens(partial)

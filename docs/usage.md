@@ -172,10 +172,11 @@ GEMINI_API_KEY=...
 - 赛制是阶段的有序组合，支持拖拽排序。
 - 配方打包人设集合、赛制和初始房间设置。
 - 标签用于过滤模板。
+- 人设编辑器支持 AI 起草：输入自然语言需求后填入可编辑草稿，再由用户保存。
 
 ## 5. 讨论室常用流程
 
-1. 在首页创建房间，选择配方、赛制和人设。
+1. 在首页创建房间，选择场景、配方、赛制和人设；场景可预填初始问题。
 2. 在房间中发送用户消息，或上传 MD/TXT/PDF 文档。
 3. 后端根据当前阶段规则选择下一位 AI 发言者。
 4. `parallel` 阶段会同时启动多个模型调用；普通阶段每次只有一个 in-flight 调用。
@@ -186,7 +187,24 @@ GEMINI_API_KEY=...
 9. 子讨论可隔离争议点，结束后合并回父讨论。
 10. Freeze 会取消当前 in-flight 调用并冻结房间，Unfreeze 后可继续。
 
-## 6. 国际化
+## 6. 工具与 MCP
+
+房间右侧 `工具` 面板用于管理工具能力：
+
+1. 查看 MAI 内置工具清单。
+2. 添加 MCP server，填写名称、URL 和传输方式。
+3. 点击同步，读取 server 暴露的 tools。
+4. 可手动执行只读工具做 smoke test。
+5. 在成员编辑器里为具体成员开启 `允许工具`。
+6. 如需让成员创建模板或调用外部写入工具，再开启 `允许写入工具`。
+
+安全建议：
+
+- 默认保持 `允许写入工具` 关闭。
+- 对不稳定的外部 MCP server 先用手动只读工具测试。
+- 工具调用会进入消息流和 `tool_invocations`，不要把敏感参数交给不可信 server。
+
+## 7. 国际化
 
 前端提供中英文切换：
 
@@ -196,7 +214,7 @@ GEMINI_API_KEY=...
 - 内部枚举和标记会通过 `display()` 转成用户友好文案，例如 `round_robin`、`facilitator_suggests`、`dead_end`。
 - 用户自己写的房间名、模板名、消息内容不会被翻译。
 
-## 7. 验证
+## 8. 验证
 
 前端构建：
 
@@ -221,9 +239,9 @@ OPENAI_API_KEY=...
 
 该文件已被 `.gitignore` 排除。缺少 token 时，测试会直接退出并说明原因。
 
-## 8. 打包
+## 9. 打包
 
-### 8.1 普通发布包
+### 9.1 普通发布包
 
 ```powershell
 .\scripts\package.ps1 -Version v0.1.0
@@ -239,7 +257,7 @@ OPENAI_API_KEY=...
 .\scripts\package.ps1 -Version v0.1.0 -OutputDir artifacts
 ```
 
-### 8.2 Tauri 桌面包
+### 9.2 Tauri 桌面包
 
 桌面壳使用 Tauri v2 承载 React SPA，并由 PyInstaller sidecar 启动 FastAPI 后端。Tauri 启动时注入 `window.__MAI_API_BASE__`，前端会请求 sidecar 的本地临时端口。
 
@@ -261,7 +279,7 @@ OPENAI_API_KEY=...
 frontend/src-tauri/target/release/bundle/nsis/
 ```
 
-## 9. GitHub Release
+## 10. GitHub Release
 
 推送匹配 `v*.*.*` 的 tag 会触发 `.github/workflows/release.yml`：
 
@@ -272,7 +290,7 @@ git push origin v0.1.0
 
 工作流会安装依赖、运行测试、构建前端、打包并上传 Release 产物。
 
-## 10. 常见问题
+## 11. 常见问题
 
 | 现象 | 处理 |
 |---|---|

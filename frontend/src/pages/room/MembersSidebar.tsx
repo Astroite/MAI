@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Save, Users, X } from "lucide-react";
+import { PauseCircle, Pencil, Save, Users, Wrench, X } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
 import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
@@ -127,6 +127,10 @@ export function MembersSidebar({
                 {personaInitial(persona.name).slice(0, 1)}
               </span>
               {persona.name}
+              {Boolean(persona.config?.tools_enabled) && <Wrench size={11} aria-label={t("room.toolsEnabled")} />}
+              {(persona.config?.auto_reply_enabled ?? true) === false && (
+                <PauseCircle size={11} aria-label={t("room.autoReplyDisabled")} />
+              )}
               {activePersonaIds.has(persona.id) && (
                 <span className="h-1.5 w-1.5 rounded-full bg-brand" style={{ animation: "pulse-ring 1.4s ease-out infinite" }} />
               )}
@@ -235,6 +239,20 @@ function PersonaRow({
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium">{persona.name}</div>
           <div className="mt-0.5 truncate text-xs text-muted">{personaModelLabel(persona, modelById, providerById, t)}</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(persona.config?.auto_reply_enabled ?? true) === false && (
+              <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                <PauseCircle size={11} />
+                {t("room.autoReplyDisabled")}
+              </span>
+            )}
+            {Boolean(persona.config?.tools_enabled) && (
+              <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-[11px] text-brand">
+                <Wrench size={11} />
+                {t("room.toolsEnabled")}
+              </span>
+            )}
+          </div>
           {speaking && <div className="mt-0.5 text-xs text-brand">{t("room.speaking")}</div>}
         </div>
         <button
@@ -280,6 +298,9 @@ function PersonaInstanceEditor({
   const [apiModelId, setApiModelId] = useState(persona.api_model_id ?? "");
   const [temperature, setTemperature] = useState(persona.temperature);
   const [systemPrompt, setSystemPrompt] = useState(persona.system_prompt);
+  const [autoReplyEnabled, setAutoReplyEnabled] = useState((persona.config?.auto_reply_enabled ?? true) !== false);
+  const [toolsEnabled, setToolsEnabled] = useState(Boolean(persona.config?.tools_enabled));
+  const [toolsAllowWrite, setToolsAllowWrite] = useState(Boolean(persona.config?.tools_allow_write));
   const [error, setError] = useState<string | null>(null);
   const selectedApiModel = apiModels.find((model) => model.id === apiModelId);
 
@@ -291,7 +312,13 @@ function PersonaInstanceEditor({
         api_provider_id: selectedApiModel?.api_provider_id ?? null,
         backing_model: selectedApiModel?.model_name ?? "",
         temperature,
-        system_prompt: systemPrompt
+        system_prompt: systemPrompt,
+        config: {
+          ...(persona.config ?? {}),
+          auto_reply_enabled: autoReplyEnabled,
+          tools_enabled: toolsEnabled,
+          tools_allow_write: toolsEnabled ? toolsAllowWrite : false
+        }
       }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
@@ -354,6 +381,36 @@ function PersonaInstanceEditor({
           rows={5}
         />
       </label>
+      <div className="space-y-2 rounded-md border border-border bg-surface p-2">
+        <label className="flex items-center gap-2">
+          <input
+            name="instance-auto-reply"
+            type="checkbox"
+            checked={autoReplyEnabled}
+            onChange={(event) => setAutoReplyEnabled(event.target.checked)}
+          />
+          {t("room.autoReplyEnabled")}
+        </label>
+        <label className="flex items-center gap-2">
+          <input
+            name="instance-tools-enabled"
+            type="checkbox"
+            checked={toolsEnabled}
+            onChange={(event) => setToolsEnabled(event.target.checked)}
+          />
+          {t("room.toolsEnabled")}
+        </label>
+        <label className={`flex items-center gap-2 ${toolsEnabled ? "" : "opacity-50"}`}>
+          <input
+            name="instance-tools-write"
+            type="checkbox"
+            checked={toolsAllowWrite}
+            disabled={!toolsEnabled}
+            onChange={(event) => setToolsAllowWrite(event.target.checked)}
+          />
+          {t("room.toolsAllowWrite")}
+        </label>
+      </div>
       {error && <p className="text-danger">{error}</p>}
       <div className="flex gap-2">
         <button className="btn btn-primary h-8 px-2" type="submit" disabled={save.isPending}>

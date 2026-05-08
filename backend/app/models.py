@@ -393,6 +393,45 @@ class Upload(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
+class ToolServer(Base):
+    __tablename__ = "tool_servers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    name: Mapped[str] = mapped_column(String(120))
+    description: Mapped[str] = mapped_column(Text, default="")
+    kind: Mapped[str] = mapped_column(String(32), default="mcp")
+    transport: Mapped[str] = mapped_column(String(32), default="streamable_http")
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_write: Mapped[bool] = mapped_column(Boolean, default=False)
+    manifest: Mapped[dict] = mapped_column(JSONType, default=dict)
+    last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class ToolInvocation(Base):
+    __tablename__ = "tool_invocations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    room_id: Mapped[str] = mapped_column(String(36), ForeignKey("rooms.id"), index=True)
+    message_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("messages.id"), nullable=True, index=True)
+    parent_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    server_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("tool_servers.id"), nullable=True)
+    tool_name: Mapped[str] = mapped_column(String(160))
+    display_name: Mapped[str] = mapped_column(String(200), default="")
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    arguments: Mapped[dict] = mapped_column(JSONType, default=dict)
+    result: Mapped[dict | list | str | None] = mapped_column(JSONType, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    __table_args__ = (Index("ix_tool_invocations_room_created", "room_id", "created_at"),)
+
+
 class RoomRuntimeState(Base):
     __tablename__ = "room_runtime_state"
 

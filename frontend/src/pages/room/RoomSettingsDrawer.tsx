@@ -9,6 +9,7 @@ import { FacilitatorPanel } from "./panels/FacilitatorPanel";
 import { DecisionsPanel } from "./panels/DecisionsPanel";
 import { UploadPanel } from "./panels/UploadPanel";
 import { SubroomPanel } from "./panels/SubroomPanel";
+import { ToolPanel } from "./panels/ToolPanel";
 import { useI18n } from "../../i18n";
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   { key: "scribe", labelKey: "room.panel.scribe" },
   { key: "facilitator", labelKey: "room.panel.facilitator" },
   { key: "decisions", labelKey: "room.panel.decisions" },
+  { key: "tools", labelKey: "room.panel.tools" },
   { key: "upload", labelKey: "room.panel.upload" },
   { key: "subroom", labelKey: "room.panel.subroom" }
 ] as const;
@@ -109,6 +111,13 @@ export function RoomSettingsDrawer({
               roomId={state.room.id}
               frozen={state.runtime.frozen}
               decisions={state.decisions ?? []}
+            />
+          )}
+          {tab === "tools" && (
+            <ToolPanel
+              roomId={state.room.id}
+              frozen={state.runtime.frozen}
+              invocations={state.tool_invocations ?? []}
             />
           )}
           {tab === "upload" && <UploadPanel roomId={state.room.id} frozen={state.runtime.frozen} />}

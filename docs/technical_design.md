@@ -79,6 +79,7 @@ AI 不是 free-running。`pick_next_speaker` 根据当前阶段的 `ordering_rul
 | `migrate_settings.py` | 默认 API 设置迁移 |
 | `migrate_api_models.py` | legacy provider/model 数据迁移到 `api_models` |
 | `llm.py` | LiteLLM stream 与 tool-call 包装 |
+| `tools.py` | 内置工具、MCP server 同步、工具调用记录与事件发布 |
 | `event_bus.py` | 进程内 SSE pub/sub |
 | `trace.py` | trace row + payload sidecar |
 
@@ -146,10 +147,9 @@ app_settings
 
 ```text
 persona_instance.api_model_id
-  -> persona_template.api_model_id
   -> app_settings.default_api_model_id
   -> legacy backing_model + api_provider_id
-  -> provider 环境变量
+  -> LiteLLM provider 环境变量中的 key（前提是已有 provider 路由配置）
 ```
 
 ### 4.3 房间运行时
@@ -168,6 +168,8 @@ persona_instance.api_model_id
 - `room_snapshots`
 - `uploads`
 - `trace_events`
+- `tool_servers`
+- `tool_invocations`
 
 `room_runtime_state` 包含：
 
@@ -182,7 +184,49 @@ persona_instance.api_model_id
 - phase exit suggestion 状态
 - consecutive AI turn 计数
 
-### 4.4 JSON 跨方言
+### 4.4 工具与 MCP
+
+工具层由两张表和一个运行时注册表组成：
+
+```text
+tool_servers
+  id
+  name
+  kind = mcp
+  transport = streamable_http | sse
+  url
+  enabled
+  allow_write
+  manifest.tools
+  last_synced_at / last_error
+
+tool_invocations
+  id
+  room_id
+  message_id
+  parent_message_id
+  server_id
+  tool_name / display_name
+  status = pending | success | error
+  arguments / result / error
+  started_at / completed_at
+```
+
+`tools.py` 负责把 MAI 内置工具与已启用 MCP server 的 manifest 合并成统一工具清单。MCP 工具对 LLM 暴露时会被转换成安全的外部函数名，调用时再映射回 server manifest 里的原始工具名。
+
+当前内置工具：
+
+- `mai_search_room_messages`
+- `mai_list_room_members`
+- `mai_create_persona_template`
+- `mai_create_phase_template`
+
+写入工具需要两层授权：
+
+1. server 或工具本身标记为写入能力。
+2. 房间成员实例 `config.tools_allow_write=true`，或手动执行接口显式传入 `allow_write=true`。
+
+### 4.5 JSON 跨方言
 
 `models.JSONType` 定义为：
 
@@ -258,9 +302,27 @@ SQLite 使用 JSON，PostgreSQL 使用 JSONB。
 5. 完成、取消、超时或触发 limit 后追加最终 message。
 6. 清理 `ACTIVE_CALLS`。
 
+### 6.4 带工具调用的生成
+
+房间成员实例可在 `config` 中开启：
+
+```json
+{
+  "auto_reply_enabled": true,
+  "tools_enabled": true,
+  "tools_allow_write": false
+}
+```
+
+调度器只在自动选择说话人时尊重 `auto_reply_enabled=false`；用户手动指定 speaker 不受影响。
+
+当 `tools_enabled=true` 且工具清单非空时，`engine._stream_one_message` 走 `LLMAdapter.complete_with_tools`。这条路径不是逐 token streaming，而是在工具调用轮次完成后一次性发布最终 chunk。工具调用本身会立即追加 `tool_invocation` 消息，完成后更新同一消息内容并发布 SSE invalidate。
+
+普通未启用工具的成员仍走原来的 streaming 路径。
+
 chunk 空闲超时默认 30 秒，记录为 `truncated_reason="timeout"`。
 
-### 6.4 Freeze
+### 6.5 Freeze
 
 冻结流程：
 
@@ -378,6 +440,29 @@ UI 文案和内部枚举显示应使用 i18n；用户内容和模板数据本身
 5. 相关 React Query key / invalidation
 
 新增 SSE 事件时需要同步 publisher 和 `useRoomEvents`。
+
+### 9.1 新增契约
+
+工具与 MCP：
+
+- `GET /tools`
+- `GET /tools/mcp-servers`
+- `POST /tools/mcp-servers`
+- `PATCH /tools/mcp-servers/{server_id}`
+- `DELETE /tools/mcp-servers/{server_id}`
+- `POST /tools/mcp-servers/{server_id}/sync`
+- `POST /rooms/{room_id}/tools/execute`
+
+场景与模板助手：
+
+- `GET /scenarios`
+- `POST /assistants/template-draft`
+
+房间状态新增：
+
+- `RoomCreate.initial_message`
+- `MessageOut.tool_invocation`
+- `RoomState.tool_invocations`
 
 ## 10. 内置数据
 

@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
-import { Check, Plus, RefreshCw, Search, Users, X } from "lucide-react";
+import { Check, Plus, RefreshCw, Search, Sparkles, Users, X } from "lucide-react";
 import { api } from "../api";
-import type { DebateFormat, PersonaTemplate, Recipe } from "../types";
+import type { DebateFormat, PersonaTemplate, Recipe, Scenario } from "../types";
 import { StatusPill } from "../components/StatusPill";
 import { useI18n } from "../i18n";
 
@@ -18,12 +18,14 @@ export function DashboardPage() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
   const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
   const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
+  const scenarios = useQuery({ queryKey: ["scenarios"], queryFn: api.scenarios });
   const personas = useQuery({
     queryKey: ["persona-templates", "discussant", "editable"],
     queryFn: () => api.personaTemplates("discussant", false)
   });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [title, setTitle] = useState(() => t("dashboard.defaultTitle"));
+  const [initialMessage, setInitialMessage] = useState("");
   const [recipeId, setRecipeId] = useState(DEFAULT_RECIPE);
   const [formatId, setFormatId] = useState<string | undefined>(undefined);
   const [selectedPersonaIds, setSelectedPersonaIds] = useState<string[]>([]);
@@ -42,7 +44,7 @@ export function DashboardPage() {
     [effectiveRecipe?.persona_ids, editablePersonaIds]
   );
   const effectivePersonaIds = personaTouched ? selectedPersonaIds : recipePersonaIds;
-  const canCreate = Boolean(title.trim()) && effectivePersonaIds.length > 0;
+  const canCreate = Boolean(title.trim()) && (effectivePersonaIds.length > 0 || Boolean(effectiveRecipeId));
 
   const allPersonaTags = useMemo(() => {
     const tags = new Set<string>();
@@ -69,7 +71,8 @@ export function DashboardPage() {
         title,
         recipe_id: effectiveRecipeId,
         format_id: effectiveRecipeId ? undefined : formatId ?? solutionReview ?? formats.data?.[0]?.id,
-        persona_ids: effectivePersonaIds
+        persona_ids: effectivePersonaIds,
+        initial_message: initialMessage.trim() || null
       });
     },
     onSuccess: (state) => {
@@ -81,6 +84,20 @@ export function DashboardPage() {
 
   const setRecipe = (nextRecipeId: string) => {
     setRecipeId(nextRecipeId);
+    setPersonaTouched(false);
+    setSelectedPersonaIds([]);
+  };
+
+  const applyScenario = (scenario: Scenario) => {
+    setTitle(scenario.title);
+    setInitialMessage(scenario.prompt);
+    if (scenario.recipe_id) {
+      setRecipeId(scenario.recipe_id);
+      setFormatId(undefined);
+    } else if (scenario.format_id) {
+      setRecipeId(NO_RECIPE);
+      setFormatId(scenario.format_id);
+    }
     setPersonaTouched(false);
     setSelectedPersonaIds([]);
   };
@@ -163,9 +180,40 @@ export function DashboardPage() {
 
             <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] gap-0 overflow-hidden max-lg:grid-cols-1">
               <div className="space-y-4 overflow-auto border-r border-border p-5 max-lg:border-b max-lg:border-r-0">
+                {(scenarios.data?.length ?? 0) > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2 text-xs font-semibold text-muted">
+                      <Sparkles size={14} />
+                      {t("dashboard.scenarios")}
+                    </div>
+                    <div className="grid gap-2">
+                      {(scenarios.data ?? []).map((scenario) => (
+                        <button
+                          key={scenario.id}
+                          type="button"
+                          className="rounded-md border border-border p-2 text-left text-xs hover:border-brand hover:bg-surface"
+                          onClick={() => applyScenario(scenario)}
+                        >
+                          <span className="block font-medium text-text">{scenario.title}</span>
+                          <span className="mt-1 line-clamp-2 block text-muted">{scenario.description}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
                 <label className="block">
                   <span className="label">{t("dashboard.roomTitle")}</span>
                   <input name="room-title" className="input mt-1 w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
+                </label>
+                <label className="block">
+                  <span className="label">{t("dashboard.initialMessage")}</span>
+                  <textarea
+                    name="room-initial-message"
+                    className="textarea mt-1 h-32 w-full"
+                    value={initialMessage}
+                    onChange={(event) => setInitialMessage(event.target.value)}
+                    placeholder={t("dashboard.initialMessagePlaceholder")}
+                  />
                 </label>
                 <label className="block">
                   <span className="label">{t("dashboard.recipe")}</span>

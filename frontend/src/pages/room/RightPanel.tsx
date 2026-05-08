@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
-import { BookOpen, FileText, GitBranchPlus, Layers, Scale, Settings2, Shield, Users } from "lucide-react";
+import { BookOpen, FileText, GitBranchPlus, Layers, Scale, Settings2, Shield, Users, Wrench } from "lucide-react";
 import type { Room, RoomState } from "../../types";
 import { MembersSidebar } from "./MembersSidebar";
 import { PhasePlanPanel } from "./panels/PhasePlanPanel";
@@ -10,6 +10,7 @@ import { FacilitatorPanel } from "./panels/FacilitatorPanel";
 import { DecisionsPanel } from "./panels/DecisionsPanel";
 import { UploadPanel } from "./panels/UploadPanel";
 import { SubroomPanel } from "./panels/SubroomPanel";
+import { ToolPanel } from "./panels/ToolPanel";
 import { useI18n } from "../../i18n";
 
 const TABS = [
@@ -17,6 +18,7 @@ const TABS = [
   { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen },
   { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield },
   { key: "decisions", labelKey: "room.panel.decisions", icon: Scale },
+  { key: "tools", labelKey: "room.panel.tools", icon: Wrench },
   { key: "limits", labelKey: "room.panel.limits", icon: Settings2 },
   { key: "upload", labelKey: "room.panel.upload", icon: FileText },
   { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus }
@@ -87,6 +89,13 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
             roomId={state.room.id}
             frozen={state.runtime.frozen}
             decisions={state.decisions ?? []}
+          />
+        )}
+        {tab === "tools" && (
+          <ToolPanel
+            roomId={state.room.id}
+            frozen={state.runtime.frozen}
+            invocations={state.tool_invocations ?? []}
           />
         )}
         {tab === "upload" && <UploadPanel roomId={state.room.id} frozen={state.runtime.frozen} />}

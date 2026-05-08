@@ -3,7 +3,7 @@ import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { CheckCircle2, Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Trash2, Wifi, XCircle } from "lucide-react";
+import { CheckCircle2, Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Sparkles, Trash2, Wifi, XCircle } from "lucide-react";
 import { api } from "../api";
 import type { ApiModel, ApiProvider, DebateFormat, PersonaKind, PersonaTemplate, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -68,6 +68,7 @@ function PersonasView() {
   const [tags, setTags] = useState("custom");
   const [systemPrompt, setSystemPrompt] = useState(() => t("templates.defaultPersonaPrompt"));
   const [configText, setConfigText] = useState("{}");
+  const [draftPrompt, setDraftPrompt] = useState("");
   const [editingPersonaId, setEditingPersonaId] = useState<string | null>(null);
   const configValue = parseJsonObject(configText);
   const editingPersona = personas.data?.find((persona) => persona.id === editingPersonaId);
@@ -128,6 +129,24 @@ function PersonasView() {
     onSuccess: (saved) => {
       loadPersona(saved);
       void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+    }
+  });
+  const draftPersona = useMutation({
+    mutationFn: () => api.templateDraft({ kind: "persona", prompt: draftPrompt }),
+    onSuccess: (draft) => {
+      const payload = draft.payload ?? {};
+      setEditingPersonaId(null);
+      setKind(payload.kind === "scribe" || payload.kind === "facilitator" ? payload.kind : "discussant");
+      setName(typeof payload.name === "string" ? payload.name : name);
+      setDescription(typeof payload.description === "string" ? payload.description : description);
+      setSystemPrompt(typeof payload.system_prompt === "string" ? payload.system_prompt : systemPrompt);
+      setTemperature(typeof payload.temperature === "number" ? payload.temperature : temperature);
+      setTags(Array.isArray(payload.tags) ? payload.tags.map(String).join(",") : tags);
+      setConfigText(
+        payload.config && typeof payload.config === "object" && !Array.isArray(payload.config)
+          ? JSON.stringify(payload.config, null, 2)
+          : "{}"
+      );
     }
   });
   const addFromBuiltin = useMutation({
@@ -276,6 +295,29 @@ function PersonasView() {
             {t("templates.readonlyBuiltin")}
           </p>
         )}
+        <div className="mt-4 rounded-md border border-border bg-surface p-3">
+          <div className="flex items-center gap-2 text-sm font-medium">
+            <Sparkles size={15} />
+            {t("templates.assistant")}
+          </div>
+          <textarea
+            name="persona-draft-prompt"
+            className="textarea mt-2 h-20 w-full"
+            value={draftPrompt}
+            onChange={(event) => setDraftPrompt(event.target.value)}
+            placeholder={t("templates.personaDraftPlaceholder")}
+          />
+          <button
+            className="btn mt-2 w-full"
+            type="button"
+            onClick={() => draftPersona.mutate()}
+            disabled={!draftPrompt.trim() || draftPersona.isPending}
+          >
+            <Sparkles size={14} />
+            {draftPersona.isPending ? t("common.loading") : t("templates.applyDraft")}
+          </button>
+          {draftPersona.error instanceof Error && <p className="mt-2 text-xs text-danger">{draftPersona.error.message}</p>}
+        </div>
         <div className="mt-4 space-y-3">
           <div className="grid grid-cols-2 gap-2">
             <label className="block">

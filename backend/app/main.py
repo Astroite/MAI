@@ -3,6 +3,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -50,6 +51,8 @@ from .models import (
     RoomPhasePlan,
     RoomRuntimeState,
     ScribeState,
+    ToolInvocation,
+    ToolServer,
     Upload,
 )
 from .schemas import (
@@ -96,12 +99,23 @@ from .schemas import (
     RoomPhasePlanOut,
     RoomRuntimeOut,
     RoomState,
+    ScenarioOut,
     ScribeStateOut,
+    TemplateDraftOut,
+    TemplateDraftRequest,
+    ToolExecuteRequest,
+    ToolInvocationOut,
+    ToolSchemaOut,
+    ToolServerCreate,
+    ToolServerOut,
+    ToolServerUpdate,
     TurnRequest,
     UploadOut,
     VerdictCreate,
 )
+from .llm import llm_adapter
 from .seed import seed_builtins
+from .tools import execute_tool, list_tool_schemas, sync_mcp_server
 from .trace import trace_record
 
 
@@ -314,6 +328,136 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
         setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
         updated_at=row.updated_at,
     )
+
+
+@app.get("/tools", response_model=list[ToolSchemaOut])
+async def list_tools(session: AsyncSession = Depends(get_session)):
+    return await list_tool_schemas(session)
+
+
+@app.get("/tools/mcp-servers", response_model=list[ToolServerOut])
+async def list_mcp_servers(session: AsyncSession = Depends(get_session)):
+    return (await session.scalars(select(ToolServer).order_by(ToolServer.created_at.desc()))).all()
+
+
+@app.post("/tools/mcp-servers", response_model=ToolServerOut)
+async def create_mcp_server(body: ToolServerCreate, session: AsyncSession = Depends(get_session)):
+    server = ToolServer(
+        id=new_id(),
+        name=body.name.strip(),
+        description=body.description,
+        transport=body.transport,
+        url=body.url.strip(),
+        enabled=body.enabled,
+        allow_write=body.allow_write,
+        manifest={"tools": []},
+    )
+    if not server.name:
+        raise HTTPException(400, "server name is required")
+    if not server.url:
+        raise HTTPException(400, "server URL is required")
+    session.add(server)
+    await session.commit()
+    await session.refresh(server)
+    return server
+
+
+@app.patch("/tools/mcp-servers/{server_id}", response_model=ToolServerOut)
+async def update_mcp_server(server_id: str, body: ToolServerUpdate, session: AsyncSession = Depends(get_session)):
+    server = await session.get(ToolServer, server_id)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for key, value in changes.items():
+        if isinstance(value, str):
+            value = value.strip()
+        setattr(server, key, value)
+    await session.commit()
+    await session.refresh(server)
+    return server
+
+
+@app.delete("/tools/mcp-servers/{server_id}")
+async def delete_mcp_server(server_id: str, session: AsyncSession = Depends(get_session)):
+    server = await session.get(ToolServer, server_id)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    await session.execute(update(ToolInvocation).where(ToolInvocation.server_id == server_id).values(server_id=None))
+    await session.delete(server)
+    await session.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/tools/mcp-servers/{server_id}/sync", response_model=ToolServerOut)
+async def sync_mcp_server_route(server_id: str, session: AsyncSession = Depends(get_session)):
+    server = await session.get(ToolServer, server_id)
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    try:
+        await sync_mcp_server(session, server)
+    except Exception as exc:  # noqa: BLE001 — persist last_error and surface it
+        await session.commit()
+        raise HTTPException(400, str(exc)) from exc
+    await session.commit()
+    await session.refresh(server)
+    return server
+
+
+@app.post("/rooms/{room_id}/tools/execute", response_model=ToolInvocationOut)
+async def execute_room_tool(room_id: str, body: ToolExecuteRequest, session: AsyncSession = Depends(get_session)):
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    try:
+        invocation = await execute_tool(
+            session,
+            room_id,
+            body.tool_name,
+            body.arguments,
+            parent_message_id=body.parent_message_id,
+            allow_write=body.allow_write,
+        )
+    except PermissionError as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    await session.commit()
+    await session.refresh(invocation)
+    return invocation
+
+
+@app.get("/scenarios", response_model=list[ScenarioOut])
+async def list_scenarios(session: AsyncSession = Depends(get_session)):
+    return await _scenario_catalog(session)
+
+
+@app.post("/assistants/template-draft", response_model=TemplateDraftOut)
+async def draft_template(body: TemplateDraftRequest, session: AsyncSession = Depends(get_session)):
+    fallback = _fallback_template_draft(body.kind, body.prompt)
+    llm_persona, provider = await _template_assistant_runtime(session)
+    if llm_persona is None:
+        return fallback
+    try:
+        draft = await llm_adapter.complete_tool(
+            llm_persona,
+            "draft_template",
+            "Draft a MAI template payload from the user's natural language request.",
+            TemplateDraftOut,
+            {
+                "kind": body.kind,
+                "prompt": body.prompt,
+                "fallback_shape": fallback.model_dump(mode="json"),
+                "constraints": [
+                    "Return kind exactly as requested.",
+                    "The payload must be directly usable by the matching MAI template form.",
+                    "Keep generated Chinese text concise and actionable.",
+                ],
+            },
+            max_tokens=1800,
+            api_provider=provider,
+        )
+        return TemplateDraftOut.model_validate(draft).model_copy(update={"kind": body.kind})
+    except Exception:
+        return fallback
 
 
 @app.get("/templates/personas", response_model=list[PersonaTemplateOut])
@@ -1099,6 +1243,30 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
     await transition_to_next_phase(session, room.id, target_position=0)
     await trace_record(session, room.id, "state_mutation", "room created", {"format_id": room.format_id, "recipe_id": room.recipe_id})
     await session.commit()
+    initial_content = (body.initial_message or "").strip()
+    if initial_content:
+        runtime = await _runtime_or_404(session, room.id)
+        message = Message(
+            room_id=room.id,
+            phase_instance_id=runtime.current_phase_instance_id,
+            message_type="speech",
+            author_actual="user",
+            visibility="public",
+            visibility_to_models=True,
+            content=initial_content,
+            completion_tokens=estimate_tokens(initial_content),
+            cost_usd=0,
+        )
+        runtime.token_counter_total += message.completion_tokens or 0
+        session.add(message)
+        await session.flush()
+        await trace_record(session, room.id, "user_action", "scenario initial message appended", {"message_id": message.id})
+        await session.commit()
+        await event_bus.publish(
+            room.id,
+            {"type": "message.appended", "message": MessageOut.model_validate(message).model_dump(mode="json")},
+        )
+        await after_message_appended(session, room.id, message)
     return await _room_state(session, room.id)
 
 
@@ -1489,6 +1657,7 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
         ScribeState as _ScribeState,
         TraceEvent as _TraceEvent,
     )
+    await session.execute(delete(ToolInvocation).where(ToolInvocation.room_id == room_id))
     await session.execute(delete(Message).where(Message.room_id == room_id))
     await session.execute(delete(_Decision).where(_Decision.room_id == room_id))
     await session.execute(delete(_FacilitatorSignal).where(_FacilitatorSignal.room_id == room_id))
@@ -1627,6 +1796,134 @@ async def merge_back(room_id: str, body: MergeBackCreate, session: AsyncSession 
     return {"status": "ok", "merge_back_id": merge.id}
 
 
+async def _scenario_catalog(session: AsyncSession) -> list[ScenarioOut]:
+    recipes = {
+        row.name: row.id
+        for row in (
+            await session.scalars(select(Recipe).where(Recipe.name.in_(["方案评审默认配方", "开放圆桌默认配方"])))
+        ).all()
+    }
+    formats = {
+        row.name: row.id
+        for row in (
+            await session.scalars(select(DebateFormat).where(DebateFormat.name.in_(["方案评审", "头脑风暴", "苏格拉底诘问", "自由模式"])))
+        ).all()
+    }
+    return [
+        ScenarioOut(
+            id="architecture-review",
+            title="技术方案评审",
+            description="让架构、性能、维护和反方角色围绕一个方案做立论、质询、答辩和打分。",
+            prompt="请评审这个技术方案：\n\n背景：\n目标：\n方案概要：\n关键约束：\n我最担心的问题：",
+            tags=["review", "technical"],
+            recipe_id=recipes.get("方案评审默认配方"),
+            format_id=formats.get("方案评审"),
+        ),
+        ScenarioOut(
+            id="product-roundtable",
+            title="产品决策圆桌",
+            description="从产品价值、用户体验、风险和落地成本四个视角比较备选方案。",
+            prompt="请帮我比较这些产品方案并给出推荐：\n\n用户目标：\n备选方案：\n当前数据或反馈：\n时间/资源约束：",
+            tags=["product", "decision"],
+            recipe_id=recipes.get("开放圆桌默认配方"),
+            format_id=formats.get("自由模式"),
+        ),
+        ScenarioOut(
+            id="brainstorm-options",
+            title="发散头脑风暴",
+            description="并行产出差异化想法，先扩展空间，再由用户收敛。",
+            prompt="请围绕这个目标发散 10 个方向不同的方案，暂时不要批评：\n\n目标：\n受众：\n限制：",
+            tags=["brainstorm"],
+            format_id=formats.get("头脑风暴"),
+        ),
+        ScenarioOut(
+            id="socratic-risk-check",
+            title="假设压力测试",
+            description="用连续追问暴露一个判断、商业假设或技术选择里的薄弱点。",
+            prompt="请用苏格拉底式诘问压力测试这个判断：\n\n我的判断：\n我相信它的原因：\n需要验证的结果：",
+            tags=["risk", "socratic"],
+            format_id=formats.get("苏格拉底诘问"),
+        ),
+    ]
+
+
+async def _template_assistant_runtime(session: AsyncSession):
+    row = await _get_or_create_app_settings(session)
+    model_name = ""
+    provider = None
+    if row.default_api_model_id:
+        api_model = await session.get(ApiModel, row.default_api_model_id)
+        if api_model and api_model.enabled:
+            model_name = api_model.model_name
+            provider = await session.get(ApiProvider, api_model.api_provider_id)
+    if not model_name and row.default_backing_model and row.default_api_provider_id:
+        model_name = row.default_backing_model
+        provider = await session.get(ApiProvider, row.default_api_provider_id)
+    if not model_name:
+        return None, None
+    return (
+        SimpleNamespace(
+            backing_model=model_name,
+            temperature=0.2,
+            config={},
+            system_prompt=(
+                "你是 MAI 模板起草助手。根据用户的自然语言需求，输出可直接保存的模板字段。"
+                "不要编造外部事实；优先给出简洁、可执行、中文字段。"
+            ),
+        ),
+        provider,
+    )
+
+
+def _fallback_template_draft(kind: str, prompt: str) -> TemplateDraftOut:
+    text = (prompt or "").strip()
+    title = text.splitlines()[0][:28].strip(" ：:，,。") if text else ""
+    if not title:
+        title = {"persona": "新智能体", "phase": "新讨论阶段", "recipe": "新讨论配方"}[kind]
+    if kind == "persona":
+        return TemplateDraftOut(
+            kind="persona",
+            payload={
+                "kind": "discussant",
+                "name": title,
+                "description": text[:160],
+                "system_prompt": f"你是{title}。请围绕用户目标给出具体、可执行、基于证据的观点。",
+                "temperature": 0.4,
+                "config": {},
+                "tags": ["assistant-draft"],
+            },
+            rationale="基于输入生成了可编辑的角色草稿。",
+        )
+    if kind == "phase":
+        return TemplateDraftOut(
+            kind="phase",
+            payload={
+                "name": title,
+                "description": text[:160],
+                "declared_variables": [],
+                "allowed_speakers": {"type": "all"},
+                "ordering_rule": {"type": "mention_driven"},
+                "exit_conditions": [{"type": "user_manual"}],
+                "auto_discuss": True,
+                "role_constraints": "聚焦当前目标，避免重复已经达成的共识。",
+                "prompt_template": text or "请基于当前上下文给出下一步有效发言。",
+                "tags": ["assistant-draft"],
+            },
+            rationale="基于输入生成了可编辑的阶段草稿。",
+        )
+    return TemplateDraftOut(
+        kind="recipe",
+        payload={
+            "name": title,
+            "description": text[:160],
+            "persona_ids": [],
+            "initial_settings": {"max_phase_rounds": 3, "auto_transition": False},
+            "tags": ["assistant-draft"],
+        },
+        rationale="基于输入生成了可编辑的配方草稿。",
+    )
+
+
 async def _select_format(session: AsyncSession, format_id: str | None) -> DebateFormat | None:
     if format_id:
         item = await session.get(DebateFormat, format_id)
@@ -1737,6 +2034,16 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
     messages = (
         await session.scalars(select(Message).where(Message.room_id == room_id).order_by(Message.created_at))
     ).all()
+    tool_invocations = (
+        await session.scalars(
+            select(ToolInvocation).where(ToolInvocation.room_id == room_id).order_by(ToolInvocation.created_at)
+        )
+    ).all()
+    tool_by_message_id = {
+        item.message_id: ToolInvocationOut.model_validate(item)
+        for item in tool_invocations
+        if item.message_id
+    }
     scribe_state = await session.get(ScribeState, room_id)
     if scribe_state is None:
         scribe_state = ScribeState(room_id=room_id, current_state=DEFAULT_SCRIBE_STATE.copy())
@@ -1773,6 +2080,8 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         output = MessageOut.model_validate(message)
         if message.author_actual == "user_as_persona" and message.id in revealed_at_by_message_id:
             output.user_revealed_at = revealed_at_by_message_id[message.id]
+        if message.id in tool_by_message_id:
+            output.tool_invocation = tool_by_message_id[message.id]
         message_outputs.append(output)
     return RoomState(
         room=RoomOut.model_validate(room),
@@ -1785,6 +2094,7 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         facilitator_signals=[FacilitatorSignalOut.model_validate(s) for s in signals],
         decisions=[DecisionOut.model_validate(d) for d in decisions],
         in_flight_partial=in_flight_partial,
+        tool_invocations=[ToolInvocationOut.model_validate(item) for item in tool_invocations],
     )
 
 
