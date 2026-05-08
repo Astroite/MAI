@@ -255,6 +255,7 @@ class Room(Base):
     parent_room_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     title: Mapped[str] = mapped_column(String(200))
+    background: Mapped[str] = mapped_column(Text, default="")
     recipe_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     format_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     format_version: Mapped[int | None] = mapped_column(Integer, nullable=True)

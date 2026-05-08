@@ -136,6 +136,7 @@ export interface Room {
   id: string;
   parent_room_id?: string | null;
   title: string;
+  background: string;
   status: "active" | "frozen" | "archived";
   format_id?: string | null;
   created_at: string;
@@ -191,6 +192,7 @@ export type MessageType =
   | "tool_invocation"
   | "masquerade_reveal"
   | "silence"
+  | "background_update"
   | "meta";
 
 export interface ToolSchema {

@@ -759,6 +759,7 @@ async def _stream_one_message(
                     _execute_llm_tool,
                     scribe_state,
                     api_provider=api_provider,
+                    room_background=room.background or "",
                 ),
                 timeout=max(CHUNK_IDLE_TIMEOUT_SECONDS, 180.0),
             )
@@ -781,7 +782,13 @@ async def _stream_one_message(
                 truncated_reason = call.cancel_reason
         else:
             stream_iter = llm_adapter.stream(
-                persona, context, template, runtime.max_message_tokens, scribe_state, api_provider=api_provider
+                persona,
+                context,
+                template,
+                runtime.max_message_tokens,
+                scribe_state,
+                api_provider=api_provider,
+                room_background=room.background or "",
             ).__aiter__()
             try:
                 while True:

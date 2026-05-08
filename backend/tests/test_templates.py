@@ -293,9 +293,10 @@ def test_api_provider_credentials_reach_llm_adapter(client, review_format, insta
     """Bound ApiProvider credentials must flow into LLMAdapter.stream."""
     captured: dict = {}
 
-    async def stream_capture(persona, context, phase, max_tokens, scribe_state=None, api_provider=None):
+    async def stream_capture(persona, context, phase, max_tokens, scribe_state=None, api_provider=None, room_background=""):
         captured["api_provider"] = api_provider
         captured["persona_id"] = persona.id
+        captured["room_background"] = room_background
         yield SimpleNamespace(text="ok", index=0)
 
     monkeypatch.setattr(llm_adapter, "stream", stream_capture)

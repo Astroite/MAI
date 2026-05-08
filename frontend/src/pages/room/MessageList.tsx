@@ -231,10 +231,18 @@ function MessageRow({
   if (
     message.message_type === "meta" ||
     message.message_type === "dead_end" ||
+    message.message_type === "background_update" ||
     message.author_actual === "system"
   ) {
-    const label =
-      message.message_type === "dead_end" ? t("message.deadEndPrefix", { content: message.content }) : message.content;
+    let label: string;
+    if (message.message_type === "dead_end") {
+      label = t("message.deadEndPrefix", { content: message.content });
+    } else if (message.message_type === "background_update") {
+      const preview = message.content.length > 80 ? `${message.content.slice(0, 80)}...` : message.content;
+      label = preview ? t("message.backgroundUpdatePrefix", { content: preview }) : t("message.backgroundUpdateBare");
+    } else {
+      label = message.content;
+    }
     return (
       <div className="my-1 flex items-center justify-center gap-2 text-xs text-muted">
         <div className="h-px flex-1 bg-border" />

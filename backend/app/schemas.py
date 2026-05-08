@@ -637,6 +637,7 @@ class RoomOut(APIModel):
     parent_room_id: str | None = None
     owner_user_id: str | None = None
     title: str
+    background: str = ""
     recipe_id: str | None = None
     format_id: str | None = None
     format_version: int | None = None
@@ -669,11 +670,15 @@ class RoomRuntimeOut(APIModel):
 
 class RoomCreate(APIModel):
     title: str
+    background: str = ""
     recipe_id: str | None = None
     format_id: str | None = None
     persona_ids: list[str] = Field(default_factory=list)
     parent_room_id: str | None = None
-    initial_message: str | None = None
+
+
+class RoomBackgroundUpdate(APIModel):
+    background: str
 
 
 class AddPersonasRequest(APIModel):

@@ -30,8 +30,9 @@ class LLMAdapter:
         max_tokens: int,
         scribe_state: dict[str, Any] | None = None,
         api_provider: ApiProvider | None = None,
+        room_background: str = "",
     ) -> AsyncIterator[StreamChunk]:
-        messages = self._build_messages(persona, context, phase, scribe_state)
+        messages = self._build_messages(persona, context, phase, scribe_state, room_background)
 
         response = await acompletion(
             model=persona.backing_model,
@@ -60,8 +61,9 @@ class LLMAdapter:
         scribe_state: dict[str, Any] | None = None,
         api_provider: ApiProvider | None = None,
         max_tool_rounds: int = 4,
+        room_background: str = "",
     ) -> ToolCompletion:
-        messages = self._build_messages(persona, context, phase, scribe_state)
+        messages = self._build_messages(persona, context, phase, scribe_state, room_background)
         tool_call_count = 0
         for _ in range(max_tool_rounds + 1):
             response = await acompletion(
@@ -172,8 +174,11 @@ class LLMAdapter:
         persona: Persona,
         phase: PhaseTemplate | None,
         scribe_state: dict[str, Any] | None,
+        room_background: str = "",
     ) -> str:
         parts = [persona.system_prompt.strip()]
+        if room_background and room_background.strip():
+            parts.append(f"【场景设定】\n{room_background.strip()}")
         if phase:
             parts.append(f"当前 Phase：{phase.name}。{phase.description}".strip())
             if phase.role_constraints:
@@ -198,8 +203,11 @@ class LLMAdapter:
         context: list[Message],
         phase: PhaseTemplate | None,
         scribe_state: dict[str, Any] | None,
+        room_background: str = "",
     ) -> list[dict[str, Any]]:
-        messages = [{"role": "system", "content": self._build_system_prompt(persona, phase, scribe_state)}]
+        messages = [
+            {"role": "system", "content": self._build_system_prompt(persona, phase, scribe_state, room_background)}
+        ]
         for message in context[-50:]:
             role = "assistant" if message.author_actual in {"ai", "user_as_persona"} else "user"
             messages.append({"role": role, "content": message.content})

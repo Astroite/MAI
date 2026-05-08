@@ -25,7 +25,7 @@ export function DashboardPage() {
   });
   const [dialogOpen, setDialogOpen] = useState(false);
   const [title, setTitle] = useState(() => t("dashboard.defaultTitle"));
-  const [initialMessage, setInitialMessage] = useState("");
+  const [background, setBackground] = useState("");
   const [recipeId, setRecipeId] = useState(DEFAULT_RECIPE);
   const [formatId, setFormatId] = useState<string | undefined>(undefined);
   const [selectedPersonaIds, setSelectedPersonaIds] = useState<string[]>([]);
@@ -69,10 +69,10 @@ export function DashboardPage() {
       if (!canCreate) throw new Error(t("dashboard.personaRequired"));
       return api.createRoom({
         title,
+        background: background.trim(),
         recipe_id: effectiveRecipeId,
         format_id: effectiveRecipeId ? undefined : formatId ?? solutionReview ?? formats.data?.[0]?.id,
-        persona_ids: effectivePersonaIds,
-        initial_message: initialMessage.trim() || null
+        persona_ids: effectivePersonaIds
       });
     },
     onSuccess: (state) => {
@@ -90,7 +90,7 @@ export function DashboardPage() {
 
   const applyScenario = (scenario: Scenario) => {
     setTitle(scenario.title);
-    setInitialMessage(scenario.prompt);
+    setBackground(scenario.prompt);
     if (scenario.recipe_id) {
       setRecipeId(scenario.recipe_id);
       setFormatId(undefined);
@@ -206,14 +206,15 @@ export function DashboardPage() {
                   <input name="room-title" className="input mt-1 w-full" value={title} onChange={(event) => setTitle(event.target.value)} />
                 </label>
                 <label className="block">
-                  <span className="label">{t("dashboard.initialMessage")}</span>
+                  <span className="label">{t("dashboard.background")}</span>
                   <textarea
-                    name="room-initial-message"
+                    name="room-background"
                     className="textarea mt-1 h-32 w-full"
-                    value={initialMessage}
-                    onChange={(event) => setInitialMessage(event.target.value)}
-                    placeholder={t("dashboard.initialMessagePlaceholder")}
+                    value={background}
+                    onChange={(event) => setBackground(event.target.value)}
+                    placeholder={t("dashboard.backgroundPlaceholder")}
                   />
+                  <p className="mt-1 text-xs text-muted">{t("dashboard.backgroundHelp")}</p>
                 </label>
                 <label className="block">
                   <span className="label">{t("dashboard.recipe")}</span>

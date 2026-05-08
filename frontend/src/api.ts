@@ -74,12 +74,17 @@ export const api = {
     request<{ status: string; room_id: string }>(`/rooms/${roomId}`, { method: "DELETE" }),
   createRoom: (body: {
     title: string;
+    background?: string;
     recipe_id?: string | null;
     format_id?: string | null;
     persona_ids: string[];
-    initial_message?: string | null;
   }) =>
     request<RoomState>("/rooms", { method: "POST", body: JSON.stringify(body) }),
+  updateRoomBackground: (roomId: string, background: string) =>
+    request<Room>(`/rooms/${roomId}/background`, {
+      method: "PATCH",
+      body: JSON.stringify({ background })
+    }),
   createSubroom: (
     roomId: string,
     body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }

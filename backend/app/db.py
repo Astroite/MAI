@@ -101,6 +101,9 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     "messages": [
         ("user_masquerade_name", "varchar(120)", "VARCHAR(120)"),
     ],
+    "rooms": [
+        ("background", "text DEFAULT '' NOT NULL", "TEXT DEFAULT '' NOT NULL"),
+    ],
     "phase_templates": [
         ("auto_discuss", "boolean DEFAULT false NOT NULL", "BOOLEAN DEFAULT 0 NOT NULL"),
     ],

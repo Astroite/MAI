@@ -93,6 +93,7 @@ from .schemas import (
     RecipeCreate,
     RecipeOut,
     RecipeUpdate,
+    RoomBackgroundUpdate,
     RoomCreate,
     RoomOut,
     RoomPhaseInstanceOut,
@@ -1201,6 +1202,7 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
         id=new_id(),
         parent_room_id=body.parent_room_id,
         title=body.title,
+        background=body.background or "",
         recipe_id=selected_recipe.id if selected_recipe else None,
         format_id=selected_format.id if selected_format else None,
         format_version=selected_format.version if selected_format else None,
@@ -1243,31 +1245,44 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
     await transition_to_next_phase(session, room.id, target_position=0)
     await trace_record(session, room.id, "state_mutation", "room created", {"format_id": room.format_id, "recipe_id": room.recipe_id})
     await session.commit()
-    initial_content = (body.initial_message or "").strip()
-    if initial_content:
-        runtime = await _runtime_or_404(session, room.id)
-        message = Message(
-            room_id=room.id,
-            phase_instance_id=runtime.current_phase_instance_id,
-            message_type="speech",
-            author_actual="user",
-            visibility="public",
-            visibility_to_models=True,
-            content=initial_content,
-            completion_tokens=estimate_tokens(initial_content),
-            cost_usd=0,
-        )
-        runtime.token_counter_total += message.completion_tokens or 0
-        session.add(message)
-        await session.flush()
-        await trace_record(session, room.id, "user_action", "scenario initial message appended", {"message_id": message.id})
-        await session.commit()
-        await event_bus.publish(
-            room.id,
-            {"type": "message.appended", "message": MessageOut.model_validate(message).model_dump(mode="json")},
-        )
-        await after_message_appended(session, room.id, message)
     return await _room_state(session, room.id)
+
+
+@app.patch("/rooms/{room_id}/background", response_model=RoomOut)
+async def update_room_background(
+    room_id: str, body: RoomBackgroundUpdate, session: AsyncSession = Depends(get_session)
+):
+    """Update the room's persistent background and append a visible system
+    message recording the change. The new background is what appears in every
+    persona's system prompt from this point on; the appended message preserves
+    history and lets AIs notice (and react to) the shift in setting.
+    """
+    room = await session.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "room not found")
+    new_value = (body.background or "").strip()
+    if new_value == (room.background or ""):
+        return RoomOut.model_validate(room)
+    room.background = new_value
+    runtime = await session.get(RoomRuntimeState, room_id)
+    message = Message(
+        room_id=room.id,
+        phase_instance_id=runtime.current_phase_instance_id if runtime else None,
+        message_type="background_update",
+        author_actual="system",
+        visibility="public",
+        visibility_to_models=True,
+        content=new_value,
+    )
+    session.add(message)
+    await session.flush()
+    await trace_record(session, room.id, "state_mutation", "room background updated", {"message_id": message.id})
+    await session.commit()
+    await event_bus.publish(
+        room.id,
+        {"type": "message.appended", "message": MessageOut.model_validate(message).model_dump(mode="json")},
+    )
+    return RoomOut.model_validate(room)
 
 
 @app.get("/rooms/{room_id}/state", response_model=RoomState)

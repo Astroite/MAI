@@ -1,21 +1,28 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   BookOpen,
+  ChevronDown,
+  ChevronUp,
   FileText,
   GitBranchPlus,
   Layers,
   Loader2,
+  Pencil,
+  Plus,
+  Save,
   Scale,
+  Scroll,
   Settings,
   Settings2,
   Shield,
   Snowflake,
   Unlock,
   WifiOff,
-  Wrench
+  Wrench,
+  X
 } from "lucide-react";
 import { api } from "../../api";
 import { useRoomEvents } from "../../hooks";
@@ -178,6 +185,7 @@ export function RoomShell() {
               </div>
             </header>
             <ConnectionBanner />
+            <RoomBackgroundCard roomId={activeRoomId!} background={state.room.background ?? ""} frozen={state.runtime.frozen} />
             {state.runtime.phase_exit_suggested && (
               <PhaseExitBanner
                 matched={state.runtime.phase_exit_matched_conditions}
@@ -230,6 +238,138 @@ const PANEL_SHORTCUTS = [
   { key: "upload", labelKey: "room.panel.upload", icon: FileText },
   { key: "limits", labelKey: "room.panel.limits", icon: Settings2 }
 ] as const;
+
+function RoomBackgroundCard({
+  roomId,
+  background,
+  frozen
+}: {
+  roomId: string;
+  background: string;
+  frozen: boolean;
+}) {
+  const { t } = useI18n();
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const [draft, setDraft] = useState(background);
+  const [error, setError] = useState<string | null>(null);
+
+  // Reset draft when the saved value changes (e.g., another tab edited).
+  useEffect(() => {
+    setDraft(background);
+  }, [background]);
+
+  const save = useMutation({
+    mutationFn: () => api.updateRoomBackground(roomId, draft.trim()),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+      setEditing(false);
+      setError(null);
+    },
+    onError: (err) => setError(err instanceof Error ? err.message : t("api.saveFailed"))
+  });
+
+  const trimmed = background.trim();
+  const isLong = trimmed.length > 140;
+
+  if (editing) {
+    return (
+      <div className="border-b border-border bg-surface/50 px-4 py-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-muted">
+          <Scroll size={13} />
+          <span>{t("room.background")}</span>
+        </div>
+        <textarea
+          name="room-background-edit"
+          className="textarea mt-2 h-32 w-full text-sm"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={t("dashboard.backgroundPlaceholder")}
+          disabled={frozen || save.isPending}
+        />
+        <p className="mt-1 text-xs text-muted">{t("room.backgroundEditHelp")}</p>
+        {error && <div className="mt-1 text-xs text-danger">{error}</div>}
+        <div className="mt-2 flex items-center gap-2">
+          <button
+            className="btn btn-primary h-7 px-2 text-xs"
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={frozen || save.isPending || draft.trim() === trimmed}
+          >
+            <Save size={13} />
+            {t("common.save")}
+          </button>
+          <button
+            className="btn h-7 px-2 text-xs"
+            type="button"
+            onClick={() => {
+              setDraft(background);
+              setEditing(false);
+              setError(null);
+            }}
+            disabled={save.isPending}
+          >
+            <X size={13} />
+            {t("common.cancel")}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!trimmed) {
+    return (
+      <div className="border-b border-border bg-surface/30 px-4 py-2">
+        <button
+          className="flex items-center gap-2 text-xs text-muted hover:text-brand"
+          type="button"
+          onClick={() => setEditing(true)}
+          disabled={frozen}
+        >
+          <Plus size={13} />
+          {t("room.backgroundAdd")}
+        </button>
+      </div>
+    );
+  }
+
+  const displayText = expanded || !isLong ? trimmed : `${trimmed.slice(0, 140)}...`;
+  return (
+    <div className="border-b border-border bg-surface/30 px-4 py-2">
+      <div className="flex items-start gap-2">
+        <Scroll size={13} className="mt-1 flex-shrink-0 text-muted" />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-muted">{t("room.background")}</span>
+            <div className="flex items-center gap-1">
+              {isLong && (
+                <button
+                  className="btn h-6 px-2 text-xs"
+                  type="button"
+                  onClick={() => setExpanded((value) => !value)}
+                  title={expanded ? t("common.collapse") : t("common.expand")}
+                >
+                  {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                </button>
+              )}
+              <button
+                className="btn h-6 px-2 text-xs"
+                type="button"
+                onClick={() => setEditing(true)}
+                disabled={frozen}
+                title={t("room.backgroundEdit")}
+              >
+                <Pencil size={12} />
+              </button>
+            </div>
+          </div>
+          <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{displayText}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function ConnectionBanner() {
   const status = useUIStore((s) => s.connectionStatus);
