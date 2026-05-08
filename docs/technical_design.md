@@ -117,7 +117,6 @@ AI 不是 free-running。`pick_next_speaker` 根据当前阶段的 `ordering_rul
 api_providers
   id
   name
-  vendor
   provider_slug
   api_key
   api_base

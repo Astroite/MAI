@@ -39,15 +39,14 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 
 ## 4. API 与模型配置
 
-模型配置分成三层：
+模型配置分两层：
 
 | 层级 | 作用 | 示例 |
 |---|---|---|
-| 供应商 `vendor` | 面向用户的服务商归类 | OpenAI、Anthropic、OpenRouter、Local |
-| `provider` | LiteLLM 路由概念 | `openai`、`anthropic`、`gemini`、`openrouter` |
+| `provider` | 凭据 + LiteLLM 路由类型，由用户起一个可读名称 | "我的 OpenAI"，类型 `openai` / `anthropic` / `openrouter` / `custom` |
 | `model` | 具体模型条目 | `openai/gpt-4o-mini` |
 
-用户在 API 配置页维护供应商和模型列表，再在人设页或房间成员编辑器里选择模型。设置页只负责选择全局默认模型。这样一个供应商可以暴露多个模型，多个供应商也可以共存。
+用户在 API 配置页维护 provider 和模型列表，再在人设页或房间成员编辑器里选择模型。设置页只负责选择全局默认模型。一个 provider 下可以挂多个模型，多个 provider 也可以共存。
 
 调用模型时的产品语义：
 

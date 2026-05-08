@@ -116,7 +116,6 @@ export const api = {
     request<ApiProviderDetail>(`/templates/api-providers/${providerId}`),
   createApiProvider: (body: {
     name: string;
-    vendor?: string;
     provider_slug: string;
     api_key: string;
     api_base?: string | null;
@@ -127,7 +126,7 @@ export const api = {
     }),
   updateApiProvider: (
     providerId: string,
-    body: { name?: string; vendor?: string; provider_slug?: string; api_key?: string; api_base?: string | null }
+    body: { name?: string; provider_slug?: string; api_key?: string; api_base?: string | null }
   ) =>
     request<ApiProviderDetail>(`/templates/api-providers/${providerId}`, {
       method: "PATCH",

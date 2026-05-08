@@ -9,6 +9,7 @@ import { toast } from "../components/Toaster";
 import { ApiProvidersView } from "./TemplatesPage";
 import type { ApiModel, ApiProvider } from "../types";
 import { useI18n } from "../i18n";
+import { providerKindLabel } from "../providers";
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 10000 });
@@ -277,7 +278,7 @@ function DefaultApiSection() {
 
 function settingsProviderName(provider: ApiProvider | undefined, t: (key: string) => string): string {
   if (!provider) return t("room.noProvider");
-  return `${provider.name} · ${provider.vendor || provider.provider_slug}`;
+  return `${provider.name} · ${providerKindLabel(provider.provider_slug, t)}`;
 }
 
 function settingsModelOptionLabel(model: ApiModel, t: (key: string) => string): string {

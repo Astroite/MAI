@@ -282,7 +282,6 @@ def _mask_api_key(key: str) -> str:
 class ApiProviderOut(APIModel):
     id: str
     name: str
-    vendor: str = "custom"
     provider_slug: str
     api_key_preview: str
     has_api_key: bool
@@ -298,7 +297,6 @@ class ApiProviderOut(APIModel):
         return cls(
             id=provider.id,
             name=provider.name,
-            vendor=getattr(provider, "vendor", None) or provider.provider_slug or "custom",
             provider_slug=provider.provider_slug,
             api_key_preview=_mask_api_key(provider.api_key or ""),
             has_api_key=bool(provider.api_key),
@@ -319,7 +317,6 @@ class ApiProviderDetailOut(ApiProviderOut):
         return cls(
             id=provider.id,
             name=provider.name,
-            vendor=getattr(provider, "vendor", None) or provider.provider_slug or "custom",
             provider_slug=provider.provider_slug,
             api_key_preview=_mask_api_key(provider.api_key or ""),
             has_api_key=bool(provider.api_key),
@@ -392,7 +389,6 @@ class AppSettingsUpdate(APIModel):
 
 class ApiProviderCreate(APIModel):
     name: str
-    vendor: str = "custom"
     provider_slug: str
     api_key: str = ""
     api_base: str | None = None
@@ -400,7 +396,6 @@ class ApiProviderCreate(APIModel):
 
 class ApiProviderUpdate(APIModel):
     name: str | None = None
-    vendor: str | None = None
     provider_slug: str | None = None
     api_key: str | None = None
     api_base: str | None = None

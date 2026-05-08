@@ -39,7 +39,6 @@ export interface PersonaInstance {
 export interface ApiProvider {
   id: string;
   name: string;
-  vendor: string;
   provider_slug: string;
   api_key_preview: string;
   has_api_key: boolean;

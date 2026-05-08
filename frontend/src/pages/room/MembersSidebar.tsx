@@ -5,6 +5,7 @@ import { api } from "../../api";
 import { useUIStore } from "../../store";
 import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
 import { useI18n } from "../../i18n";
+import { providerKindLabel } from "../../providers";
 
 function personaColor(id?: string | null): string {
   if (!id) return "rgb(var(--muted))";
@@ -23,7 +24,7 @@ function personaInitial(name?: string | null): string {
 
 function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
   if (!provider) return t("room.noProvider");
-  return `${provider.name} · ${provider.vendor || provider.provider_slug}`;
+  return `${provider.name} · ${providerKindLabel(provider.provider_slug, t)}`;
 }
 
 function apiModelOptionLabel(model: ApiModel, t: (key: string) => string): string {

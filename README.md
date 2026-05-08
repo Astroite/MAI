@@ -7,7 +7,7 @@ MAI 是一个本地优先的多模型协作讨论工具：用户创建讨论室�
 - FastAPI 单进程后端，默认 SQLite，本地文件即可运行；PostgreSQL 仍可通过 `DATABASE_URL` 启用。
 - Vite + React + TypeScript 前端，支持中英文切换、暗色模式、Markdown/KaTeX/Shiki 渲染。
 - Tauri v2 桌面壳，使用 PyInstaller sidecar 自动启动后端。
-- LiteLLM 统一模型调用。API 配置拆成三层：供应商 vendor、LiteLLM provider、具体 model。
+- LiteLLM 统一模型调用。API 配置两层：Provider（LiteLLM 路由 + 凭据）和 Model（具体可选模型）。
 - 模板系统已稳定：内置模板只读；用户点击“添加”时从内置库复制一份可编辑实例；人设、阶段、赛制、配方页里的卡片都按可编辑实例管理。
 - 新增能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、场景化一键开房、模板 AI 起草。
 
@@ -61,8 +61,8 @@ http://localhost:5173
 
 1. 打开 `模板 -> API 配置`。
 2. 新建 API 配置，填写：
-   - `供应商 vendor`：面向用户的归类，例如 OpenAI、Anthropic、OpenRouter、Local。
-   - `Provider`：LiteLLM 路由名，例如 `openai`、`anthropic`、`gemini`、`openrouter`。
+   - `名称`：用户可读的标签，例如 "我的 OpenAI"。
+   - `类型`：LiteLLM 路由，从 `openai` / `anthropic` / `gemini` / `openrouter` / `azure` / `custom` 中选一个。
    - API Key 与可选 API Base。
 3. 在该 API 配置下添加一个或多个模型，填写显示名称和 LiteLLM 模型名，例如 `openai/gpt-4o-mini`。
 4. 打开 `设置`，选择默认模型。

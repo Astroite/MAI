@@ -31,11 +31,6 @@ def run(sync_conn: Connection) -> None:
     if already is not None:
         return
 
-    if "api_providers" in table_names:
-        sync_conn.execute(
-            text("UPDATE api_providers SET vendor = provider_slug WHERE vendor IS NULL OR vendor = '' OR vendor = 'custom'")
-        )
-
     if "api_models" not in table_names:
         _mark_applied(sync_conn)
         return

@@ -130,7 +130,6 @@ class ApiProvider(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(120))
-    vendor: Mapped[str] = mapped_column(String(64), default="custom")
     provider_slug: Mapped[str] = mapped_column(String(64))
     api_key: Mapped[str] = mapped_column(Text)
     api_base: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -213,7 +213,6 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
         "/templates/api-providers",
         json={
             "name": "pytest model provider",
-            "vendor": "openai",
             "provider_slug": "openai",
             "api_key": "sk-model-test",
         },

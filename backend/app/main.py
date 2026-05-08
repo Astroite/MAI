@@ -582,7 +582,6 @@ async def create_api_provider(body: ApiProviderCreate, session: AsyncSession = D
     provider = ApiProvider(
         id=new_id(),
         name=body.name,
-        vendor=(body.vendor or body.provider_slug).strip(),
         provider_slug=body.provider_slug.strip(),
         api_key=body.api_key,
         api_base=body.api_base or None,
@@ -611,7 +610,7 @@ async def update_api_provider(
     changes = body.model_dump(mode="json", exclude_unset=True)
     creds_touched = any(key in changes for key in ("api_key", "api_base"))
     for key, value in changes.items():
-        if key in {"provider_slug", "vendor"} and isinstance(value, str):
+        if key == "provider_slug" and isinstance(value, str):
             value = value.strip()
         setattr(provider, key, value)
     if creds_touched:

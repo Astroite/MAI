@@ -116,18 +116,17 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## 3. 配置 API 与模型
 
-MAI 当前把三个概念分开：
+MAI 把模型配置拆成两层：
 
 | 概念 | 含义 | 示例 |
 |---|---|---|
-| 供应商 `vendor` | 用户理解上的服务商或网关归类 | OpenAI、Anthropic、OpenRouter、Local |
-| `provider` | LiteLLM 路由名 | `openai`、`anthropic`、`gemini`、`openrouter` |
-| `model` | 具体可选模型 | `openai/gpt-4o-mini`、`anthropic/claude-sonnet-4-5` |
+| `provider` | 一份凭据 + LiteLLM 路由类型，由用户取一个可读名称 | "我的 OpenAI"，类型 `openai` / `anthropic` / `openrouter` / `custom` |
+| `model` | 该 provider 下挂的具体可选模型 | `openai/gpt-4o-mini`、`anthropic/claude-sonnet-4-5` |
 
 推荐流程：
 
 1. 进入 `模板 -> API 配置`。
-2. 新建 API 配置，填 `供应商`、`Provider`、API Key 和可选 API Base。
+2. 新建 API 配置，填 `名称`、`类型`、API Key 和可选 API Base。
 3. 在该 API 配置下添加一个或多个模型。
 4. 在模型列表里可以测试连接，也可以指定 Provider 默认模型。
 5. 进入 `设置`，选择全局默认模型。

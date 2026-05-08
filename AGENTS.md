@@ -66,7 +66,17 @@ Token accounting is intentionally crude — `estimate_tokens` is `len(text)//4`.
 
 ## API provider/model model
 
-The current API configuration is three-layered: user-facing `vendor`, LiteLLM `provider_slug`, and one or more `ApiModel` rows under each provider. Settings should point at `AppSettings.default_api_model_id`; persona templates and room persona instances can also carry `api_model_id`. `backing_model` and `api_provider_id` remain as legacy mirror/fallback fields, and route helpers keep them in sync when `api_model_id` is selected. New UI should prefer model selection over free-text model/provider pairs.
+The current API configuration is two-layered: an `ApiProvider` (user-readable `name` + LiteLLM `provider_slug` enum + credentials) and one or more `ApiModel` rows under each provider. Settings should point at `AppSettings.default_api_model_id`; persona templates and room persona instances can also carry `api_model_id`. `backing_model` and `api_provider_id` remain as legacy mirror/fallback fields, and route helpers keep them in sync when `api_model_id` is selected. New UI should prefer model selection over free-text model/provider pairs. The `provider_slug` enum is `openai` / `anthropic` / `gemini` / `openrouter` / `azure` / `custom`; the frontend renders friendly labels via `frontend/src/providers.ts::providerKindLabel`.
+
+## Tools & MCP integration
+
+Persona turns can call tools via a schema-driven path; `app/tools.py` is the registry. `BUILTIN_TOOLS` lists in-process tools (`mai_search_room_messages`, `mai_list_room_members`, `mai_create_persona_template`, `mai_create_phase_template`); `list_tool_schemas` merges these with tools discovered from configured `ToolServer` rows so models see one flat tool list.
+
+`ToolServer` (MCP server config: `transport=streamable_http|sse`, `url`, `allow_write`, cached `manifest`, `last_synced_at`) and `ToolInvocation` (per-message audit row: `tool_name`, `arguments`, `status`, `result`) are real DB models in `app/models.py`. Each tool call appends a `ToolInvocation` linked to the originating `Message`, so the trail is append-only just like the message log.
+
+MCP servers are user-configurable via `/tools/mcp-servers` (list/create/update/delete) and `/tools/mcp-servers/{id}/sync`. `execute_tool` in `tools.py` dispatches built-ins locally and routes MCP calls through an MCP client session; tools with `read_only=False` only run when the calling server has `allow_write=True`. Tool names from MCP servers are namespaced via `external_tool_name(server, raw_name)` to avoid collisions with built-ins or other servers.
+
+Frontend surfaces this in `frontend/src/pages/room/panels/ToolPanel.tsx` (manage servers, sync manifest, ad-hoc execute), and per-room `tool_invocations` are streamed alongside messages — `frontend/src/types.ts` carries `ToolSchema`, `ToolServer`, `ToolInvocation`.
 
 ## Built-ins are content, not code paths
 
@@ -84,7 +94,7 @@ Single-process serve: when `frontend/dist/index.html` exists, `MAI_FRONTEND_DIST
 
 Tauri desktop shell: `frontend/src-tauri` creates the window manually after spawning the `mai-backend` sidecar on an ephemeral localhost port. It injects `window.__MAI_API_BASE__` before the SPA loads; `frontend/src/api.ts` must keep that value ahead of `VITE_API_BASE` and `/api`.
 
-Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory only holds primitive bits (`MarkdownBlock`, `StatusPill`).
+Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit, Tool). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory only holds primitive bits (`MarkdownBlock`, `StatusPill`).
 
 Frontend internationalization lives in `frontend/src/i18n.tsx` (`I18nProvider`, `useI18n`, `LanguageToggle`, `t`, `display`). User-visible strings and internal enum labels should go through i18n; user-authored room/template/message content should not be auto-translated.
 

@@ -9,7 +9,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 
 - 创建房间。
 - 选择配方、赛制和人设。
-- 配置 API 供应商与模型。
+- 配置 API provider 与模型。
 - 多 persona 按 phase 规则发言。
 - 书记官折叠状态。
 - 主持信号提示节奏。
@@ -68,7 +68,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 
 旧逻辑把 provider 和模型名混在一起。当前拆分为：
 
-- `ApiProvider`：供应商、LiteLLM provider、key、base、测试状态。
+- `ApiProvider`：用户起的可读名称、LiteLLM provider 类型、key、base、测试状态。
 - `ApiModel`：挂在 provider 下的具体模型，含显示名、模型名、默认标记、启用状态、context window、tags。
 - `AppSettings.default_api_model_id`：全局默认模型。
 - persona template / instance 可绑定 `api_model_id`。

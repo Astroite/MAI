@@ -11,6 +11,7 @@ import { toast } from "../components/Toaster";
 import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedChangesWarning } from "../hooks";
 import { useI18n } from "../i18n";
+import { PROVIDER_KINDS, providerKindLabel } from "../providers";
 
 export function TemplatesPage() {
   const { kind = "phases" } = useParams();
@@ -1286,7 +1287,6 @@ export function ApiProvidersView() {
   const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
-  const [vendor, setVendor] = useState("openai");
   const [providerSlug, setProviderSlug] = useState("openai");
   const [apiKey, setApiKey] = useState("");
   const [apiBase, setApiBase] = useState("");
@@ -1318,7 +1318,6 @@ export function ApiProvidersView() {
   const resetForm = () => {
     setEditingId(null);
     setName("");
-    setVendor("openai");
     setProviderSlug("openai");
     setApiKey("");
     setApiBase("");
@@ -1332,7 +1331,6 @@ export function ApiProvidersView() {
     try {
       const detail = await api.apiProviderDetail(id);
       setName(detail.name);
-      setVendor(detail.vendor || detail.provider_slug);
       setProviderSlug(detail.provider_slug);
       setApiKey(detail.api_key);
       setApiBase(detail.api_base ?? "");
@@ -1353,7 +1351,6 @@ export function ApiProvidersView() {
     mutationFn: () => {
       const body = {
         name: name.trim(),
-        vendor: vendor.trim() || providerSlug.trim() || "custom",
         provider_slug: providerSlug.trim(),
         api_base: apiBase.trim() ? apiBase.trim() : null
       };
@@ -1367,7 +1364,6 @@ export function ApiProvidersView() {
       void queryClient.invalidateQueries({ queryKey: ["personas"] });
       setEditingId(saved.id);
       setName(saved.name);
-      setVendor(saved.vendor || saved.provider_slug);
       setProviderSlug(saved.provider_slug);
       setApiKey(saved.api_key);
       setApiBase(saved.api_base ?? "");
@@ -1502,8 +1498,7 @@ export function ApiProvidersView() {
                       <h2 className="truncate font-semibold">{provider.name}</h2>
                     </div>
                     <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-                      <StatusPill>{provider.vendor}</StatusPill>
-                      <StatusPill tone="brand">{provider.provider_slug}</StatusPill>
+                      <StatusPill tone="brand">{providerKindLabel(provider.provider_slug, t)}</StatusPill>
                       <span>{(models.data ?? []).filter((model) => model.api_provider_id === provider.id).length} {t("api.models")}</span>
                       <span className="font-mono">{provider.api_key_preview || `(${t("api.keyMissing")})`}</span>
                       {provider.api_base && <span>· {provider.api_base}</span>}
@@ -1573,26 +1568,6 @@ export function ApiProvidersView() {
             />
           </label>
           <label className="block">
-            <span className="label">{t("api.vendor")}</span>
-            <input
-              name="api-provider-vendor"
-              className="input mt-1 w-full"
-              list="api-provider-vendors"
-              value={vendor}
-              onChange={(event) => setVendor(event.target.value)}
-              placeholder="openai"
-            />
-            <datalist id="api-provider-vendors">
-              <option value="openai" />
-              <option value="anthropic" />
-              <option value="gemini" />
-              <option value="openrouter" />
-              <option value="azure" />
-              <option value="local" />
-              <option value="custom" />
-            </datalist>
-          </label>
-          <label className="block">
             <span className="label">{t("api.provider")}</span>
             <select
               name="api-provider-slug"
@@ -1605,12 +1580,9 @@ export function ApiProvidersView() {
                 }
               }}
             >
-              <option value="openai">openai</option>
-              <option value="anthropic">anthropic</option>
-              <option value="gemini">gemini</option>
-              <option value="openrouter">openrouter</option>
-              <option value="azure">azure</option>
-              <option value="custom">custom</option>
+              {PROVIDER_KINDS.map((slug) => (
+                <option key={slug} value={slug}>{providerKindLabel(slug, t)}</option>
+              ))}
             </select>
             <p className="mt-1 text-xs text-muted">
               {t("api.providerHelp")}
@@ -1894,7 +1866,7 @@ function filterByTags<T extends { tags?: string[] }>(items: T[] | undefined, sel
 
 function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
   if (!provider) return t("room.noProvider");
-  return `${provider.name} · ${provider.vendor || provider.provider_slug}`;
+  return `${provider.name} · ${providerKindLabel(provider.provider_slug, t)}`;
 }
 
 function apiModelOptionLabel(model: ApiModel, t: (key: string) => string): string {
