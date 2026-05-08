@@ -9,7 +9,7 @@ MAI 是一个本地优先的多模型协作讨论工具：用户创建讨论室�
 - Tauri v2 桌面壳，使用 PyInstaller sidecar 自动启动后端。
 - LiteLLM 统一模型调用。API 配置拆成三层：供应商 vendor、LiteLLM provider、具体 model。
 - 模板系统已稳定：内置模板只读；用户点击“添加”时从内置库复制一份可编辑实例；人设、阶段、赛制、配方页里的卡片都按可编辑实例管理。
-- 新增 AgentVerse 启发的能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、场景化一键开房、模板 AI 起草。
+- 新增能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、场景化一键开房、模板 AI 起草。
 
 ## 快速开始
 
@@ -31,6 +31,12 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 python -m app.init_db
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+需要跑后端测试或构建桌面 sidecar 时，安装开发依赖：
+
+```powershell
+pip install -r requirements-dev.txt
 ```
 
 手动启动前端：
@@ -132,10 +138,12 @@ Vite 可能提示 Markdown/KaTeX/Shiki 相关 chunk 较大，这是 warning，�
 ```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 pytest -q
 ```
 
 测试会调用真实 LLM。请在 `backend/tests/.env.test` 写入 `OPENAI_API_KEY`；缺少 key 时测试会直接给出清晰提示并退出。
+默认测试数据库是 `backend/tests/.runtime/mai_test.sqlite3`，每次测试会清理重建，不会污染开发库 `backend/mai.sqlite3`。如果要测试 PostgreSQL 或其他数据库，请在 `.env.test` 里显式写入 `DATABASE_URL`。
 
 ## 打包
 

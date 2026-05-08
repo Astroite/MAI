@@ -3,11 +3,14 @@
 *.tsbuildinfo
 __pycache__/
 .pytest_cache/
+.coverage*
+htmlcov/
 
 backend/.venv/
 backend/.env
 backend/tests/.env.test
 backend/tests/.env*
+backend/tests/.runtime/
 backend/trace_payloads/
 backend/uploads/
 backend/mai.sqlite3

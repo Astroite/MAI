@@ -507,10 +507,12 @@ pnpm build
 ```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 pytest -q
 ```
 
 后端测试需要 `backend/tests/.env.test` 中的真实 `OPENAI_API_KEY`。
+默认测试库位于 `backend/tests/.runtime/mai_test.sqlite3`，每次测试会清理重建；只有在 `.env.test` 显式设置 `DATABASE_URL` 时才会连接外部测试库。
 
 发布包：
 

@@ -1,18 +1,42 @@
-"""Shared test fixtures and .env.test loader.
+"""Shared test fixtures, .env.test loader, and isolated test runtime.
 
 Tests require a real LiteLLM-backed provider. Put credentials in
 `backend/tests/.env.test` (gitignored). Without an OPENAI_API_KEY the suite
 exits early with a clear message — there is no mock fallback.
+
+By default pytest uses a clean SQLite database under `backend/tests/.runtime/`
+so test rooms and templates never pollute the normal development database.
+Set DATABASE_URL in `.env.test` when you intentionally want a different test DB.
 """
 
 import os
 from pathlib import Path
 
 import pytest
-from dotenv import load_dotenv
+from dotenv import dotenv_values, load_dotenv
 
-# Must load before importing app.* so Settings / LiteLLM pick up the env.
-load_dotenv(Path(__file__).parent / ".env.test", override=False)
+TEST_DIR = Path(__file__).parent
+ENV_TEST_PATH = TEST_DIR / ".env.test"
+RUNTIME_DIR = TEST_DIR / ".runtime"
+TEST_DB_PATH = RUNTIME_DIR / "mai_test.sqlite3"
+
+env_test_values = dotenv_values(ENV_TEST_PATH) if ENV_TEST_PATH.exists() else {}
+
+# Must configure before importing app.* so Settings / LiteLLM pick up the env.
+load_dotenv(ENV_TEST_PATH, override=True)
+
+RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+
+if not env_test_values.get("DATABASE_URL"):
+    os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{TEST_DB_PATH.resolve().as_posix()}"
+    for suffix in ("", "-journal", "-wal", "-shm"):
+        TEST_DB_PATH.with_name(f"{TEST_DB_PATH.name}{suffix}").unlink(missing_ok=True)
+
+if not env_test_values.get("TRACE_PAYLOAD_DIR"):
+    os.environ["TRACE_PAYLOAD_DIR"] = str(RUNTIME_DIR / "trace_payloads")
+
+if not env_test_values.get("UPLOAD_DIR"):
+    os.environ["UPLOAD_DIR"] = str(RUNTIME_DIR / "uploads")
 
 if not os.environ.get("OPENAI_API_KEY"):
     raise pytest.UsageError(

@@ -75,7 +75,6 @@ function Copy-ReleaseFiles {
     Copy-Item -Recurse (Join-Path $BackendDir "app") (Join-Path $BackendStage "app")
     Copy-Item (Join-Path $BackendDir "requirements.txt") $BackendStage
     Copy-Item (Join-Path $BackendDir ".env.example") $BackendStage
-    Copy-Item (Join-Path $BackendDir "pytest.ini") $BackendStage
 
     if (-not (Test-Path (Join-Path $FrontendDir "dist"))) {
         throw "frontend/dist does not exist. Run without -SkipFrontendBuild or build the frontend first."

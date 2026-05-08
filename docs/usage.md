@@ -228,6 +228,7 @@ pnpm build
 ```powershell
 cd backend
 .\.venv\Scripts\Activate.ps1
+pip install -r requirements-dev.txt
 pytest -q
 ```
 
@@ -238,6 +239,7 @@ OPENAI_API_KEY=...
 ```
 
 该文件已被 `.gitignore` 排除。缺少 token 时，测试会直接退出并说明原因。
+默认测试数据库是 `backend/tests/.runtime/mai_test.sqlite3`，每次测试会清理重建，不会写入开发库 `backend/mai.sqlite3`。如果要测试其他数据库，请在 `.env.test` 里显式写入 `DATABASE_URL`。
 
 ## 9. 打包
 

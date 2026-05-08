@@ -43,12 +43,12 @@ pnpm tauri --version
 cd ..
 ```
 
-后端依赖里已经包含 PyInstaller。确认虚拟环境存在并安装依赖：
+桌面 sidecar 构建需要 PyInstaller，因此确认虚拟环境存在并安装开发依赖：
 
 ```powershell
 cd backend
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m app.init_db
 cd ..
 ```
@@ -57,6 +57,7 @@ cd ..
 
 ```powershell
 cd backend
+.\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest -q
 cd ..\frontend
 pnpm build
@@ -65,7 +66,7 @@ cd ..
 
 当前基线应为：
 
-- 后端测试：通过。测试会调用真实 LLM，请先在 `backend/tests/.env.test` 写入 `OPENAI_API_KEY`
+- 后端测试：通过。测试会调用真实 LLM，请先在 `backend/tests/.env.test` 写入 `OPENAI_API_KEY`；默认使用 `backend/tests/.runtime/mai_test.sqlite3`，不会污染开发库
 - 前端构建：成功；Vite 可能提示大 chunk warning，这不是失败
 - Tauri 构建：成功生成 `frontend/src-tauri/target/release/bundle/nsis/` 下的 NSIS 安装包
 

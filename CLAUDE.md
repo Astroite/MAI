@@ -15,6 +15,7 @@ PostgreSQL is optional: `docker compose -f infra/docker-compose.yml up -d postgr
 Backend (run from `backend/` with the `.venv` activated):
 
 - Install: `pip install -r requirements.txt`
+- Install test/build tooling: `pip install -r requirements-dev.txt`
 - Init / migrate schema and seed built-ins: `python -m app.init_db`
 - Run dev server: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
 - All tests: `pytest -q` (suite is split by topic under `tests/`, with shared fixtures in `tests/conftest.py`). `pytest.ini` sets `pythonpath = .` so tests must be run from `backend/`.
@@ -30,7 +31,7 @@ Frontend (run from `frontend/`):
 - Vitest: `pnpm test`
 - Tauri CLI: `pnpm tauri --version`
 
-Tests run against whatever `DATABASE_URL` resolves to — by default that's a local SQLite file (`backend/mai.sqlite3` in dev, `%APPDATA%/MAI/mai.sqlite3` when packaged), which `create_schema` builds on the first connection. If you've pointed `DATABASE_URL` at PostgreSQL, run `python -m app.init_db` against that DB before `pytest`.
+Tests default to an isolated SQLite database at `backend/tests/.runtime/mai_test.sqlite3`, reset at session start so pytest data does not pollute `backend/mai.sqlite3`. To test PostgreSQL or another database, set `DATABASE_URL` explicitly in `backend/tests/.env.test`.
 
 Release packaging: `.\scripts\package.ps1 -Version vX.Y.Z` stages a bundle under `release/mai-<version>/`. Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml` to publish a GitHub Release.
 
