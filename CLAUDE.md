@@ -17,8 +17,8 @@ Backend (run from `backend/` with the `.venv` activated):
 - Install: `pip install -r requirements.txt`
 - Install test/build tooling: `pip install -r requirements-dev.txt`
 - Init / migrate schema and seed built-ins: `python -m app.init_db`
-- Run dev server: `uvicorn app.main:app --reload --host 0.0.0.0 --port 8000`
-- All tests: `pytest -q` (suite is split by topic under `tests/`, with shared fixtures in `tests/conftest.py`). `pytest.ini` sets `pythonpath = .` so tests must be run from `backend/`.
+- Run dev server: `uvicorn app.main:app --reload --host 0.0.0.0 --port 47821`
+- All tests: `pytest -q` (suite is split by topic under `tests/`, with shared fixtures in `tests/conftest.py`). `pytest.ini` sets `pythonpath = .` so tests must be run from `backend/`. Async fixtures use function-scoped loops (`asyncio_default_fixture_loop_scope = function`).
 - Single test: `pytest -q tests/test_room_lifecycle.py::test_room_full_lifecycle`
 
 Tests hit real LLM endpoints — put your provider key in `backend/tests/.env.test` (gitignored). `conftest.py` loads it and exits early with a clear message if no `OPENAI_API_KEY` is present; there is no mock fallback.
@@ -26,7 +26,7 @@ Tests hit real LLM endpoints — put your provider key in `backend/tests/.env.te
 Frontend (run from `frontend/`):
 
 - Install: `pnpm install`
-- Dev server (proxies `/api` → `127.0.0.1:8000`): `pnpm dev --host 0.0.0.0 --port 5173`
+- Dev server (proxies `/api` → `127.0.0.1:47821`): `pnpm dev --host 0.0.0.0 --port 5173`
 - Type-check + build: `pnpm build` (`tsc --noEmit && vite build`)
 - Vitest: `pnpm test`
 - Tauri CLI: `pnpm tauri --version`
@@ -35,13 +35,13 @@ Tests default to an isolated SQLite database at `backend/tests/.runtime/mai_test
 
 Release packaging: `.\scripts\package.ps1 -Version vX.Y.Z` stages a bundle under `release/mai-<version>/`. Pushing a `v*.*.*` tag triggers `.github/workflows/release.yml` to publish a GitHub Release.
 
-Desktop packaging: `.\scripts\build-sidecar.ps1` builds the PyInstaller backend sidecar, and `.\scripts\package-tauri.ps1` builds the Tauri installer. This requires Rust/Cargo, Microsoft C++ Build Tools, and WebView2; see `docs/desktop_tauri.md`.
+Desktop packaging: `.\scripts\build-sidecar.ps1` builds the PyInstaller backend sidecar (entry point: `backend/mai_backend_main.py`), and `.\scripts\package-tauri.ps1` builds the Tauri installer. This requires Rust/Cargo, Microsoft C++ Build Tools, and WebView2; see `docs/desktop_tauri.md`.
 
 ## Schema management
 
 There is no migrations system (no Alembic). Schema is created by `Base.metadata.create_all` plus a self-healing column-add pass in `app/db.py::_ensure_added_columns` — it inspects the live table via SQLAlchemy's `inspect()` and only emits `ALTER TABLE ... ADD COLUMN` for columns missing from an older DB. Each entry in `_ADDED_COLUMNS` carries dialect-specific DDL so PostgreSQL and SQLite stay in sync. When you add a column to an existing table model, append a tuple to that list (or move the column model itself to satisfy `create_all` for fresh DBs).
 
-One-shot data migrations live beside the app (`migrate_personas.py`, `migrate_settings.py`, `migrate_api_models.py`) and record completion in `_migrations`. New data migrations should be idempotent and called from `create_schema`.
+One-shot data migrations live beside the app (`migrate_personas.py`, `migrate_settings.py`, `migrate_api_models.py`, `migrate_drop_vendor.py`) and record completion in `_migrations`. New data migrations should be idempotent and called from `create_schema`.
 
 Cross-dialect JSON columns use `JSONType = JSON().with_variant(JSONB(), "postgresql")` (defined in `app/models.py`) — PG users still get JSONB; SQLite gets the standard JSON type.
 
@@ -68,6 +68,8 @@ Token accounting is intentionally crude — `estimate_tokens` is `len(text)//4`.
 
 The current API configuration is two-layered: an `ApiProvider` (user-readable `name` + LiteLLM `provider_slug` enum + credentials) and one or more `ApiModel` rows under each provider. Settings should point at `AppSettings.default_api_model_id`; persona templates and room persona instances can also carry `api_model_id`. `backing_model` and `api_provider_id` remain as legacy mirror/fallback fields, and route helpers keep them in sync when `api_model_id` is selected. New UI should prefer model selection over free-text model/provider pairs. The `provider_slug` enum is `openai` / `anthropic` / `gemini` / `openrouter` / `azure` / `custom`; the frontend renders friendly labels via `frontend/src/providers.ts::providerKindLabel`.
 
+`app/llm.py` wraps LiteLLM for streaming and tool-call dispatch. Deep thinking is supported via `config.deep_thinking` — it maps to Anthropic's `thinking` parameter or OpenAI's `reasoning_effort: "high"` depending on provider.
+
 ## Tools & MCP integration
 
 Persona turns can call tools via a schema-driven path; `app/tools.py` is the registry. `BUILTIN_TOOLS` lists in-process tools (`mai_search_room_messages`, `mai_list_room_members`, `mai_create_persona_template`, `mai_create_phase_template`); `list_tool_schemas` merges these with tools discovered from configured `ToolServer` rows so models see one flat tool list.
@@ -80,7 +82,7 @@ Frontend surfaces this in `frontend/src/pages/room/panels/ToolPanel.tsx` (manage
 
 ## Built-ins are content, not code paths
 
-`app/seed.py` defines all built-in personas, phase templates, debate formats, and recipes. They are inserted on first startup keyed by deterministic UUIDv5 ids (`builtin_id(kind, key)`), and `seed_builtins` only seeds a template table when that table is empty — there is no upsert. To change a built-in payload after the dev DB is seeded you have to either delete the row/table or change the seed key. Built-ins reference each other by these deterministic ids (e.g. format → phase template), so renaming a key is a breaking change.
+`app/seed.py` defines all built-in personas, phase templates, debate formats, and recipes. They are inserted on first startup keyed by deterministic UUIDv5 ids (`builtin_id(kind, key)`), and `seed_builtins` only seeds a template table when that table is empty — there is no upsert. To change a built-in payload after the dev DB is seeded you have to either delete the row/table or change the seed key. Built-ins reference each other by these deterministic ids (e.g. format → phase template), so renaming a key is a breaking change. The persona taxonomy (12 personas across 7 categories) is documented in `docs/personas.md`.
 
 Built-ins are read-only at the API layer. The product flow is duplicate-then-edit: template pages show editable instances by default, and the Add action copies from the immutable built-in library.
 
@@ -94,7 +96,9 @@ Single-process serve: when `frontend/dist/index.html` exists, `MAI_FRONTEND_DIST
 
 Tauri desktop shell: `frontend/src-tauri` creates the window manually after spawning the `mai-backend` sidecar on an ephemeral localhost port. It injects `window.__MAI_API_BASE__` before the SPA loads; `frontend/src/api.ts` must keep that value ahead of `VITE_API_BASE` and `/api`.
 
-Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit, Tool). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory only holds primitive bits (`MarkdownBlock`, `StatusPill`).
+Room UI is composed in `frontend/src/pages/room/RoomShell.tsx` (three-column layout: `RoomListSidebar` / `MessageList` + `Composer` / `RightPanel`) and a set of right-rail panels under `frontend/src/pages/room/panels/` (Scribe, Facilitator, Decisions, PhasePlan, Subroom, Upload, Limit, Tool). `pages/RoomPage.tsx` is a thin wrapper — extend the panels rather than the page. The shared `frontend/src/components/` directory holds reusable UI primitives (`AppRail`, `MarkdownBlock`, `StatusPill`, `MentionChip`, `PhaseStepper`, `SectionCard`, `ConfirmDialog`, `Toaster`).
+
+Styling uses Tailwind CSS with a custom design token system: CSS variables in `styles.css` (`--border`, `--panel`, `--surface`, `--text`, `--muted`, `--brand`, etc.) are mapped through `tailwind.config.ts` as color utilities. Dark mode toggles via the `class` strategy. `store.ts` (Zustand) persists dark mode preference to localStorage and manages transient streaming message state and SSE connection status.
 
 Frontend internationalization lives in `frontend/src/i18n.tsx` (`I18nProvider`, `useI18n`, `LanguageToggle`, `t`, `display`). User-visible strings and internal enum labels should go through i18n; user-authored room/template/message content should not be auto-translated.
 

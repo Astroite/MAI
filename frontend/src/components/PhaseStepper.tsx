@@ -59,7 +59,7 @@ export function PhaseStepper({
             </button>
             {!isLast && (
               <span
-                className={`mt-4 h-0.5 min-w-8 flex-1 rounded-full ${
+                className={`${size === "sm" ? "mt-2.5" : "mt-4"} h-0.5 min-w-8 flex-1 rounded-full ${
                   step.status === "done" ? "bg-brand" : "bg-border"
                 }`}
                 aria-hidden="true"

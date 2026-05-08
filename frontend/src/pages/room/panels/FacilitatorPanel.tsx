@@ -45,7 +45,7 @@ export function FacilitatorPanel({
     <section>
       <div className="flex items-center justify-between gap-2">
         {compact ? (
-          <span />
+          null
         ) : (
           <div className="flex items-center gap-2 text-sm font-semibold">
             <span className="grid h-6 w-6 place-items-center rounded-md bg-warning/10 text-warning" aria-hidden="true">
@@ -75,8 +75,8 @@ export function FacilitatorPanel({
             className="rounded-md border border-border bg-panel p-3 shadow-card"
           >
             <div className="flex items-start justify-between gap-2">
-              <div className="flex items-start gap-2 text-sm font-medium">
-                <Activity size={13} className="mt-1 text-warning" aria-hidden="true" />
+              <div className="flex items-center gap-2 text-sm font-medium">
+                <Activity size={13} className="text-warning" aria-hidden="true" />
                 <span>{signal.overall_health}</span>
               </div>
               {signal.signals[0] && (

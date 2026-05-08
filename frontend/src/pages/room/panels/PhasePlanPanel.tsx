@@ -27,7 +27,7 @@ export function PhasePlanPanel({ state }: { state: RoomState }) {
           return (
             <li
               key={`${slot.room_id}-${slot.position}`}
-              className={`rounded-md border p-2 text-sm ${active ? "border-brand" : "border-border"}`}
+              className={`rounded-md border p-2 text-sm shadow-card ${active ? "border-brand" : "border-border"}`}
             >
               <div className="font-medium">
                 {slot.position + 1}. {phase?.name ?? slot.phase_template_id}

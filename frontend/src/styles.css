@@ -96,7 +96,7 @@ textarea {
 }
 
 .label {
-  @apply text-xs font-semibold uppercase tracking-normal text-muted;
+  @apply text-xs font-semibold uppercase text-muted;
 }
 
 .prose-mai {

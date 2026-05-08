@@ -47,7 +47,7 @@ export function AppRail() {
   return (
     <aside
       aria-label="Primary navigation"
-      className="sticky top-0 z-30 flex h-[100dvh] w-16 flex-shrink-0 flex-col items-stretch border-r border-border/80 bg-panel max-md:w-12"
+      className="relative z-30 flex h-[100dvh] w-16 flex-shrink-0 flex-col items-stretch border-r border-border/80 bg-panel max-md:w-12"
     >
       <div className="flex h-14 items-center justify-center border-b border-border/80">
         <NavLink

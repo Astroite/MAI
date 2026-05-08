@@ -172,6 +172,11 @@ const zh: Record<string, string> = {
   "templates.talkativeness": "健谈度",
   "templates.talkativenessHelp": "影响自由聊天里被点到的概率：值越高越爱开口，0 表示几乎只在被 @ 时才说话。",
   "templates.systemPrompt": "系统提示词",
+  "templates.appearance": "外观",
+  "templates.appearanceHelp": "为人设挑一个图标和主题色，会出现在卡片和发言气泡上。",
+  "templates.color": "主题色",
+  "templates.icon": "图标",
+  "templates.advanced": "高级设置",
   "templates.configJson": "配置 JSON",
   "templates.configJsonInvalid": "配置必须是 JSON object。",
   "templates.modelDefaultHelp": "留空时使用设置页的默认模型；选中后，此人设会固定使用该 Provider 下的模型。",
@@ -634,6 +639,11 @@ const en: Record<string, string> = {
   "templates.talkativeness": "Talkativeness",
   "templates.talkativenessHelp": "Affects how often this persona gets picked in casual chat: higher = more eager to jump in, 0 ≈ only speaks when @-mentioned.",
   "templates.systemPrompt": "System Prompt",
+  "templates.appearance": "Appearance",
+  "templates.appearanceHelp": "Pick an icon and accent color — they show up on the persona card and message bubbles.",
+  "templates.color": "Accent color",
+  "templates.icon": "Icon",
+  "templates.advanced": "Advanced",
   "templates.configJson": "Config JSON",
   "templates.configJsonInvalid": "Config must be a JSON object.",
   "templates.modelDefaultHelp": "Leave blank to use the default model in Settings; selecting one pins this persona to that Provider model.",
@@ -1203,7 +1213,7 @@ export function LanguageToggle({ compact = false }: { compact?: boolean }) {
   const next = locale === "zh-CN" ? "en-US" : "zh-CN";
   return (
     <button
-      className={compact ? "btn h-9 w-9 px-0" : "btn gap-1"}
+      className={compact ? "btn h-10 w-10 px-0" : "btn gap-1"}
       type="button"
       onClick={() => setLocale(next)}
       title={t("language.toggle")}

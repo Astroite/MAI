@@ -72,7 +72,7 @@ export function RoomSettingsDrawer({
     .map((p) => p.template_id);
 
   return (
-    <div className="fixed inset-0 z-30 flex">
+    <div className="fixed inset-0 z-40 flex">
       <div className="flex-1 bg-black/40" onClick={close} />
       <div className="flex h-full w-[480px] max-w-full flex-col border-l border-border bg-panel shadow-soft drawer-enter">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">

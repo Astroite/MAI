@@ -1,9 +1,13 @@
+import asyncio
+import logging
 import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -102,6 +106,7 @@ from .schemas import (
     RoomState,
     ScenarioOut,
     ScribeStateOut,
+    PersonaDraftEnvelope,
     TemplateDraftOut,
     TemplateDraftRequest,
     ToolExecuteRequest,
@@ -433,10 +438,28 @@ async def list_scenarios(session: AsyncSession = Depends(get_session)):
 
 @app.post("/assistants/template-draft", response_model=TemplateDraftOut)
 async def draft_template(body: TemplateDraftRequest, session: AsyncSession = Depends(get_session)):
-    fallback = _fallback_template_draft(body.kind, body.prompt)
+    """Generate a template payload from natural language.
+
+    Persona drafts go through a tightly constrained tool schema
+    (`PersonaDraftEnvelope`) so the LLM cannot return free-form text — every
+    field maps directly onto the persona form. Phase/recipe drafts still use
+    the loose `dict` shape (those forms are richer and harder to constrain).
+
+    Errors are NOT swallowed: a 502 surfaces back to the frontend so users
+    see the real reason instead of a silent fallback that looks like the
+    button did nothing.
+    """
     llm_persona, provider = await _template_assistant_runtime(session)
     if llm_persona is None:
-        return fallback
+        # No assistant model is configured at all — fall back deterministically
+        # so a brand-new install still gets *something* in the form. The
+        # frontend can tell this is a fallback because rationale says so.
+        return _fallback_template_draft(body.kind, body.prompt)
+
+    if body.kind == "persona":
+        return await _draft_persona_template(llm_persona, provider, body.prompt)
+
+    fallback = _fallback_template_draft(body.kind, body.prompt)
     try:
         draft = await llm_adapter.complete_tool(
             llm_persona,
@@ -457,8 +480,69 @@ async def draft_template(body: TemplateDraftRequest, session: AsyncSession = Dep
             api_provider=provider,
         )
         return TemplateDraftOut.model_validate(draft).model_copy(update={"kind": body.kind})
-    except Exception:
-        return fallback
+    except Exception as exc:
+        logger.exception("template draft failed for kind=%s", body.kind)
+        raise HTTPException(status_code=502, detail=f"AI 起草失败: {exc}") from exc
+
+
+async def _draft_persona_template(llm_persona, provider, prompt: str) -> TemplateDraftOut:
+    """Constrained persona drafting — the LLM fills `PersonaDraftEnvelope`.
+
+    The tool schema is narrow enough that pydantic validation rejects most
+    junk (out-of-range temperature, bogus icon name, color without #) and the
+    frontend can plug the result straight into the form.
+    """
+    persona_with_prompt = SimpleNamespace(
+        backing_model=llm_persona.backing_model,
+        temperature=llm_persona.temperature,
+        config=llm_persona.config,
+        system_prompt=(
+            "你是 MAI 的人设起草助手。根据用户的自然语言需求,产出一份可直接保存的【人设模板】。\n"
+            "硬性要求:\n"
+            "1. 严格按 tool 的 JSON Schema 返回字段,不要额外字段也不要遗漏 name/description/system_prompt。\n"
+            "2. system_prompt 用第二人称('你是…'),先一句声明角色,再列出关注点和发言要求,80-200 字,不要 markdown,不要示例对话。\n"
+            "3. description 是一句话简介(30-80 字),不要复述 system_prompt。\n"
+            "4. name 必须是 2-8 个汉字的人物或角色称谓,如'架构师'、'反方律师','安全审计者'。\n"
+            "5. 根据角色气质从给定调色板里挑 color(批判=红/橙,严谨=蓝,创意=紫/粉,运维=青)。\n"
+            "6. icon 必须从枚举里挑一个最贴合的,严禁自造名字。\n"
+            "7. temperature: 严谨/批判型 0.2-0.4,平衡型 0.4-0.6,发散型 0.6-0.8。\n"
+            "8. 只产出讨论者(discussant)人设,除非用户明确要求 scribe/facilitator。\n"
+        ),
+    )
+    try:
+        draft = await llm_adapter.complete_tool(
+            persona_with_prompt,
+            "draft_persona_template",
+            "Produce a MAI persona template payload that the user can save into a discussion room.",
+            PersonaDraftEnvelope,
+            {
+                "user_request": prompt,
+                "instructions": [
+                    "Return the envelope tool exactly once.",
+                    "All free-text fields should be Chinese unless the user wrote in another language.",
+                    "Pick color and icon that match the persona's archetype.",
+                ],
+            },
+            max_tokens=1200,
+            api_provider=provider,
+        )
+    except Exception as exc:
+        logger.exception("persona draft failed")
+        raise HTTPException(status_code=502, detail=f"AI 起草失败: {exc}") from exc
+
+    # Validation happens once inside complete_tool; we re-validate here so a
+    # second-pass schema mismatch (e.g. from later schema tightening) is
+    # surfaced clearly rather than crashing as a generic 500.
+    try:
+        envelope = PersonaDraftEnvelope.model_validate(draft)
+    except Exception as exc:
+        logger.warning("persona draft validation failed; raw=%r", draft)
+        raise HTTPException(status_code=502, detail=f"AI 起草输出不合规: {exc}") from exc
+    return TemplateDraftOut(
+        kind="persona",
+        payload=envelope.payload.model_dump(mode="json"),
+        rationale=envelope.rationale,
+    )
 
 
 @app.get("/templates/personas", response_model=list[PersonaTemplateOut])
@@ -547,6 +631,8 @@ async def duplicate_persona_template(template_id: str, session: AsyncSession = D
         system_prompt=source.system_prompt,
         temperature=source.temperature,
         talkativeness=source.talkativeness,
+        color=source.color,
+        icon=source.icon,
         config=dict(source.config or {}),
         tags=list(source.tags or []),
     )
@@ -1658,8 +1744,19 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     room = await session.get(Room, room_id)
     if not room:
         raise HTTPException(404, "room not found")
-    for active_call in active_calls_for_room(room_id):
+    # Cancel any in-flight LLM streams AND wait for them to actually unwind
+    # before issuing DELETEs. `task.cancel()` only schedules a CancelledError
+    # at the next await point — the task may still be holding a DB session
+    # (and a SQLite write lock) when this function continues. Without the
+    # await below, DELETE races the still-running task and trips
+    # `database is locked`.
+    in_flight = active_calls_for_room(room_id)
+    for active_call in in_flight:
         active_call.cancel("room_deleted")
+    if in_flight:
+        await asyncio.gather(
+            *(call.task for call in in_flight), return_exceptions=True
+        )
     # Order matters: clear children before parents to satisfy FKs even when
     # ON DELETE CASCADE isn't declared.
     from .models import (
@@ -2020,6 +2117,8 @@ async def _create_persona_instances(
             system_prompt=template.system_prompt,
             temperature=template.temperature,
             talkativeness=template.talkativeness,
+            color=template.color,
+            icon=template.icon,
             config=dict(template.config or {}),
             tags=list(template.tags or []),
         )

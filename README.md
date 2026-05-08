@@ -30,7 +30,7 @@ python -m venv .venv
 pip install -r requirements.txt
 Copy-Item .env.example .env
 python -m app.init_db
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 47821
 ```
 
 需要跑后端测试或构建桌面 sidecar 时，安装开发依赖：
@@ -53,7 +53,7 @@ pnpm dev --host 0.0.0.0 --port 5173
 http://localhost:5173
 ```
 
-开发模式下，Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
+开发模式下，Vite 会把 `/api` 代理到 `http://127.0.0.1:47821`。
 
 ## 配置模型
 
@@ -117,7 +117,7 @@ GEMINI_API_KEY=...
 cd frontend
 pnpm build
 cd ..\backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 47821
 ```
 
 当 `frontend/dist/index.html` 存在、`MAI_FRONTEND_DIST` 指向构建目录，或 PyInstaller 包中存在 `frontend-dist` 时，`app.main` 会把前端挂载到 `/`，并把前端请求的 `/api/...` 重写到后端根路由。

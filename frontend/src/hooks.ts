@@ -34,6 +34,17 @@ export function useRoomEvents(roomId?: string) {
     }
     const controller = new AbortController();
     let retries = 0;
+    // Coalesce rapid bursts of invalidating events (autodrive chains can fire
+    // 10 message.appended in a few seconds; without debouncing each one
+    // triggers a separate /state fetch and floods the backend).
+    let invalidateTimer: ReturnType<typeof setTimeout> | null = null;
+    const scheduleInvalidate = () => {
+      if (invalidateTimer != null) return;
+      invalidateTimer = setTimeout(() => {
+        invalidateTimer = null;
+        void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+      }, 250);
+    };
 
     const updateStatus = (status: "connected" | "reconnecting" | "offline", count = retries) =>
       setConnectionStatus(status, count);
@@ -81,7 +92,7 @@ export function useRoomEvents(roomId?: string) {
             "persona.instance.removed"
           ].includes(payload.type)
         ) {
-          void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+          scheduleInvalidate();
         }
       },
       onerror(err) {
@@ -105,6 +116,7 @@ export function useRoomEvents(roomId?: string) {
     });
     return () => {
       controller.abort();
+      if (invalidateTimer != null) clearTimeout(invalidateTimer);
       setConnectionStatus("connected", 0);
     };
   }, [appendChunk, clearStream, queryClient, roomId, setConnectionStatus]);

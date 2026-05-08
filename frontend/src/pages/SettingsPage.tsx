@@ -34,7 +34,7 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <header className="panel flex flex-wrap items-end justify-between gap-3 px-5 py-4">
+      <header className="panel flex flex-wrap items-start justify-between gap-3 px-5 py-4">
         <div className="min-w-0">
           <h1 className="text-xl font-semibold tracking-normal">{t("settings.title")}</h1>
           <p className="mt-1 text-sm text-muted">{t("settings.subtitle")}</p>
@@ -261,7 +261,7 @@ function DefaultApiSection() {
         )}
         <div className="flex gap-2">
           <button
-            className="btn btn-primary flex-1 rounded-full"
+            className="btn btn-primary flex-1"
             onClick={() => save.mutate()}
             disabled={save.isPending}
           >

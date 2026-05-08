@@ -27,7 +27,7 @@ export function DashboardPage() {
               <RefreshCw size={16} />
               {t("common.refresh")}
             </button>
-            <Link className="btn btn-primary rounded-full px-4" to="/dashboard/new">
+            <Link className="btn btn-primary px-4" to="/dashboard/new">
               <Plus size={16} />
               {t("dashboard.newRoom")}
             </Link>

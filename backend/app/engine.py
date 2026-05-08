@@ -707,6 +707,13 @@ async def _stream_one_message(
     )
     scribe = await session.get(ScribeState, room.id)
     scribe_state = normalize_scribe_state(scribe.current_state if scribe else None)
+    # Map peer persona ids -> display names so llm_adapter can label "who said
+    # what" in the transcript. Without this every AI sees prior AI turns as
+    # its own `assistant` history and they all converge to one narrator voice.
+    peer_personas = (
+        await session.scalars(select(PersonaInstance).where(PersonaInstance.room_id == room.id))
+    ).all()
+    peer_names = {p.id: p.name for p in peer_personas}
     tmp_message_id = new_id()
     partial = ""
     chunk_count = 0
@@ -760,6 +767,7 @@ async def _stream_one_message(
                     scribe_state,
                     api_provider=api_provider,
                     room_background=room.background or "",
+                    peer_names=peer_names,
                 ),
                 timeout=max(CHUNK_IDLE_TIMEOUT_SECONDS, 180.0),
             )
@@ -789,6 +797,7 @@ async def _stream_one_message(
                 scribe_state,
                 api_provider=api_provider,
                 room_background=room.background or "",
+                peer_names=peer_names,
             ).__aiter__()
             try:
                 while True:

@@ -12,6 +12,8 @@ export interface PersonaTemplate {
   system_prompt: string;
   temperature: number;
   talkativeness: number;
+  color: string;
+  icon: string;
   config: Record<string, unknown>;
   tags: string[];
   is_builtin: boolean;
@@ -34,6 +36,8 @@ export interface PersonaInstance {
   system_prompt: string;
   temperature: number;
   talkativeness: number;
+  color: string;
+  icon: string;
   config: Record<string, unknown>;
   tags: string[];
 }

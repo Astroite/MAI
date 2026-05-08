@@ -6,20 +6,15 @@ import { useUIStore } from "../../store";
 import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
 import { useI18n } from "../../i18n";
 import { providerKindLabel } from "../../providers";
+import { DEFAULT_PERSONA_COLOR, PersonaIcon } from "../../components/PersonaIcon";
 
-function personaColor(id?: string | null): string {
-  if (!id) return "rgb(var(--muted))";
+function personaTone(persona: { id?: string | null; color?: string | null }): string {
+  if (persona.color) return persona.color;
+  if (!persona.id) return DEFAULT_PERSONA_COLOR;
   let hash = 0;
-  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  for (let i = 0; i < persona.id.length; i += 1) hash = (hash * 31 + persona.id.charCodeAt(i)) | 0;
   const hue = Math.abs(hash) % 360;
   return `hsl(${hue} 52% 48%)`;
-}
-
-function personaInitial(name?: string | null): string {
-  if (!name) return "?";
-  const trimmed = name.trim();
-  if (!trimmed) return "?";
-  return trimmed.slice(0, 2);
 }
 
 function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
@@ -122,13 +117,13 @@ export function MembersSidebar({
               title={persona.name}
             >
               <div className="flex min-w-0 items-center gap-2">
-                <span
-                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold text-white"
-                  style={{ background: personaColor(persona.id) }}
-                  aria-hidden="true"
-                >
-                  {personaInitial(persona.name).slice(0, 1)}
-                </span>
+                <PersonaIcon
+                  icon={persona.icon}
+                  color={personaTone(persona)}
+                  size={28}
+                  iconSize={14}
+                  rounded="full"
+                />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-xs font-semibold text-text">{persona.name}</div>
                   <div className="mt-0.5 truncate text-[11px] text-muted">
@@ -161,7 +156,7 @@ export function MembersSidebar({
       <div className="border-b border-border px-3 py-3 text-sm font-semibold">
         {t("room.members", { count: discussants.length })}
       </div>
-      <div className="min-h-0 flex-1 overflow-auto px-2 py-2">
+      <div className="mai-scrollbar min-h-0 flex-1 overflow-auto px-2 py-2">
         {discussants.map((persona) => (
           <PersonaRow
             key={persona.id}
@@ -236,13 +231,13 @@ function PersonaRow({
     >
       <div className="flex items-start gap-2">
         <div className="relative">
-          <div
-            className="grid h-9 w-9 place-items-center rounded-full text-xs font-semibold text-white"
-            style={{ background: personaColor(persona.id) }}
-            aria-hidden="true"
-          >
-            {personaInitial(persona.name)}
-          </div>
+          <PersonaIcon
+            icon={persona.icon}
+            color={personaTone(persona)}
+            size={36}
+            iconSize={18}
+            rounded="full"
+          />
           {speaking && (
             <span
               className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full border-2 border-panel bg-brand"

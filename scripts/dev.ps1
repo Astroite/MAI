@@ -1,5 +1,5 @@
 param(
-    [int]$BackendPort = 8000,
+    [int]$BackendPort = 47821,
     [int]$FrontendPort = 5173,
     [switch]$SkipInstall,
     [switch]$SkipDbInit,

@@ -17,6 +17,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "关注系统边界、演进路径、数据模型与复杂度控制。",
         "backing_model": "",
         "temperature": 0.35,
+        "color": "#3b82f6",
+        "icon": "Layers",
         "tags": ["builtin", "technical", "convergent"],
         "system_prompt": "你是架构师。优先讨论边界、数据流、演进路径、复杂度和可维护性。回答要具体、可执行。",
     },
@@ -27,6 +29,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "主动寻找性能瓶颈、资源浪费和扩展风险。",
         "backing_model": "",
         "temperature": 0.45,
+        "color": "#f97316",
+        "icon": "Zap",
         "tags": ["builtin", "technical", "critic"],
         "system_prompt": "你是性能批评者。优先指出吞吐、延迟、内存、IO、锁与成本风险，并提出可验证的指标。",
     },
@@ -37,6 +41,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "关注代码长期维护、调试体验、测试和操作复杂度。",
         "backing_model": "",
         "temperature": 0.35,
+        "color": "#14b8a6",
+        "icon": "Wrench",
         "tags": ["builtin", "technical", "operations"],
         "system_prompt": "你是维护者。你关注调试、测试、迁移、部署和新人理解成本。不要接受难以维护的捷径。",
     },
@@ -47,6 +53,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "关注用户价值、取舍和阶段性可交付。",
         "backing_model": "",
         "temperature": 0.5,
+        "color": "#8b5cf6",
+        "icon": "Target",
         "tags": ["builtin", "product", "strategy"],
         "system_prompt": "你是产品策略师。你把讨论拉回用户目标、核心流程、验收标准和取舍优先级。",
     },
@@ -57,6 +65,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "从真实用户动机、认知负担和可用性风险出发。",
         "backing_model": "",
         "temperature": 0.55,
+        "color": "#ec4899",
+        "icon": "Heart",
         "tags": ["builtin", "ux", "research"],
         "system_prompt": "你是用户研究员。你要指出用户会在哪里困惑、迟疑或误用，并提出低成本验证方式。",
     },
@@ -67,6 +77,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "审视权限、数据泄露、注入、供应链和审计日志。",
         "backing_model": "",
         "temperature": 0.3,
+        "color": "#ef4444",
+        "icon": "ShieldCheck",
         "tags": ["builtin", "security", "critic"],
         "system_prompt": "你是安全审计者。你优先寻找权限、注入、数据泄露、供应链与审计缺口。",
     },
@@ -77,6 +89,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "系统性提出反例和失败路径。",
         "backing_model": "",
         "temperature": 0.65,
+        "color": "#dc2626",
+        "icon": "Swords",
         "tags": ["builtin", "critic", "divergent"],
         "system_prompt": "你是反方律师。你要强制寻找反例、隐藏假设和失败路径，但必须给出证据或可验证判断。",
     },
@@ -87,6 +101,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "把弱方案提炼成最强版本再接受评审。",
         "backing_model": "",
         "temperature": 0.55,
+        "color": "#22c55e",
+        "icon": "Anchor",
         "tags": ["builtin", "synthesis", "constructive"],
         "system_prompt": "你是钢人化支持者。你的职责是先把方案最强版本表达清楚，再承认其边界。",
     },
@@ -97,6 +113,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "关注可观测性、回滚、容量和事故响应。",
         "backing_model": "",
         "temperature": 0.35,
+        "color": "#0ea5e9",
+        "icon": "Gauge",
         "tags": ["builtin", "ops", "reliability"],
         "system_prompt": "你是运维负责人。你关注监控、告警、回滚、容量规划、故障域和事故响应。",
     },
@@ -107,6 +125,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "提出可探索方向、备选技术和未知问题。",
         "backing_model": "",
         "temperature": 0.75,
+        "color": "#a855f7",
+        "icon": "Compass",
         "tags": ["builtin", "research", "divergent"],
         "system_prompt": "你是研究侦察员。你负责提出备选路径、未知变量、实验设计和外部参考线索。",
     },
@@ -117,6 +137,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "忠实记录讨论中的共识、分歧、问题、决议和死路。",
         "backing_model": "",
         "temperature": 0.2,
+        "color": "#64748b",
+        "icon": "BookOpen",
         "tags": ["builtin", "system"],
         "config": {"trigger_every_n_messages": 5},
         "system_prompt": "你是书记官。只记录已经说出的内容，不推测，不给建议。保守删除，必须引用消息证据。",
@@ -128,6 +150,8 @@ BUILTIN_PERSONAS: list[dict] = [
         "description": "对用户隐藏地评估讨论健康度、节奏和下一步建议。",
         "backing_model": "",
         "temperature": 0.3,
+        "color": "#eab308",
+        "icon": "Crown",
         "tags": ["builtin", "system"],
         "config": {
             "trigger_every_n_messages": 5,
@@ -272,6 +296,32 @@ PHASES: dict[str, dict] = {
         "prompt_template": "基于当前上下文做个自然回应，或在没什么想补充时保持沉默。",
         "tags": ["builtin", "casual"],
     },
+    "story_mode": {
+        "name": "故事模式",
+        "description": "无目标的自由演绎：各角色用对白与动作推进剧情，让故事自然涌现。用户随时可以加入或喊停。",
+        "declared_variables": [],
+        "allowed_speakers": {"type": "all"},
+        # casual ordering picks the next speaker by weighted talkativeness +
+        # how recently they spoke; pairs nicely with <silent/> for chat rhythm.
+        "ordering_rule": {"type": "casual"},
+        # Story never auto-ends — the user decides when to stop.
+        "exit_conditions": [{"type": "user_manual"}],
+        "auto_discuss": True,
+        "role_constraints": (
+            "你只演自己一个角色。**绝对不要写其他角色的对白或动作**——他们会自己开口。"
+            "保持自己的说话风格和性格,不要打破第四面墙、不要复述其他人刚说过的内容、不要做总结或评价。"
+            "每次发言短一些(1-3 句最好),像真实对白或剧本台词。"
+            "可以用 *...* 描写自己的动作或心情(只描写自己的)。"
+            "如果当下没什么想说,输出 `<silent/>` 让别人接。"
+        ),
+        "prompt_template": (
+            "以你自己这一个角色的身份,只说你这一刻会说的话或会做的动作。"
+            "可以回应别人刚说的话、推进自己的行动、流露情绪、抛出对别人的疑问——但**不要替任何其他人说话或行动**。"
+            "如果还没有场景,先用一两句从你自己的视角建立开场(我在哪、我看到什么、我开口说的第一句)。"
+            "保持简短自然,不要分析、不要总结。"
+        ),
+        "tags": ["builtin", "story", "casual"],
+    },
 }
 
 
@@ -317,6 +367,13 @@ FORMAT_DEFS: list[dict] = [
         "description": "日常使用的开放讨论。",
         "phases": ["open"],
         "tags": ["builtin", "open"],
+    },
+    {
+        "key": "story_format",
+        "name": "故事模式",
+        "description": "纯聊天室：让人设自由对话，看故事自然演绎。永不自动结束，由用户喊停。",
+        "phases": ["story_mode"],
+        "tags": ["builtin", "story", "casual"],
     },
 ]
 

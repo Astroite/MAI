@@ -127,11 +127,11 @@ export function RoomShell() {
 
   return (
     <div className="grid h-[100dvh] overflow-hidden bg-surface text-text grid-cols-[300px_minmax(0,1fr)_360px] max-2xl:grid-cols-[280px_minmax(0,1fr)_340px] max-xl:grid-cols-[260px_minmax(0,1fr)] max-md:grid-cols-1">
-      <div className="max-md:hidden">
+      <div className="min-h-0 overflow-hidden max-md:hidden">
         <RoomListSidebar activeRoomId={activeRoomId} />
       </div>
 
-      <section className="flex min-w-0 flex-col overflow-hidden border-r border-border/70 bg-surface max-xl:border-r-0">
+      <section className="flex min-h-0 min-w-0 flex-col overflow-hidden border-r border-border/70 bg-surface max-xl:border-r-0">
         {!activeRoomId || !state ? (
           <div className="grid flex-1 place-items-center text-sm text-muted">
             {room.isLoading ? t("common.loading") : t("room.selectOrCreate")}
@@ -190,7 +190,7 @@ export function RoomShell() {
                     when the right column is hidden by viewport. Below md only
                     the 4 primary shortcuts show, the rest fold into the
                     Settings drawer's tab list. */}
-                <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1">
+                <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1 xl:hidden">
                   {PANEL_SHORTCUTS.map((entry, index) => (
                     <button
                       key={entry.key}
@@ -224,18 +224,16 @@ export function RoomShell() {
               </div>
             </header>
             <ConnectionBanner />
-            <div className="flex-shrink-0 border-b border-border/80 bg-surface px-5 py-4">
-              <RoomPhaseOverview
-                roomId={activeRoomId!}
-                steps={phaseSteps}
-                currentPhaseName={currentPhaseTemplate?.name}
-                tokenUsed={state.runtime.token_counter_total}
-                tokenMax={state.runtime.max_room_tokens}
-                background={state.room.background ?? ""}
-                frozen={state.runtime.frozen}
-                onEditPhase={() => openSettings("phase")}
-              />
-            </div>
+            <CollapsiblePhaseOverview
+              roomId={activeRoomId!}
+              steps={phaseSteps}
+              currentPhaseName={currentPhaseTemplate?.name}
+              tokenUsed={state.runtime.token_counter_total}
+              tokenMax={state.runtime.max_room_tokens}
+              background={state.room.background ?? ""}
+              frozen={state.runtime.frozen}
+              onEditPhase={() => openSettings("phase")}
+            />
             {state.runtime.phase_exit_suggested && (
               <PhaseExitBanner
                 matched={state.runtime.phase_exit_matched_conditions}
@@ -265,7 +263,7 @@ export function RoomShell() {
         )}
       </section>
 
-      <div className="max-xl:hidden">
+      <div className="min-h-0 overflow-hidden border-l border-border/70 max-xl:hidden">
         {state ? (
           <RightPanel state={state} childRooms={childRooms} />
         ) : (
@@ -276,7 +274,7 @@ export function RoomShell() {
       {state && <RoomSettingsDrawer state={state} childRooms={childRooms} />}
 
       {showRoomsDrawer && (
-        <div className="fixed inset-0 z-30 flex md:hidden">
+        <div className="fixed inset-0 z-40 flex md:hidden">
           <div className="flex-1 bg-black/40" onClick={() => setShowRoomsDrawer(false)} />
           <div className="h-full w-[300px] max-w-[85vw] bg-panel shadow-soft drawer-enter">
             <RoomListSidebar activeRoomId={activeRoomId} />
@@ -318,6 +316,44 @@ function tokenPercent(used: number, max: number): number {
   return Math.min(100, Math.max(0, Math.round((used / max) * 100)));
 }
 
+function CollapsiblePhaseOverview(props: {
+  roomId: string;
+  steps: PhaseStep[];
+  currentPhaseName?: string;
+  tokenUsed: number;
+  tokenMax: number;
+  background: string;
+  frozen: boolean;
+  onEditPhase: () => void;
+}) {
+  const [collapsed, setCollapsed] = useState(false);
+  const { t } = useI18n();
+
+  return (
+    <div className="flex-shrink-0 border-b border-border/80 bg-surface">
+      <div className="flex items-center justify-between px-5 pt-2 pb-1">
+        <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
+          <Layers size={13} className="shrink-0 text-brand" />
+          <span className="truncate font-semibold text-text">{props.currentPhaseName ?? t("room.stepper.empty")}</span>
+        </div>
+        <button
+          type="button"
+          className="btn h-6 px-1.5 text-xs"
+          onClick={() => setCollapsed((v) => !v)}
+          title={collapsed ? t("common.expand") : t("common.collapse")}
+        >
+          {collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+        </button>
+      </div>
+      {!collapsed && (
+        <div className="px-5 pb-4">
+          <RoomPhaseOverview {...props} />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RoomPhaseOverview({
   roomId,
   steps,
@@ -345,10 +381,6 @@ function RoomPhaseOverview({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="label">{t("room.phaseProgress")}</div>
-          <div className="mt-1 flex min-w-0 items-center gap-2">
-            <Layers size={16} className="shrink-0 text-brand" />
-            <span className="truncate text-sm font-semibold">{currentPhaseName ?? t("room.stepper.empty")}</span>
-          </div>
         </div>
         <button className="btn h-8 shrink-0 px-2 text-xs" type="button" onClick={onEditPhase}>
           <Settings2 size={13} />
@@ -356,7 +388,7 @@ function RoomPhaseOverview({
         </button>
       </div>
 
-      <div className="mt-3">
+      <div className="mt-2">
         {steps.length ? (
           <PhaseStepper steps={steps} onSelect={onEditPhase} />
         ) : (
@@ -521,7 +553,7 @@ function ConnectionBanner() {
   const isOffline = status === "offline";
   return (
     <div
-      className={`flex flex-shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs ${
+      className={`flex flex-shrink-0 items-center gap-2 border-b px-5 py-1.5 text-xs ${
         isOffline
           ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
           : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"

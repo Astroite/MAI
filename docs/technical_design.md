@@ -18,7 +18,7 @@ backend/app   FastAPI + SQLAlchemy async + LiteLLM
     +-- trace_payloads/ 保存大 trace payload
 ```
 
-桌面版使用 Tauri v2 承载前端，并启动 PyInstaller 打包的 `mai-backend` sidecar。Tauri 在 SPA 加载前注入 `window.__MAI_API_BASE__`，因此桌面端不固定占用 8000 端口。
+桌面版使用 Tauri v2 承载前端，并启动 PyInstaller 打包的 `mai-backend` sidecar。Tauri 在 SPA 加载前注入 `window.__MAI_API_BASE__`，因此桌面端不固定占用 dev 默认端口（`47821`），每次启动都会从临时端口里挑选。
 
 前端 API base 优先级：
 

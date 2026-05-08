@@ -8,21 +8,23 @@ import type { Message, PersonaInstance } from "../../types";
 import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
+import { DEFAULT_PERSONA_COLOR, PersonaIcon } from "../../components/PersonaIcon";
 
-function personaColor(id?: string | null): string {
-  if (!id) return "rgb(var(--muted))";
+type PersonaLike = { id?: string | null; color?: string | null; icon?: string | null };
+
+function personaTone(persona: PersonaLike | undefined | null, fallbackKey?: string | null): string {
+  if (persona?.color) return persona.color;
+  const key = persona?.id ?? fallbackKey ?? null;
+  if (!key) return DEFAULT_PERSONA_COLOR;
   let hash = 0;
-  for (let i = 0; i < id.length; i += 1) hash = (hash * 31 + id.charCodeAt(i)) | 0;
+  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) | 0;
   const hue = Math.abs(hash) % 360;
   return `hsl(${hue} 52% 48%)`;
 }
 
-function personaInitial(name?: string | null): string {
-  if (!name) return "?";
-  const trimmed = name.trim();
-  if (!trimmed) return "?";
-  return trimmed.slice(0, 2);
-}
+type Avatar =
+  | { kind: "icon"; icon?: string | null; color: string }
+  | { kind: "label"; label: string; color: string };
 
 function previewValue(value: unknown, fallback = ""): string {
   if (value == null) return fallback;
@@ -107,7 +109,7 @@ export function MessageList({
               />
             ) : (
               <StreamingRow
-                personaName={personaById.get(entry.personaId)?.name}
+                persona={personaById.get(entry.personaId)}
                 personaId={entry.personaId}
                 text={entry.text}
               />
@@ -120,19 +122,20 @@ export function MessageList({
 }
 
 function StreamingRow({
-  personaName,
+  persona,
   personaId,
   text
 }: {
-  personaName?: string;
+  persona?: PersonaInstance;
   personaId: string;
   text: string;
 }) {
   const { t } = useI18n();
+  const personaName = persona?.name;
   return (
     <ChatRow
       side="left"
-      avatar={{ label: personaInitial(personaName), color: personaColor(personaId) }}
+      avatar={{ kind: "icon", icon: persona?.icon, color: personaTone(persona, personaId) }}
     >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
         <span className="font-semibold text-text">{t("message.streaming", { name: personaName ?? "AI" })}</span>
@@ -165,7 +168,7 @@ function ToolInvocationRow({ message }: { message: Message }) {
   const status = parsed?.status ?? "pending";
   return (
     <div className="my-1 flex justify-center">
-      <div className="w-full max-w-3xl rounded-lg border border-border/90 bg-panel px-3 py-2 text-xs shadow-card">
+      <div className="w-full max-w-[min(760px,82%)] rounded-lg border border-border/90 bg-panel px-3 py-2 text-xs shadow-card">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 font-medium">
@@ -213,9 +216,10 @@ function MessageRow({
 
   if (message.message_type === "silence") {
     const ghostName = persona?.name ?? "AI";
-    const ghostAvatar = {
-      label: personaInitial(ghostName),
-      color: personaColor(persona?.id ?? ghostName)
+    const ghostAvatar: Avatar = {
+      kind: "icon",
+      icon: persona?.icon,
+      color: personaTone(persona, ghostName)
     };
     return (
       <ChatRow side="left" avatar={ghostAvatar}>
@@ -258,11 +262,16 @@ function MessageRow({
   const isUser = message.author_actual === "user" || message.author_actual === "user_as_judge";
   const side: "left" | "right" = isUser ? "right" : "left";
   const masqueradeName = message.user_masquerade_name || persona?.name || t("message.guest");
-  const avatar = isUser
-    ? { label: message.author_actual === "user_as_judge" ? t("message.judgeShort") : t("message.me"), color: "rgb(var(--accent))" }
+  const avatar: Avatar = isUser
+    ? {
+        kind: "label",
+        label: message.author_actual === "user_as_judge" ? t("message.judgeShort") : t("message.me"),
+        color: "rgb(var(--accent))"
+      }
     : {
-        label: personaInitial(masqueradeName),
-        color: personaColor(persona?.id ?? message.user_masquerade_name)
+        kind: "icon",
+        icon: persona?.icon,
+        color: personaTone(persona, message.user_masquerade_name ?? masqueradeName)
       };
 
   const authorName =
@@ -323,17 +332,23 @@ function ChatRow({
   children
 }: {
   side: "left" | "right";
-  avatar: { label: string; color: string };
+  avatar: Avatar;
   children: React.ReactNode;
 }) {
   return (
     <div className={`flex items-start gap-3 ${side === "right" ? "flex-row-reverse" : ""}`}>
-      <div
-        className="mt-1 grid h-8 w-8 flex-shrink-0 place-items-center rounded-full text-xs font-semibold text-white"
-        style={{ background: avatar.color }}
-        aria-hidden="true"
-      >
-        {avatar.label}
+      <div className="mt-1 flex-shrink-0">
+        {avatar.kind === "icon" ? (
+          <PersonaIcon icon={avatar.icon} color={avatar.color} size={32} iconSize={16} rounded="full" />
+        ) : (
+          <div
+            className="grid h-8 w-8 place-items-center rounded-full text-xs font-semibold text-white"
+            style={{ background: avatar.color }}
+            aria-hidden="true"
+          >
+            {avatar.label}
+          </div>
+        )}
       </div>
       <div className={`min-w-0 max-w-[min(760px,82%)] ${side === "right" ? "text-right" : ""}`}>{children}</div>
     </div>

@@ -123,7 +123,7 @@ export function SubroomPanel({
         {childRooms.map((room) => (
           <Link
             key={room.id}
-            className="block rounded-md border border-border p-2 text-sm hover:border-brand"
+            className="block rounded-md border border-border bg-panel p-2 text-sm shadow-card hover:border-brand"
             to={`/rooms/${roomId}/sub/${room.id}`}
           >
             <span className="font-medium">{room.title}</span>

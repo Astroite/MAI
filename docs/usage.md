@@ -70,13 +70,13 @@ python -m venv .venv
 pip install -r requirements.txt
 Copy-Item .env.example .env
 python -m app.init_db
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 0.0.0.0 --port 47821
 ```
 
 健康检查：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8000/health
+Invoke-RestMethod http://127.0.0.1:47821/health
 ```
 
 ### 2.3 手动启动前端
@@ -93,7 +93,7 @@ pnpm dev --host 0.0.0.0 --port 5173
 http://localhost:5173
 ```
 
-Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
+Vite 会把 `/api` 代理到 `http://127.0.0.1:47821`。
 
 ### 2.4 单进程托管
 
@@ -103,7 +103,7 @@ Vite 会把 `/api` 代理到 `http://127.0.0.1:8000`。
 cd frontend
 pnpm build
 cd ..\backend
-uvicorn app.main:app --host 127.0.0.1 --port 8000
+uvicorn app.main:app --host 127.0.0.1 --port 47821
 ```
 
 满足以下任一条件时，后端会挂载已构建前端并提供 SPA fallback：

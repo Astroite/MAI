@@ -163,7 +163,7 @@ function ScribeSection({
   const isInline = sectionKey === "dead_ends";
 
   return (
-    <div className={`rounded-lg border bg-panel shadow-card ${TONE_BORDER[meta.tone]}`}>
+    <div className={`rounded-md border bg-panel shadow-card ${TONE_BORDER[meta.tone]}`}>
       <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <span className={`grid h-6 w-6 place-items-center rounded-md ${TONE_ICON_BG[meta.tone]}`} aria-hidden="true">

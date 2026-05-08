@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class APIModel(BaseModel):
@@ -211,6 +211,8 @@ class PersonaTemplateOut(APIModel):
     system_prompt: str
     temperature: float
     talkativeness: float = 1.0
+    color: str = "#3b82f6"
+    icon: str = "Sparkles"
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -227,6 +229,8 @@ class PersonaTemplateCreate(APIModel):
     system_prompt: str
     temperature: float = 0.4
     talkativeness: float = 1.0
+    color: str = "#3b82f6"
+    icon: str = "Sparkles"
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
@@ -243,6 +247,8 @@ class PersonaTemplateUpdate(APIModel):
     system_prompt: str | None = None
     temperature: float | None = None
     talkativeness: float | None = None
+    color: str | None = None
+    icon: str | None = None
     config: dict[str, Any] | None = None
     tags: list[str] | None = None
 
@@ -262,6 +268,8 @@ class PersonaInstanceOut(APIModel):
     system_prompt: str
     temperature: float
     talkativeness: float = 1.0
+    color: str = "#3b82f6"
+    icon: str = "Sparkles"
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -281,6 +289,8 @@ class PersonaInstanceUpdate(APIModel):
     system_prompt: str | None = None
     temperature: float | None = None
     talkativeness: float | None = None
+    color: str | None = None
+    icon: str | None = None
     config: dict[str, Any] | None = None
     tags: list[str] | None = None
 
@@ -500,6 +510,125 @@ class TemplateDraftOut(APIModel):
     kind: Literal["persona", "phase", "recipe"]
     payload: dict[str, Any]
     rationale: str = ""
+
+
+# Curated icon set — kept in sync with frontend/src/components/PersonaIcon.tsx.
+# The LLM picks one to match the persona's archetype.
+PERSONA_ICON_NAMES: tuple[str, ...] = (
+    "Sparkles",
+    "Brain",
+    "Compass",
+    "Microscope",
+    "ShieldCheck",
+    "Hammer",
+    "Heart",
+    "Eye",
+    "Zap",
+    "Target",
+    "Lightbulb",
+    "Scale",
+    "Anchor",
+    "Flag",
+    "Rocket",
+    "BookOpen",
+    "Wrench",
+    "Layers",
+    "Users",
+    "Globe",
+    "FlaskConical",
+    "Crown",
+    "Swords",
+    "Gauge",
+)
+
+PERSONA_COLOR_HEX_PATTERN = r"^#[0-9a-fA-F]{6}$"
+
+
+class PersonaDraftPayload(APIModel):
+    """Constrained shape the AI must return when drafting a persona.
+
+    Keep this schema tight — every field maps directly into the persona
+    template form. The LLM sees this schema (via `model_json_schema`) as the
+    tool's parameters, so descriptions are read by the model.
+    """
+
+    kind: Literal["discussant", "scribe", "facilitator"] = Field(
+        "discussant",
+        description="人设类型。讨论者(discussant)是最常见的;书记官(scribe)与上帝副手(facilitator)为系统角色,通常不要新建。",
+    )
+    name: str = Field(
+        ...,
+        min_length=2,
+        max_length=24,
+        description="人设的中文名称,2-8 字最佳,如 '架构师'、'反方律师'。不要带书名号或括号。",
+    )
+    description: str = Field(
+        ...,
+        min_length=8,
+        max_length=140,
+        description="一句话简介,30-80 字,描述这个人设的视角与关注点。不要写成 system prompt。",
+    )
+    system_prompt: str = Field(
+        ...,
+        min_length=30,
+        max_length=600,
+        description=(
+            "完整的 system prompt,使用第二人称('你是…')。"
+            "前半句声明角色,后半句给出关注重点和发言要求。"
+            "保持简洁,80-200 字,不要用 markdown,不要包含示例对话。"
+        ),
+    )
+    temperature: float = Field(
+        0.4,
+        ge=0.0,
+        le=1.2,
+        description="采样温度。批判型/严谨型 0.2-0.4;策略/产品型 0.4-0.6;创意/侦察型 0.6-0.8。",
+    )
+    talkativeness: float = Field(
+        1.0,
+        ge=0.0,
+        le=3.0,
+        description="健谈度,0=只在被点名时发言,1=默认,2-3=主动插话。",
+    )
+    color: str = Field(
+        "#3b82f6",
+        pattern=PERSONA_COLOR_HEX_PATTERN,
+        description=(
+            "主题色,十六进制 #rrggbb 格式。"
+            "建议从 #ef4444 #f97316 #f59e0b #eab308 #84cc16 #22c55e #14b8a6 #06b6d4 #0ea5e9 #3b82f6 #6366f1 #8b5cf6 #a855f7 #ec4899 #64748b 中挑一个,与角色气质匹配。"
+        ),
+    )
+    icon: str = Field(
+        "Sparkles",
+        description=(
+            "图标名,必须是这些值之一: "
+            + ", ".join(PERSONA_ICON_NAMES)
+            + "。常见对应:架构=Layers,性能=Zap,维护=Wrench,产品=Target,UX=Heart,安全=ShieldCheck,"
+            "反方=Swords,运维=Gauge,研究=Compass,记录=BookOpen,负责人=Crown。"
+        ),
+        json_schema_extra={"enum": list(PERSONA_ICON_NAMES)},
+    )
+    tags: list[str] = Field(
+        default_factory=list,
+        max_length=5,
+        description="3-5 个英文小写短标签,如 ['technical','critic']。不要包含 'builtin'。",
+    )
+
+    @field_validator("icon")
+    @classmethod
+    def _icon_in_set(cls, v: str) -> str:
+        if v not in PERSONA_ICON_NAMES:
+            return "Sparkles"
+        return v
+
+
+class PersonaDraftEnvelope(APIModel):
+    payload: PersonaDraftPayload
+    rationale: str = Field(
+        "",
+        max_length=200,
+        description="一句话说明为什么这样起草(可选,中文,不超过 60 字)。",
+    )
 
 
 class ScenarioOut(APIModel):

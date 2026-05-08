@@ -30,6 +30,15 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedChangesWarning } from "../hooks";
 import { useI18n } from "../i18n";
 import { PROVIDER_KINDS, providerKindLabel } from "../providers";
+import {
+  DEFAULT_PERSONA_COLOR,
+  DEFAULT_PERSONA_ICON,
+  PERSONA_COLORS,
+  PERSONA_ICONS,
+  PERSONA_ICON_KEYS,
+  PersonaIcon,
+  resolvePersonaIcon
+} from "../components/PersonaIcon";
 
 const TAB_ENTRIES = [
   { kind: "personas", labelKey: "templates.personas", icon: UsersRound },
@@ -110,6 +119,8 @@ function PersonasView() {
   const [apiModelId, setApiModelId] = useState<string>("");
   const [temperature, setTemperature] = useState(0.4);
   const [talkativeness, setTalkativeness] = useState(1.0);
+  const [color, setColor] = useState<string>(DEFAULT_PERSONA_COLOR);
+  const [icon, setIcon] = useState<string>(DEFAULT_PERSONA_ICON);
   const [tags, setTags] = useState("custom");
   const [systemPrompt, setSystemPrompt] = useState(() => t("templates.defaultPersonaPrompt"));
   const [configText, setConfigText] = useState("{}");
@@ -138,6 +149,8 @@ function PersonasView() {
     system_prompt: systemPrompt,
     temperature,
     talkativeness,
+    color,
+    icon,
     config: configValue.value,
     tags: splitTags(tags)
   });
@@ -153,6 +166,8 @@ function PersonasView() {
     setApiModelId(persona.api_model_id ?? "");
     setTemperature(persona.temperature);
     setTalkativeness(persona.talkativeness ?? 1.0);
+    setColor(persona.color || DEFAULT_PERSONA_COLOR);
+    setIcon(persona.icon || DEFAULT_PERSONA_ICON);
     setTags(persona.tags.join(","));
     setSystemPrompt(persona.system_prompt);
     setConfigText(JSON.stringify(persona.config ?? {}, null, 2));
@@ -165,6 +180,8 @@ function PersonasView() {
     setApiModelId("");
     setTemperature(0.4);
     setTalkativeness(1.0);
+    setColor(DEFAULT_PERSONA_COLOR);
+    setIcon(DEFAULT_PERSONA_ICON);
     setTags("custom");
     setSystemPrompt(t("templates.defaultPersonaPrompt"));
     setConfigText("{}");
@@ -190,6 +207,12 @@ function PersonasView() {
       setSystemPrompt(typeof payload.system_prompt === "string" ? payload.system_prompt : systemPrompt);
       setTemperature(typeof payload.temperature === "number" ? payload.temperature : temperature);
       setTalkativeness(typeof payload.talkativeness === "number" ? payload.talkativeness : talkativeness);
+      if (typeof payload.color === "string" && /^#[0-9a-fA-F]{6}$/.test(payload.color)) {
+        setColor(payload.color);
+      }
+      if (typeof payload.icon === "string" && PERSONA_ICON_KEYS.includes(payload.icon)) {
+        setIcon(payload.icon);
+      }
       setTags(Array.isArray(payload.tags) ? payload.tags.map(String).join(",") : tags);
       setConfigText(
         payload.config && typeof payload.config === "object" && !Array.isArray(payload.config)
@@ -241,6 +264,8 @@ function PersonasView() {
         system_prompt: editingPersona.system_prompt,
         temperature: editingPersona.temperature,
         talkativeness: editingPersona.talkativeness ?? 1.0,
+        color: editingPersona.color || DEFAULT_PERSONA_COLOR,
+        icon: editingPersona.icon || DEFAULT_PERSONA_ICON,
         config: editingPersona.config ?? {},
         tags: editingPersona.tags ?? []
       };
@@ -287,12 +312,17 @@ function PersonasView() {
         <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
           {items.map((persona: PersonaTemplate) => {
             const active = editingPersonaId === persona.id;
+            const personaColor = persona.color || DEFAULT_PERSONA_COLOR;
             return (
               <div
                 key={persona.id}
-                className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-panel p-4 shadow-card transition hover:border-brand ${
-                  active ? "border-brand ring-1 ring-brand" : "border-border"
+                className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-panel p-4 pl-5 shadow-card transition hover:shadow-soft ${
+                  active ? "ring-1" : ""
                 }`}
+                style={{
+                  borderColor: active ? personaColor : undefined,
+                  ["--tw-ring-color" as string]: personaColor
+                }}
                 role="button"
                 tabIndex={0}
                 onClick={() => loadPersona(persona)}
@@ -305,64 +335,62 @@ function PersonasView() {
               >
                 <span
                   aria-hidden
-                  className={`absolute left-0 top-3 h-8 w-1 rounded-r-full ${
-                    active ? "bg-brand" : persona.kind === "discussant" ? "bg-brand/40" : "bg-accent/60"
-                  }`}
+                  className="absolute inset-y-0 left-0 w-1.5"
+                  style={{ backgroundColor: personaColor }}
                 />
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex min-w-0 items-start gap-3">
-                    <span
-                      aria-hidden
-                      className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand/10 text-sm font-semibold text-brand"
-                    >
-                      {persona.name.trim().slice(0, 2) || "?"}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="truncate text-sm font-semibold">{persona.name}</h2>
-                        <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>
-                          {display("personaKind", persona.kind)}
-                        </StatusPill>
+                <div className="flex items-start gap-3">
+                  <PersonaIcon icon={persona.icon} color={personaColor} size={44} rounded="lg" />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-start justify-between gap-2">
+                      <h2 className="min-w-0 truncate text-sm font-semibold leading-5">{persona.name}</h2>
+                      <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
+                        <button
+                          className="btn h-8 w-8 px-0"
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            loadPersona(persona);
+                          }}
+                          title={t("common.edit")}
+                          aria-label={t("common.edit")}
+                        >
+                          <Pencil size={15} />
+                        </button>
+                        <button
+                          className="btn btn-danger h-8 w-8 px-0"
+                          type="button"
+                          onClick={(event) => deletePersona(persona, event)}
+                          disabled={remove.isPending && remove.variables === persona.id}
+                          title={t("common.delete")}
+                          aria-label={t("common.delete")}
+                        >
+                          <Trash2 size={15} />
+                        </button>
                       </div>
-                      <p className="mt-1 line-clamp-2 text-xs text-muted">{persona.description}</p>
                     </div>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button
-                      className="btn h-7 w-7 px-0 text-xs"
-                      type="button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        loadPersona(persona);
-                      }}
-                      title={t("common.edit")}
-                      aria-label={t("common.edit")}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                    <button
-                      className="btn btn-danger h-7 w-7 px-0 text-xs"
-                      type="button"
-                      onClick={(event) => deletePersona(persona, event)}
-                      disabled={remove.isPending && remove.variables === persona.id}
-                      title={t("common.delete")}
-                      aria-label={t("common.delete")}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                      <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>
+                        {display("personaKind", persona.kind)}
+                      </StatusPill>
+                      <span className="truncate text-[11px] text-muted">
+                        {personaModelLabel(persona, modelById, providerById, t)}
+                      </span>
+                    </div>
+                    <p className="mt-2 line-clamp-2 text-xs text-muted">{persona.description}</p>
                   </div>
                 </div>
-                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-                  <StatusPill tone="info">{personaModelLabel(persona, modelById, providerById, t)}</StatusPill>
-                  {persona.tags.slice(0, 5).map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted"
-                    >
-                      #{tag}
-                    </span>
-                  ))}
-                </div>
+                {persona.tags.length > 0 && (
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-border/60 pt-2 text-xs">
+                    {persona.tags.slice(0, 5).map((tag) => (
+                      <span
+                        key={tag}
+                        className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted"
+                      >
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -389,32 +417,20 @@ function PersonasView() {
             {t("templates.readonlyBuiltin")}
           </p>
         )}
-        <div className="mt-4 rounded-md border border-border bg-surface p-3">
-          <div className="flex items-center gap-2 text-sm font-medium">
-            <Sparkles size={15} />
-            {t("templates.assistant")}
-          </div>
-          <textarea
-            name="persona-draft-prompt"
-            className="textarea mt-2 h-20 w-full"
-            value={draftPrompt}
-            onChange={(event) => setDraftPrompt(event.target.value)}
-            placeholder={t("templates.personaDraftPlaceholder")}
-          />
-          <button
-            className="btn mt-2 w-full"
-            type="button"
-            onClick={() => draftPersona.mutate()}
-            disabled={!draftPrompt.trim() || draftPersona.isPending}
-          >
-            <Sparkles size={14} />
-            {draftPersona.isPending ? t("common.loading") : t("templates.applyDraft")}
-          </button>
-          {draftPersona.error instanceof Error && <p className="mt-2 text-xs text-danger">{draftPersona.error.message}</p>}
-        </div>
         <div className="mt-4 space-y-3">
-          <div className="grid grid-cols-2 gap-2">
-            <label className="block">
+          {/* Identity: avatar + name + kind on one row */}
+          <div className="flex items-end gap-2">
+            <PersonaIcon icon={icon} color={color} size={44} rounded="lg" />
+            <label className="block min-w-0 flex-1">
+              <span className="label">{t("common.name")}</span>
+              <input
+                name="persona-name"
+                className="input mt-1 w-full"
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <label className="block w-28 shrink-0">
               <span className="label">{t("templates.kind")}</span>
               <select
                 name="persona-kind"
@@ -428,33 +444,52 @@ function PersonasView() {
                 <option value="facilitator">{display("personaKind", "facilitator")}</option>
               </select>
             </label>
+          </div>
+
+          {/* Numeric row — temperature + talkativeness inline */}
+          <div className="grid grid-cols-2 gap-2">
             <label className="block">
               <span className="label">{t("templates.temperature")}</span>
-              <input name="persona-temperature" className="input mt-1 w-full" type="number" min={0} max={2} step={0.1} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
+              <input
+                name="persona-temperature"
+                className="input mt-1 w-full"
+                type="number"
+                min={0}
+                max={2}
+                step={0.1}
+                value={temperature}
+                onChange={(event) => setTemperature(Number(event.target.value))}
+              />
+            </label>
+            <label className="block" title={t("templates.talkativenessHelp")}>
+              <span className="label">
+                {t("templates.talkativeness")}
+                <span className="ml-1 text-xs text-muted">{talkativeness.toFixed(1)}</span>
+              </span>
+              <input
+                name="persona-talkativeness"
+                className="mt-2 w-full"
+                type="range"
+                min={0}
+                max={3}
+                step={0.1}
+                value={talkativeness}
+                onChange={(event) => setTalkativeness(Number(event.target.value))}
+              />
             </label>
           </div>
-          <label className="block">
-            <span className="label">{t("templates.talkativeness")} <span className="ml-1 text-xs text-muted">{talkativeness.toFixed(1)}</span></span>
-            <input
-              name="persona-talkativeness"
-              className="mt-1 w-full"
-              type="range"
-              min={0}
-              max={3}
-              step={0.1}
-              value={talkativeness}
-              onChange={(event) => setTalkativeness(Number(event.target.value))}
-            />
-            <p className="mt-1 text-xs text-muted">{t("templates.talkativenessHelp")}</p>
-          </label>
-          <label className="block">
-            <span className="label">{t("common.name")}</span>
-            <input name="persona-name" className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
-          </label>
+
           <label className="block">
             <span className="label">{t("common.description")}</span>
-            <textarea name="persona-description" className="textarea mt-1 w-full" value={description} onChange={(event) => setDescription(event.target.value)} />
+            <textarea
+              name="persona-description"
+              className="textarea mt-1 w-full"
+              rows={2}
+              value={description}
+              onChange={(event) => setDescription(event.target.value)}
+            />
           </label>
+
           <label className="block">
             <span className="label">{t("common.model")}</span>
             <select
@@ -466,29 +501,147 @@ function PersonasView() {
               <option value="">{t("room.defaultModel")}</option>
               {renderApiModelOptions(apiModels.data ?? [], providerById, t)}
             </select>
-            <p className="mt-1 text-xs text-muted">
-              {(apiModels.data?.length ?? 0) === 0 ? (
-                <>
-                  {t("templates.noModelGoAdd")} <NavLink className="text-brand underline" to="/templates/api">{t("common.add")}</NavLink>
-                </>
-              ) : (
-                t("templates.modelDefaultHelp")
-              )}
-            </p>
+            {(apiModels.data?.length ?? 0) === 0 && (
+              <p className="mt-1 text-xs text-muted">
+                {t("templates.noModelGoAdd")}{" "}
+                <NavLink className="text-brand underline" to="/templates/api">
+                  {t("common.add")}
+                </NavLink>
+              </p>
+            )}
           </label>
-          <label className="block">
-            <span className="label">{t("common.tags")}</span>
-            <input name="persona-tags" className="input mt-1 w-full" value={tags} onChange={(event) => setTags(event.target.value)} />
-          </label>
+
           <label className="block">
             <span className="label">{t("templates.systemPrompt")}</span>
-            <textarea name="persona-system-prompt" className="textarea mt-1 w-full" value={systemPrompt} onChange={(event) => setSystemPrompt(event.target.value)} />
+            <textarea
+              name="persona-system-prompt"
+              className="textarea mt-1 w-full"
+              rows={5}
+              value={systemPrompt}
+              onChange={(event) => setSystemPrompt(event.target.value)}
+            />
           </label>
-          <label className="block">
-            <span className="label">{t("templates.configJson")}</span>
-            <textarea name="persona-config-json" className="textarea mt-1 w-full font-mono" value={configText} onChange={(event) => setConfigText(event.target.value)} />
-          </label>
-          {!configValue.ok && <div className="text-xs text-danger">{t("templates.configJsonInvalid")}</div>}
+
+          {/* Collapsible: appearance picker */}
+          <details className="rounded-md border border-border bg-surface">
+            <summary className="flex cursor-pointer items-center justify-between gap-2 px-3 py-2 text-sm font-medium">
+              <span className="flex items-center gap-2">
+                <span
+                  aria-hidden
+                  className="h-3 w-3 rounded-full"
+                  style={{ backgroundColor: color }}
+                />
+                {t("templates.appearance")}
+              </span>
+              <span className="text-xs text-muted">{icon}</span>
+            </summary>
+            <div className="border-t border-border px-3 py-3">
+              <div className="flex flex-wrap gap-1.5">
+                {PERSONA_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    aria-label={c}
+                    aria-pressed={color === c}
+                    onClick={() => setColor(c)}
+                    disabled={editingIsBuiltin}
+                    className="h-7 w-7 rounded-full border-2 transition hover:scale-110"
+                    style={{
+                      backgroundColor: c,
+                      borderColor: color === c ? "var(--text)" : "transparent"
+                    }}
+                  />
+                ))}
+              </div>
+              <div className="mt-3 grid grid-cols-8 gap-1">
+                {PERSONA_ICON_KEYS.map((key) => {
+                  const Icon = PERSONA_ICONS[key];
+                  const selected = icon === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      aria-label={key}
+                      aria-pressed={selected}
+                      onClick={() => setIcon(key)}
+                      disabled={editingIsBuiltin}
+                      className={`grid h-8 w-8 place-items-center rounded-md border transition ${
+                        selected ? "border-current" : "border-border bg-panel hover:border-current"
+                      }`}
+                      style={{
+                        color: selected ? color : undefined,
+                        backgroundColor: selected ? `${color}1f` : undefined
+                      }}
+                    >
+                      <Icon size={15} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </details>
+
+          {/* Collapsible: AI assistant draft */}
+          <details className="rounded-md border border-border bg-surface">
+            <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm font-medium">
+              <Sparkles size={14} />
+              {t("templates.assistant")}
+            </summary>
+            <div className="border-t border-border px-3 py-3">
+              <textarea
+                name="persona-draft-prompt"
+                className="textarea h-20 w-full"
+                value={draftPrompt}
+                onChange={(event) => setDraftPrompt(event.target.value)}
+                placeholder={t("templates.personaDraftPlaceholder")}
+              />
+              <button
+                className="btn mt-2 w-full"
+                type="button"
+                onClick={() => draftPersona.mutate()}
+                disabled={!draftPrompt.trim() || draftPersona.isPending}
+              >
+                <Sparkles size={14} />
+                {draftPersona.isPending ? t("common.loading") : t("templates.applyDraft")}
+              </button>
+              {draftPersona.error instanceof Error && (
+                <p className="mt-2 text-xs text-danger">{draftPersona.error.message}</p>
+              )}
+            </div>
+          </details>
+
+          {/* Collapsible: advanced (tags + raw config) */}
+          <details className="rounded-md border border-border bg-surface">
+            <summary className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm font-medium">
+              <Cog size={14} />
+              {t("templates.advanced")}
+            </summary>
+            <div className="space-y-3 border-t border-border px-3 py-3">
+              <label className="block">
+                <span className="label">{t("common.tags")}</span>
+                <input
+                  name="persona-tags"
+                  className="input mt-1 w-full"
+                  value={tags}
+                  onChange={(event) => setTags(event.target.value)}
+                />
+              </label>
+              <label className="block">
+                <span className="label">{t("templates.configJson")}</span>
+                <textarea
+                  name="persona-config-json"
+                  className="textarea mt-1 w-full font-mono"
+                  rows={4}
+                  value={configText}
+                  onChange={(event) => setConfigText(event.target.value)}
+                />
+              </label>
+              {!configValue.ok && (
+                <div className="text-xs text-danger">{t("templates.configJsonInvalid")}</div>
+              )}
+            </div>
+          </details>
+
           <button
             className="btn btn-primary w-full"
             onClick={() => save.mutate()}
@@ -668,10 +821,10 @@ function FormatsView() {
                       <p className="mt-1 line-clamp-2 text-xs text-muted">{format.description}</p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <StatusPill tone="brand">{t("common.phaseCount", { count: format.phase_sequence.length })}</StatusPill>
                     <button
-                      className="btn h-7 w-7 px-0"
+                      className="btn h-9 w-9 px-0"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -680,17 +833,17 @@ function FormatsView() {
                       title={t("common.edit")}
                       aria-label={t("common.edit")}
                     >
-                      <Pencil size={13} />
+                      <Pencil size={16} />
                     </button>
                     <button
-                      className="btn btn-danger h-7 w-7 px-0"
+                      className="btn btn-danger h-9 w-9 px-0"
                       type="button"
                       onClick={(event) => deleteFormat(format, event)}
                       disabled={remove.isPending && remove.variables === format.id}
                       title={t("common.delete")}
                       aria-label={t("common.delete")}
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>
@@ -1052,9 +1205,9 @@ function PhasesView() {
                       <p className="mt-1 line-clamp-2 text-xs text-muted">{phase.description}</p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <button
-                      className="btn h-7 w-7 px-0"
+                      className="btn h-9 w-9 px-0"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -1063,26 +1216,26 @@ function PhasesView() {
                       title={t("common.edit")}
                       aria-label={t("common.edit")}
                     >
-                      <Pencil size={13} />
+                      <Pencil size={16} />
                     </button>
                     <a
-                      className="btn h-7 w-7 px-0"
+                      className="btn h-9 w-9 px-0"
                       href={`/api/templates/phases/${phase.id}/export`}
                       onClick={(event) => event.stopPropagation()}
                       title={t("common.export")}
                       aria-label={t("common.export")}
                     >
-                      <Download size={13} />
+                      <Download size={16} />
                     </a>
                     <button
-                      className="btn btn-danger h-7 w-7 px-0"
+                      className="btn btn-danger h-9 w-9 px-0"
                       type="button"
                       onClick={(event) => deletePhase(phase, event)}
                       disabled={remove.isPending && remove.variables === phase.id}
                       title={t("common.delete")}
                       aria-label={t("common.delete")}
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>
@@ -1365,9 +1518,9 @@ function RecipesView() {
                       <p className="mt-1 line-clamp-2 text-xs text-muted">{recipe.description}</p>
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1.5">
                     <button
-                      className="btn h-7 w-7 px-0"
+                      className="btn h-9 w-9 px-0"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -1376,26 +1529,26 @@ function RecipesView() {
                       title={t("common.edit")}
                       aria-label={t("common.edit")}
                     >
-                      <Pencil size={13} />
+                      <Pencil size={16} />
                     </button>
                     <a
-                      className="btn h-7 w-7 px-0"
+                      className="btn h-9 w-9 px-0"
                       href={`/api/templates/recipes/${recipe.id}/export`}
                       onClick={(event) => event.stopPropagation()}
                       title={t("common.export")}
                       aria-label={t("common.export")}
                     >
-                      <Download size={13} />
+                      <Download size={16} />
                     </a>
                     <button
-                      className="btn btn-danger h-7 w-7 px-0"
+                      className="btn btn-danger h-9 w-9 px-0"
                       type="button"
                       onClick={(event) => deleteRecipe(recipe, event)}
                       disabled={remove.isPending && remove.variables === recipe.id}
                       title={t("common.delete")}
                       aria-label={t("common.delete")}
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </div>

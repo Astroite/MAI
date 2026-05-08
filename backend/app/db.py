@@ -52,7 +52,13 @@ if _sqlite_mode:
         # with concurrent readers + lets a second writer wait its turn instead
         # of erroring out with `database is locked`.
         cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA busy_timeout=5000")
+        # 15 s of patience before "database is locked" — long enough for an
+        # autodrive task to finish responding to a cancel signal (which only
+        # propagates between LLM stream chunks).
+        cursor.execute("PRAGMA busy_timeout=15000")
+        # NORMAL is the WAL-recommended sync level: durable across crashes,
+        # roughly 5–10× faster than the FULL default for write-heavy bursts.
+        cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.close()
 
 
@@ -85,10 +91,14 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     "persona_templates": [
         ("api_model_id", "varchar(36)", "VARCHAR(36)"),
         ("talkativeness", "double precision DEFAULT 1.0 NOT NULL", "REAL DEFAULT 1.0 NOT NULL"),
+        ("color", "varchar(16) DEFAULT '#3b82f6' NOT NULL", "VARCHAR(16) DEFAULT '#3b82f6' NOT NULL"),
+        ("icon", "varchar(48) DEFAULT 'Sparkles' NOT NULL", "VARCHAR(48) DEFAULT 'Sparkles' NOT NULL"),
     ],
     "persona_instances": [
         ("api_model_id", "varchar(36)", "VARCHAR(36)"),
         ("talkativeness", "double precision DEFAULT 1.0 NOT NULL", "REAL DEFAULT 1.0 NOT NULL"),
+        ("color", "varchar(16) DEFAULT '#3b82f6' NOT NULL", "VARCHAR(16) DEFAULT '#3b82f6' NOT NULL"),
+        ("icon", "varchar(48) DEFAULT 'Sparkles' NOT NULL", "VARCHAR(48) DEFAULT 'Sparkles' NOT NULL"),
     ],
     "api_providers": [
         ("last_tested_ok", "boolean", "BOOLEAN"),
@@ -130,7 +140,9 @@ async def create_schema() -> None:
     from . import migrate_api_models
     from . import migrate_drop_vendor
     from . import migrate_personas
+    from . import migrate_seed_story_mode
     from . import migrate_settings
+    from . import migrate_story_mode_v2
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -139,3 +151,5 @@ async def create_schema() -> None:
         await conn.run_sync(migrate_settings.run)
         await conn.run_sync(migrate_api_models.run)
         await conn.run_sync(migrate_drop_vendor.run)
+        await conn.run_sync(migrate_seed_story_mode.run)
+        await conn.run_sync(migrate_story_mode_v2.run)

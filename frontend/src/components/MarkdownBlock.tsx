@@ -32,7 +32,7 @@ function ShikiCode({ language, code }: { language: string; code: string }) {
       </pre>
     );
   }
-  return <div className="shiki-block overflow-x-auto rounded-md text-sm" dangerouslySetInnerHTML={{ __html: html }} />;
+  return <div className="shiki-block overflow-x-auto rounded-md border border-border bg-surface p-3 text-sm" dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
 export function MarkdownBlock({ content }: { content: string }) {

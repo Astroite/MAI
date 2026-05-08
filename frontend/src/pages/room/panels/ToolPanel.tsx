@@ -167,8 +167,8 @@ export function ToolPanel({
           <div key={server.id} className="rounded-md border border-border p-2 text-xs">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <div className="truncate font-medium text-text">{server.name}</div>
-                <div className="mt-0.5 truncate text-muted">{server.url}</div>
+                <div className="truncate font-medium text-text" title={server.name ?? undefined}>{server.name}</div>
+                <div className="mt-0.5 truncate text-muted" title={server.url ?? undefined}>{server.url}</div>
                 <div className="mt-1 flex flex-wrap gap-1">
                   <StatusPill tone={server.enabled ? "brand" : "neutral"}>
                     {server.enabled ? t("common.enabled") : t("common.disabled")}
@@ -208,7 +208,7 @@ export function ToolPanel({
                     </StatusPill>
                   </div>
                   <p className="mt-1 text-muted">{tool.description}</p>
-                  <code className="mt-1 block truncate text-[11px] text-muted">{tool.name}</code>
+                  <code className="mt-1 block truncate text-[11px] text-muted" title={tool.name}>{tool.name}</code>
                 </div>
               ))}
             </div>
@@ -266,7 +266,7 @@ export function ToolPanel({
                 {item.status}
               </StatusPill>
             </div>
-            <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded bg-surface p-2 text-[11px] text-muted">
+            <pre className="mt-2 max-h-32 min-w-0 overflow-auto break-all whitespace-pre-wrap rounded bg-surface p-2 text-[11px] text-muted">
               {item.error || preview(item.result, preview(item.arguments))}
             </pre>
           </div>
