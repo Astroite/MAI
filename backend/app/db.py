@@ -82,6 +82,14 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     "personas": [
         ("api_provider_id", "varchar(36)", "VARCHAR(36)"),
     ],
+    "persona_templates": [
+        ("api_model_id", "varchar(36)", "VARCHAR(36)"),
+        ("talkativeness", "double precision DEFAULT 1.0 NOT NULL", "REAL DEFAULT 1.0 NOT NULL"),
+    ],
+    "persona_instances": [
+        ("api_model_id", "varchar(36)", "VARCHAR(36)"),
+        ("talkativeness", "double precision DEFAULT 1.0 NOT NULL", "REAL DEFAULT 1.0 NOT NULL"),
+    ],
     "api_providers": [
         ("last_tested_ok", "boolean", "BOOLEAN"),
         ("last_tested_at", "timestamp with time zone", "DATETIME"),
@@ -89,12 +97,6 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "app_settings": [
         ("default_api_model_id", "varchar(36)", "VARCHAR(36)"),
-    ],
-    "persona_templates": [
-        ("api_model_id", "varchar(36)", "VARCHAR(36)"),
-    ],
-    "persona_instances": [
-        ("api_model_id", "varchar(36)", "VARCHAR(36)"),
     ],
     "messages": [
         ("user_masquerade_name", "varchar(120)", "VARCHAR(120)"),

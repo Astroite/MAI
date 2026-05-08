@@ -11,6 +11,7 @@ export interface PersonaTemplate {
   api_model_id?: string | null;
   system_prompt: string;
   temperature: number;
+  talkativeness: number;
   config: Record<string, unknown>;
   tags: string[];
   is_builtin: boolean;
@@ -32,6 +33,7 @@ export interface PersonaInstance {
   api_model_id?: string | null;
   system_prompt: string;
   temperature: number;
+  talkativeness: number;
   config: Record<string, unknown>;
   tags: string[];
 }
@@ -188,6 +190,7 @@ export type MessageType =
   | "user_doc"
   | "tool_invocation"
   | "masquerade_reveal"
+  | "silence"
   | "meta";
 
 export interface ToolSchema {

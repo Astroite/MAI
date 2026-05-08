@@ -180,6 +180,13 @@ class LLMAdapter:
                 parts.append(f"本阶段行为约束：{phase.role_constraints}")
             if phase.prompt_template:
                 parts.append(f"本轮任务：{phase.prompt_template}")
+            ordering = (phase.ordering_rule or {}).get("type")
+            if ordering == "casual":
+                parts.append(
+                    "这是闲聊场景。如果你这一轮没有想补充的、没有真正想说的话，"
+                    "就只输出 `<silent/>` 这一个标记，不要解释原因，也不要客套。"
+                    "只在你确实有内容要说时才正常发言；不要为了凑话而说话。"
+                )
         brief = self._render_scribe_brief(scribe_state).strip()
         if brief:
             parts.append(f"当前结构化记录：\n{brief}")

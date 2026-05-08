@@ -1,5 +1,7 @@
 import asyncio
+import random
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 from sqlalchemy import and_, func, select
@@ -50,6 +52,15 @@ FACILITATOR_TOOL_DESCRIPTION = (
 )
 
 CHUNK_IDLE_TIMEOUT_SECONDS = 30.0
+
+# Casual ordering: how likely the autodrive chain continues after an AI reply.
+# Decays geometrically with consecutive_ai_turns so chains naturally taper off
+# instead of running until max_consecutive_ai_turns. Tunable; with these values
+# expected chain length is ~2-3 turns.
+CASUAL_CONTINUATION_BASE = 0.9
+CASUAL_CONTINUATION_DECAY = 0.85
+
+SILENCE_SENTINEL = "<silent/>"
 
 
 @dataclass
@@ -176,6 +187,11 @@ async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
         return False
     if runtime.consecutive_ai_turns >= runtime.max_consecutive_ai_turns:
         return False
+    ordering = (template.ordering_rule or {}).get("type")
+    if ordering == "casual":
+        p = CASUAL_CONTINUATION_BASE * (CASUAL_CONTINUATION_DECAY ** runtime.consecutive_ai_turns)
+        if random.random() > p:
+            return False
     room = await session.get(Room, room_id)
     if room and await check_phase_exit(session, room, runtime, emit=False):
         return False
@@ -374,6 +390,14 @@ async def pick_next_speaker(
         spoken = await _spoken_counts(session, room.id, phase.id)
         remaining = [pid for pid in allowed if spoken.get(pid, 0) == 0]
         return NextSpeakerResult("parallel", remaining or allowed, "parallel phase")
+    if ordering == "casual":
+        mentioned = await _resolve_at_mention(session, room.id, allowed)
+        if mentioned is not None:
+            return NextSpeakerResult("single", [mentioned], "casual matched @-mention")
+        next_id = await _pick_casual_speaker(session, room.id, phase.id, allowed)
+        if next_id is None:
+            return NextSpeakerResult("wait", [], "casual: no eligible speaker")
+        return NextSpeakerResult("single", [next_id], "casual weighted random")
 
     spoken = await _spoken_counts(session, room.id, phase.id)
     total = sum(spoken.values())
@@ -499,6 +523,94 @@ async def _spoken_counts(session: AsyncSession, room_id: str, phase_instance_id:
         .group_by(Message.author_persona_id)
     )
     return {pid: count for pid, count in (await session.execute(stmt)).all()}
+
+
+async def _last_spoken_at_per_persona(
+    session: AsyncSession, room_id: str, persona_ids: list[str]
+) -> dict[str, datetime]:
+    """Most recent message timestamp per persona across the whole room.
+
+    Casual sampling weights by recency room-wide (not per-phase) — that's the
+    "natural conversation" feel: a persona who just spoke a phase ago should
+    still feel "fresh" relative to one who spoke 30s ago.
+    """
+    if not persona_ids:
+        return {}
+    stmt = (
+        select(Message.author_persona_id, func.max(Message.created_at))
+        .where(
+            Message.room_id == room_id,
+            Message.author_persona_id.in_(persona_ids),
+            Message.message_type.in_(["speech", "question", "answer", "silence"]),
+        )
+        .group_by(Message.author_persona_id)
+    )
+    return {pid: ts for pid, ts in (await session.execute(stmt)).all()}
+
+
+async def _last_non_silence_speaker(
+    session: AsyncSession, room_id: str, persona_ids: list[str]
+) -> str | None:
+    """Most recent persona to actually say something (not silence)."""
+    if not persona_ids:
+        return None
+    return await session.scalar(
+        select(Message.author_persona_id)
+        .where(
+            Message.room_id == room_id,
+            Message.author_persona_id.in_(persona_ids),
+            Message.message_type.in_(["speech", "question", "answer"]),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+
+
+async def _pick_casual_speaker(
+    session: AsyncSession,
+    room_id: str,
+    phase_instance_id: str,
+    allowed: list[str],
+) -> str | None:
+    """Weighted-random pick for `casual` ordering.
+
+    score = (now - last_spoke_at_seconds) * talkativeness * uniform(0.7, 1.3)
+    Forbids the most recent non-silence speaker so nobody talks twice in a row.
+    """
+    if not allowed:
+        return None
+    last_real = await _last_non_silence_speaker(session, room_id, allowed)
+    candidates = [pid for pid in allowed if pid != last_real] or allowed
+
+    last_spoke = await _last_spoken_at_per_persona(session, room_id, candidates)
+    personas = (
+        await session.scalars(select(PersonaInstance).where(PersonaInstance.id.in_(candidates)))
+    ).all()
+    persona_by_id = {p.id: p for p in personas}
+
+    now = datetime.now(timezone.utc)
+    # Personas who haven't spoken yet get a large recency bonus (1 hour) so
+    # newcomers tend to open up early without dominating.
+    NEVER_SPOKE_SECONDS = 3600.0
+
+    best_id: str | None = None
+    best_score = -1.0
+    for pid in candidates:
+        persona = persona_by_id.get(pid)
+        talkativeness = persona.talkativeness if persona is not None else 1.0
+        last = last_spoke.get(pid)
+        if last is None:
+            recency = NEVER_SPOKE_SECONDS
+        else:
+            if last.tzinfo is None:
+                last = last.replace(tzinfo=timezone.utc)
+            recency = max(1.0, (now - last).total_seconds())
+        jitter = random.uniform(0.7, 1.3)
+        score = recency * max(0.0, talkativeness) * jitter
+        if score > best_score:
+            best_score = score
+            best_id = pid
+    return best_id
 
 
 async def _account_token_totals(session: AsyncSession) -> tuple[int, int]:
@@ -736,15 +848,23 @@ async def _stream_one_message(
         partial = format_truncated_partial(partial, truncated_reason)
         completion_tokens = estimate_tokens(partial)
 
+    ordering = (template.ordering_rule or {}).get("type") if template else None
+    is_silence = (
+        ordering == "casual"
+        and truncated_reason is None
+        and partial.strip() == SILENCE_SENTINEL
+    )
+
     message = Message(
         id=tmp_message_id,
         room_id=room.id,
         phase_instance_id=phase.id if phase else None,
-        message_type="speech",
+        message_type="silence" if is_silence else "speech",
         author_persona_id=persona.id,
         author_model=persona.backing_model,
         author_actual="ai",
-        content=partial,
+        content="..." if is_silence else partial,
+        visibility_to_models=False if is_silence else True,
         content_chunks_count=chunk_count,
         truncated_reason=truncated_reason,
         prompt_tokens=prompt_tokens,

@@ -208,6 +208,25 @@ function MessageRow({
     return <ToolInvocationRow message={message} />;
   }
 
+  if (message.message_type === "silence") {
+    const ghostName = persona?.name ?? "AI";
+    const ghostAvatar = {
+      label: personaInitial(ghostName),
+      color: personaColor(persona?.id ?? ghostName)
+    };
+    return (
+      <ChatRow side="left" avatar={ghostAvatar}>
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted/70">
+          <span className="font-semibold">{ghostName}</span>
+          <StatusPill tone="neutral">{t("message.silence")}</StatusPill>
+        </div>
+        <div className="mt-1 inline-block rounded-2xl border border-dashed border-border px-3 py-1.5 text-sm text-muted/60">
+          ...
+        </div>
+      </ChatRow>
+    );
+  }
+
   // Render system/meta/dead_end messages as a centered info strip, not a bubble.
   if (
     message.message_type === "meta" ||

@@ -545,6 +545,7 @@ async def duplicate_persona_template(template_id: str, session: AsyncSession = D
         api_model_id=source.api_model_id,
         system_prompt=source.system_prompt,
         temperature=source.temperature,
+        talkativeness=source.talkativeness,
         config=dict(source.config or {}),
         tags=list(source.tags or []),
     )
@@ -2003,6 +2004,7 @@ async def _create_persona_instances(
             api_model_id=template.api_model_id,
             system_prompt=template.system_prompt,
             temperature=template.temperature,
+            talkativeness=template.talkativeness,
             config=dict(template.config or {}),
             tags=list(template.tags or []),
         )

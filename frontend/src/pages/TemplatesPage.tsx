@@ -66,6 +66,7 @@ function PersonasView() {
   const [description, setDescription] = useState(() => t("templates.defaultPersonaDescription"));
   const [apiModelId, setApiModelId] = useState<string>("");
   const [temperature, setTemperature] = useState(0.4);
+  const [talkativeness, setTalkativeness] = useState(1.0);
   const [tags, setTags] = useState("custom");
   const [systemPrompt, setSystemPrompt] = useState(() => t("templates.defaultPersonaPrompt"));
   const [configText, setConfigText] = useState("{}");
@@ -93,6 +94,7 @@ function PersonasView() {
     ...personaModelPayload(),
     system_prompt: systemPrompt,
     temperature,
+    talkativeness,
     config: configValue.value,
     tags: splitTags(tags)
   });
@@ -107,6 +109,7 @@ function PersonasView() {
     setDescription(persona.description);
     setApiModelId(persona.api_model_id ?? "");
     setTemperature(persona.temperature);
+    setTalkativeness(persona.talkativeness ?? 1.0);
     setTags(persona.tags.join(","));
     setSystemPrompt(persona.system_prompt);
     setConfigText(JSON.stringify(persona.config ?? {}, null, 2));
@@ -118,6 +121,7 @@ function PersonasView() {
     setDescription(t("templates.defaultPersonaDescription"));
     setApiModelId("");
     setTemperature(0.4);
+    setTalkativeness(1.0);
     setTags("custom");
     setSystemPrompt(t("templates.defaultPersonaPrompt"));
     setConfigText("{}");
@@ -142,6 +146,7 @@ function PersonasView() {
       setDescription(typeof payload.description === "string" ? payload.description : description);
       setSystemPrompt(typeof payload.system_prompt === "string" ? payload.system_prompt : systemPrompt);
       setTemperature(typeof payload.temperature === "number" ? payload.temperature : temperature);
+      setTalkativeness(typeof payload.talkativeness === "number" ? payload.talkativeness : talkativeness);
       setTags(Array.isArray(payload.tags) ? payload.tags.map(String).join(",") : tags);
       setConfigText(
         payload.config && typeof payload.config === "object" && !Array.isArray(payload.config)
@@ -192,6 +197,7 @@ function PersonasView() {
         backing_model: editingPersona.backing_model ?? "",
         system_prompt: editingPersona.system_prompt,
         temperature: editingPersona.temperature,
+        talkativeness: editingPersona.talkativeness ?? 1.0,
         config: editingPersona.config ?? {},
         tags: editingPersona.tags ?? []
       };
@@ -340,6 +346,20 @@ function PersonasView() {
               <input name="persona-temperature" className="input mt-1 w-full" type="number" min={0} max={2} step={0.1} value={temperature} onChange={(event) => setTemperature(Number(event.target.value))} />
             </label>
           </div>
+          <label className="block">
+            <span className="label">{t("templates.talkativeness")} <span className="ml-1 text-xs text-muted">{talkativeness.toFixed(1)}</span></span>
+            <input
+              name="persona-talkativeness"
+              className="mt-1 w-full"
+              type="range"
+              min={0}
+              max={3}
+              step={0.1}
+              value={talkativeness}
+              onChange={(event) => setTalkativeness(Number(event.target.value))}
+            />
+            <p className="mt-1 text-xs text-muted">{t("templates.talkativenessHelp")}</p>
+          </label>
           <label className="block">
             <span className="label">{t("common.name")}</span>
             <input name="persona-name" className="input mt-1 w-full" value={name} onChange={(event) => setName(event.target.value)} />
@@ -973,6 +993,7 @@ function PhasesView() {
                 <option value="question_paired">{display("orderingRule", "question_paired")}</option>
                 <option value="parallel">{display("orderingRule", "parallel")}</option>
                 <option value="user_picks">{display("orderingRule", "user_picks")}</option>
+                <option value="casual">{display("orderingRule", "casual")}</option>
               </select>
             </label>
           </div>

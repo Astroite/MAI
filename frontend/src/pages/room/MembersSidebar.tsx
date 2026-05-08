@@ -298,6 +298,7 @@ function PersonaInstanceEditor({
   const [description, setDescription] = useState(persona.description);
   const [apiModelId, setApiModelId] = useState(persona.api_model_id ?? "");
   const [temperature, setTemperature] = useState(persona.temperature);
+  const [talkativeness, setTalkativeness] = useState(persona.talkativeness ?? 1.0);
   const [systemPrompt, setSystemPrompt] = useState(persona.system_prompt);
   const [autoReplyEnabled, setAutoReplyEnabled] = useState((persona.config?.auto_reply_enabled ?? true) !== false);
   const [toolsEnabled, setToolsEnabled] = useState(Boolean(persona.config?.tools_enabled));
@@ -313,6 +314,7 @@ function PersonaInstanceEditor({
         api_provider_id: selectedApiModel?.api_provider_id ?? null,
         backing_model: selectedApiModel?.model_name ?? "",
         temperature,
+        talkativeness,
         system_prompt: systemPrompt,
         config: {
           ...(persona.config ?? {}),
@@ -371,6 +373,20 @@ function PersonaInstanceEditor({
           value={temperature}
           onChange={(event) => setTemperature(Number(event.target.value))}
         />
+      </label>
+      <label className="block">
+        <span className="label">{t("templates.talkativeness")} <span className="ml-1 text-xs text-muted">{talkativeness.toFixed(1)}</span></span>
+        <input
+          name="instance-talkativeness"
+          className="mt-1 w-full"
+          type="range"
+          min={0}
+          max={3}
+          step={0.1}
+          value={talkativeness}
+          onChange={(event) => setTalkativeness(Number(event.target.value))}
+        />
+        <p className="mt-1 text-xs text-muted">{t("templates.talkativenessHelp")}</p>
       </label>
       <label className="block">
         <span className="label">{t("templates.systemPrompt")}</span>

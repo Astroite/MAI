@@ -56,8 +56,20 @@ class UserPicksRule(APIModel):
     type: Literal["user_picks"] = "user_picks"
 
 
+class CasualRule(APIModel):
+    """Casual chat: weighted-random next speaker by recency × talkativeness.
+
+    Forbids the most recent speaker; @mentions still take priority via the
+    same dispatch path mention_driven uses. Pairs with autodrive's casual
+    continuation probability so AI replies can naturally chain into each
+    other instead of waiting for the user.
+    """
+
+    type: Literal["casual"] = "casual"
+
+
 OrderingRule = Annotated[
-    AlternatingRule | RoundRobinRule | MentionDrivenRule | QuestionPairedRule | ParallelRule | UserPicksRule,
+    AlternatingRule | RoundRobinRule | MentionDrivenRule | QuestionPairedRule | ParallelRule | UserPicksRule | CasualRule,
     Field(discriminator="type"),
 ]
 
@@ -143,6 +155,7 @@ class PersonaOut(APIModel):
     api_model_id: str | None = None
     system_prompt: str
     temperature: float
+    talkativeness: float = 1.0
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -158,6 +171,7 @@ class PersonaCreate(APIModel):
     api_model_id: str | None = None
     system_prompt: str
     temperature: float = 0.4
+    talkativeness: float = 1.0
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
@@ -171,6 +185,7 @@ class PersonaUpdate(APIModel):
     api_model_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
+    talkativeness: float | None = None
     config: dict[str, Any] | None = None
     tags: list[str] | None = None
 
@@ -195,6 +210,7 @@ class PersonaTemplateOut(APIModel):
     api_model_id: str | None = None
     system_prompt: str
     temperature: float
+    talkativeness: float = 1.0
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -210,6 +226,7 @@ class PersonaTemplateCreate(APIModel):
     api_model_id: str | None = None
     system_prompt: str
     temperature: float = 0.4
+    talkativeness: float = 1.0
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
 
@@ -225,6 +242,7 @@ class PersonaTemplateUpdate(APIModel):
     api_model_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
+    talkativeness: float | None = None
     config: dict[str, Any] | None = None
     tags: list[str] | None = None
 
@@ -243,6 +261,7 @@ class PersonaInstanceOut(APIModel):
     api_model_id: str | None = None
     system_prompt: str
     temperature: float
+    talkativeness: float = 1.0
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
     created_at: datetime
@@ -261,6 +280,7 @@ class PersonaInstanceUpdate(APIModel):
     api_model_id: str | None = None
     system_prompt: str | None = None
     temperature: float | None = None
+    talkativeness: float | None = None
     config: dict[str, Any] | None = None
     tags: list[str] | None = None
 

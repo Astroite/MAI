@@ -137,6 +137,8 @@ const zh: Record<string, string> = {
   "templates.applyDraft": "填入草稿",
   "templates.kind": "角色类型",
   "templates.temperature": "温度",
+  "templates.talkativeness": "健谈度",
+  "templates.talkativenessHelp": "影响自由聊天里被点到的概率：值越高越爱开口，0 表示几乎只在被 @ 时才说话。",
   "templates.systemPrompt": "系统提示词",
   "templates.configJson": "配置 JSON",
   "templates.configJsonInvalid": "配置必须是 JSON object。",
@@ -289,6 +291,7 @@ const zh: Record<string, string> = {
   "message.deadEndPrefix": "死路：{content}",
   "message.guest": "群友",
   "message.me": "我",
+  "message.silence": "沉默",
   "message.judge": "裁决者",
   "message.judgeShort": "裁",
   "message.revealed": "已揭示",
@@ -508,6 +511,8 @@ const en: Record<string, string> = {
   "templates.applyDraft": "Apply Draft",
   "templates.kind": "Role Type",
   "templates.temperature": "Temperature",
+  "templates.talkativeness": "Talkativeness",
+  "templates.talkativenessHelp": "Affects how often this persona gets picked in casual chat: higher = more eager to jump in, 0 ≈ only speaks when @-mentioned.",
   "templates.systemPrompt": "System Prompt",
   "templates.configJson": "Config JSON",
   "templates.configJsonInvalid": "Config must be a JSON object.",
@@ -660,6 +665,7 @@ const en: Record<string, string> = {
   "message.deadEndPrefix": "Dead end: {content}",
   "message.guest": "Guest",
   "message.me": "Me",
+  "message.silence": "Silent",
   "message.judge": "Judge",
   "message.judgeShort": "J",
   "message.revealed": "Revealed",
@@ -771,6 +777,7 @@ const displayLabels: Record<Locale, Record<string, Record<string, string>>> = {
       user_doc: "文档",
       tool_invocation: "工具调用",
       masquerade_reveal: "身份揭示",
+      silence: "沉默",
       meta: "系统"
     },
     orderingRule: {
@@ -779,7 +786,8 @@ const displayLabels: Record<Locale, Record<string, Record<string, string>>> = {
       mention_driven: "@ 提及驱动",
       user_picks: "用户指定",
       parallel: "并行发言",
-      question_paired: "问答配对"
+      question_paired: "问答配对",
+      casual: "自由聊天"
     },
     allowedSpeakers: {
       all: "所有角色",
@@ -843,6 +851,7 @@ const displayLabels: Record<Locale, Record<string, Record<string, string>>> = {
       user_doc: "Document",
       tool_invocation: "Tool Invocation",
       masquerade_reveal: "Identity Reveal",
+      silence: "Silent",
       meta: "System"
     },
     orderingRule: {
@@ -851,7 +860,8 @@ const displayLabels: Record<Locale, Record<string, Record<string, string>>> = {
       mention_driven: "@ Mention Driven",
       user_picks: "User Picks",
       parallel: "Parallel",
-      question_paired: "Question Paired"
+      question_paired: "Question Paired",
+      casual: "Casual Chat"
     },
     allowedSpeakers: {
       all: "All Roles",

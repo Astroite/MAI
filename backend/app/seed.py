@@ -260,6 +260,18 @@ PHASES: dict[str, dict] = {
         "prompt_template": "请基于当前上下文给出有帮助的下一步发言。",
         "tags": ["builtin", "open"],
     },
+    "casual_chat": {
+        "name": "自由聊天",
+        "description": "多 AI 自然闲聊：按发言间隔和健谈度加权随机挑下一位发言者，没话可说时输出 `<silent/>` 即可。",
+        "declared_variables": [],
+        "allowed_speakers": {"type": "all"},
+        "ordering_rule": {"type": "casual"},
+        "exit_conditions": [{"type": "user_manual"}],
+        "auto_discuss": True,
+        "role_constraints": "像在聊天群里一样自然回应，不必每轮都说，没东西可说就保持沉默。",
+        "prompt_template": "基于当前上下文做个自然回应，或在没什么想补充时保持沉默。",
+        "tags": ["builtin", "casual"],
+    },
 }
 
 
