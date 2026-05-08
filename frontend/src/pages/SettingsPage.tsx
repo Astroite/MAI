@@ -1,9 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink } from "react-router-dom";
-import { CheckCircle2, Download, RefreshCw, Save, Wifi, XCircle } from "lucide-react";
+import {
+  Activity,
+  CheckCircle2,
+  Database,
+  Download,
+  RefreshCw,
+  Save,
+  Server,
+  Wifi,
+  XCircle
+} from "lucide-react";
 import { api } from "../api";
 import { SKIP_UPDATE_KEY } from "../App";
+import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { toast } from "../components/Toaster";
 import { ApiProvidersView } from "./TemplatesPage";
@@ -13,19 +24,53 @@ import { providerKindLabel } from "../providers";
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 10000 });
+  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
+  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
   const { t } = useI18n();
+
+  const verifiedProviders = (providers.data ?? []).filter((p) => p.last_tested_ok === true).length;
+  const enabledModels = (models.data ?? []).filter((m) => m.enabled).length;
+  const setupReady = Boolean(health.data?.setup_complete);
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-xl font-semibold">{t("settings.title")}</h1>
-        <p className="mt-1 text-sm text-muted">{t("settings.subtitle")}</p>
-      </div>
+      <header className="panel flex flex-wrap items-end justify-between gap-3 px-5 py-4">
+        <div className="min-w-0">
+          <h1 className="text-xl font-semibold tracking-normal">{t("settings.title")}</h1>
+          <p className="mt-1 text-sm text-muted">{t("settings.subtitle")}</p>
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+            <StatusPill tone={setupReady ? "brand" : "warning"} dot>
+              {setupReady ? t("settings.setupReady") : t("settings.notReady")}
+            </StatusPill>
+            <StatusPill tone="info">
+              <Server size={11} />
+              {t("settings.providerStat", {
+                enabled: verifiedProviders,
+                total: providers.data?.length ?? 0
+              })}
+            </StatusPill>
+            <StatusPill tone="info">
+              <Activity size={11} />
+              {t("settings.modelStat", { enabled: enabledModels, total: models.data?.length ?? 0 })}
+            </StatusPill>
+            <StatusPill tone={health.data?.status === "ok" ? "brand" : "danger"} dot>
+              {health.data?.status ?? "checking"}
+            </StatusPill>
+            {health.data?.database && (
+              <span className="inline-flex items-center gap-1 text-muted">
+                <Database size={12} />
+                <span className="max-w-[20rem] truncate">{health.data.database}</span>
+              </span>
+            )}
+          </div>
+        </div>
+      </header>
+
       <div className="grid grid-cols-[minmax(0,1fr)_320px] gap-4 max-lg:grid-cols-1">
         <DefaultApiSection />
-        <BackendStatusCard health={health.data} />
+        <UpdaterSection />
       </div>
-      <UpdaterSection />
+
       <ApiProvidersView />
     </div>
   );
@@ -64,68 +109,34 @@ function UpdaterSection() {
     toast.success(t("updater.skipCleared"));
   };
 
-  if (!isTauri) return null;
+  if (!isTauri) {
+    return (
+      <SectionCard title={t("updater.title")} icon={<Download size={14} />}>
+        <p className="text-xs text-muted">{t("updater.subtitle")}</p>
+        <p className="mt-2 text-xs text-muted">{t("updater.notTauri")}</p>
+      </SectionCard>
+    );
+  }
 
   return (
-    <section className="panel p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="font-medium">{t("updater.title")}</div>
-          <div className="mt-1 text-sm text-muted">{t("updater.subtitle")}</div>
-          {skippedVersion && (
-            <div className="mt-2 text-xs text-muted">{t("updater.skipped", { version: skippedVersion })}</div>
-          )}
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button className="btn" type="button" onClick={handleCheck} disabled={checking}>
-            {checking ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
-            {t("updater.checkNow")}
+    <SectionCard title={t("updater.title")} icon={<Download size={14} />}>
+      <p className="text-xs text-muted">{t("updater.subtitle")}</p>
+      {skippedVersion && (
+        <p className="mt-2 text-xs text-muted">{t("updater.skipped", { version: skippedVersion })}</p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <button className="btn flex-1" type="button" onClick={handleCheck} disabled={checking}>
+          {checking ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
+          {t("updater.checkNow")}
+        </button>
+        {skippedVersion && (
+          <button className="btn" type="button" onClick={handleUnskip}>
+            <RefreshCw size={14} />
+            {t("updater.unskip")}
           </button>
-          {skippedVersion && (
-            <button className="btn" type="button" onClick={handleUnskip}>
-              <RefreshCw size={14} />
-              {t("updater.unskip")}
-            </button>
-          )}
-        </div>
+        )}
       </div>
-    </section>
-  );
-}
-
-function BackendStatusCard({
-  health
-}: {
-  health?: { status: string; database: string; setup_complete: boolean };
-}) {
-  const { t } = useI18n();
-
-  return (
-    <section className="panel p-4">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="font-medium">{t("settings.backendStatus")}</div>
-          <div className="mt-1 text-sm text-muted">FastAPI · SQLite/PostgreSQL · LiteLLM</div>
-        </div>
-        <StatusPill tone={health?.status === "ok" ? "brand" : "danger"}>{health?.status ?? "checking"}</StatusPill>
-      </div>
-      <dl className="mt-4 space-y-3 text-sm">
-        <div className="rounded-md border border-border p-3">
-          <dt className="label">{t("settings.database")}</dt>
-          <dd className="mt-1 break-all">{health?.database ?? "-"}</dd>
-        </div>
-        <div className="rounded-md border border-border p-3">
-          <dt className="label">{t("settings.setupReady")}</dt>
-          <dd className="mt-1">
-            {health?.setup_complete ? (
-              <span className="text-brand">{t("common.yes")}</span>
-            ) : (
-              <span className="text-danger">{t("settings.notReady")}</span>
-            )}
-          </dd>
-        </div>
-      </dl>
-    </section>
+    </SectionCard>
   );
 }
 
@@ -196,16 +207,13 @@ function DefaultApiSection() {
         : t("api.statusUntested");
 
   return (
-    <section className="panel p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="font-medium">{t("settings.defaultApi")}</div>
-          <div className="mt-1 text-sm text-muted">
-            {t("settings.defaultApiHelp")}
-          </div>
-        </div>
-      </div>
-      <div className="mt-4 space-y-3">
+    <SectionCard
+      title={t("settings.defaultApi")}
+      icon={<Wifi size={14} />}
+      tone="brand"
+    >
+      <p className="text-xs text-muted">{t("settings.defaultApiHelp")}</p>
+      <div className="mt-3 space-y-3">
         <label className="block">
           <span className="label">{t("settings.defaultModel")}</span>
           <select
@@ -234,7 +242,7 @@ function DefaultApiSection() {
         </label>
         {selectedModel && (
           <div className="rounded-md border border-border bg-surface p-3 text-xs text-muted">
-            <div className="font-medium text-foreground">{settingsModelLabel(selectedModel, providerById.get(selectedModel.api_provider_id), t)}</div>
+            <div className="font-medium text-text">{settingsModelLabel(selectedModel, providerById.get(selectedModel.api_provider_id), t)}</div>
             <div className="mt-1 font-mono">{selectedModel.model_name}</div>
           </div>
         )}
@@ -253,7 +261,7 @@ function DefaultApiSection() {
         )}
         <div className="flex gap-2">
           <button
-            className="btn btn-primary flex-1"
+            className="btn btn-primary flex-1 rounded-full"
             onClick={() => save.mutate()}
             disabled={save.isPending}
           >
@@ -272,7 +280,7 @@ function DefaultApiSection() {
           </button>
         </div>
       </div>
-    </section>
+    </SectionCard>
   );
 }
 

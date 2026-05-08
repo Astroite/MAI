@@ -3,7 +3,25 @@ import { DndContext, closestCenter, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
-import { CheckCircle2, Download, Eye, EyeOff, GripVertical, Pencil, Plus, Save, Sparkles, Trash2, Wifi, XCircle } from "lucide-react";
+import {
+  CheckCircle2,
+  Cog,
+  Download,
+  Eye,
+  EyeOff,
+  GripVertical,
+  Layers,
+  Pencil,
+  Plus,
+  Save,
+  ScrollText,
+  Sparkles,
+  Trash2,
+  UsersRound,
+  Wifi,
+  Workflow,
+  XCircle
+} from "lucide-react";
 import { api } from "../api";
 import type { ApiModel, ApiProvider, DebateFormat, PersonaKind, PersonaTemplate, PhaseTemplate, Recipe } from "../types";
 import { StatusPill } from "../components/StatusPill";
@@ -13,18 +31,43 @@ import { useUnsavedChangesWarning } from "../hooks";
 import { useI18n } from "../i18n";
 import { PROVIDER_KINDS, providerKindLabel } from "../providers";
 
+const TAB_ENTRIES = [
+  { kind: "personas", labelKey: "templates.personas", icon: UsersRound },
+  { kind: "phases", labelKey: "templates.phases", icon: Layers },
+  { kind: "formats", labelKey: "templates.formats", icon: Workflow },
+  { kind: "recipes", labelKey: "templates.recipes", icon: ScrollText },
+  { kind: "api", labelKey: "templates.api", icon: Cog }
+] as const;
+
 export function TemplatesPage() {
   const { kind = "phases" } = useParams();
   const { t } = useI18n();
   return (
-    <div className="grid grid-cols-[220px_minmax(0,1fr)] gap-4 max-lg:grid-cols-1">
-      <aside className="panel p-2">
-        <TemplateNav to="/templates/personas" label={t("templates.personas")} />
-        <TemplateNav to="/templates/phases" label={t("templates.phases")} />
-        <TemplateNav to="/templates/formats" label={t("templates.formats")} />
-        <TemplateNav to="/templates/recipes" label={t("templates.recipes")} />
-        <TemplateNav to="/templates/api" label={t("templates.api")} />
-      </aside>
+    <div className="space-y-4">
+      <nav
+        className="panel mai-scrollbar flex items-center gap-1 overflow-x-auto p-1.5"
+        aria-label={t("templates.navAria")}
+      >
+        {TAB_ENTRIES.map((entry) => {
+          const Icon = entry.icon;
+          return (
+            <NavLink
+              key={entry.kind}
+              to={`/templates/${entry.kind}`}
+              className={({ isActive }) =>
+                `inline-flex h-9 shrink-0 items-center gap-1.5 rounded-md px-3 text-sm font-medium transition ${
+                  isActive
+                    ? "bg-brand text-white shadow-card"
+                    : "text-muted hover:bg-surface hover:text-text"
+                }`
+              }
+            >
+              <Icon size={15} />
+              {t(entry.labelKey)}
+            </NavLink>
+          );
+        })}
+      </nav>
       {kind === "personas" && <PersonasView />}
       {kind === "formats" && <FormatsView />}
       {kind === "recipes" && <RecipesView />}
@@ -209,10 +252,22 @@ function PersonasView() {
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
-        <Header title={t("templates.personas")} actionLabel={t("common.add")} onAction={() => setShowLibrary((value) => !value)} />
-        <p className="text-xs text-muted">
-          {t("templates.personaHelp")}
-        </p>
+        <Header
+          title={t("templates.personas")}
+          subtitle={t("templates.personaHelp")}
+          actionLabel={t("templates.fromBuiltin")}
+          onAction={() => setShowLibrary((value) => !value)}
+          metrics={
+            <>
+              <StatusPill>{t("common.personaCount", { count: items.length })}</StatusPill>
+              {(builtinPersonas.data?.length ?? 0) > 0 && (
+                <span>
+                  {t("templates.builtinAvailable", { count: builtinPersonas.data?.length ?? 0 })}
+                </span>
+              )}
+            </>
+          }
+        />
         {showLibrary && (
           <BuiltinLibrary
             title={t("templates.personaBuiltin")}
@@ -230,55 +285,87 @@ function PersonasView() {
         )}
         <TagFilterBar items={personas.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
         <div className="grid grid-cols-2 gap-3 max-xl:grid-cols-1">
-          {items.map((persona: PersonaTemplate) => (
-            <div
-              key={persona.id}
-              className={`panel cursor-pointer p-4 transition hover:border-brand ${editingPersonaId === persona.id ? "ring-1 ring-brand" : ""}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => loadPersona(persona)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  loadPersona(persona);
-                }
-              }}
-            >
-              <div className="flex items-center justify-between gap-2">
-                <h2 className="font-semibold">{persona.name}</h2>
-                <div className="flex items-center gap-2">
-                  <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>{display("personaKind", persona.kind)}</StatusPill>
-                  <button
-                    className="btn h-8 px-2 text-xs"
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      loadPersona(persona);
-                    }}
-                  >
-                    <Pencil size={14} />
-                    {t("common.edit")}
-                  </button>
-                  <button
-                    className="btn btn-danger h-8 px-2 text-xs"
-                    type="button"
-                    onClick={(event) => deletePersona(persona, event)}
-                    disabled={remove.isPending && remove.variables === persona.id}
-                  >
-                    <Trash2 size={14} />
-                    {t("common.delete")}
-                  </button>
+          {items.map((persona: PersonaTemplate) => {
+            const active = editingPersonaId === persona.id;
+            return (
+              <div
+                key={persona.id}
+                className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-panel p-4 shadow-card transition hover:border-brand ${
+                  active ? "border-brand ring-1 ring-brand" : "border-border"
+                }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => loadPersona(persona)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    loadPersona(persona);
+                  }
+                }}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute left-0 top-3 h-8 w-1 rounded-r-full ${
+                    active ? "bg-brand" : persona.kind === "discussant" ? "bg-brand/40" : "bg-accent/60"
+                  }`}
+                />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span
+                      aria-hidden
+                      className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-brand/10 text-sm font-semibold text-brand"
+                    >
+                      {persona.name.trim().slice(0, 2) || "?"}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="truncate text-sm font-semibold">{persona.name}</h2>
+                        <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>
+                          {display("personaKind", persona.kind)}
+                        </StatusPill>
+                      </div>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted">{persona.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      className="btn h-7 w-7 px-0 text-xs"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        loadPersona(persona);
+                      }}
+                      title={t("common.edit")}
+                      aria-label={t("common.edit")}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="btn btn-danger h-7 w-7 px-0 text-xs"
+                      type="button"
+                      onClick={(event) => deletePersona(persona, event)}
+                      disabled={remove.isPending && remove.variables === persona.id}
+                      title={t("common.delete")}
+                      aria-label={t("common.delete")}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  <StatusPill tone="info">{personaModelLabel(persona, modelById, providerById, t)}</StatusPill>
+                  {persona.tags.slice(0, 5).map((tag) => (
+                    <span
+                      key={tag}
+                      className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted"
+                    >
+                      #{tag}
+                    </span>
+                  ))}
                 </div>
               </div>
-              <p className="mt-2 text-sm text-muted">{persona.description}</p>
-              <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
-                <span>{personaModelLabel(persona, modelById, providerById, t)}</span>
-                {persona.tags.map((tag) => (
-                  <StatusPill key={tag}>{tag}</StatusPill>
-                ))}
-              </div>
-            </div>
-          ))}
+            );
+          })}
           {items.length === 0 && <EmptyState title={t("templates.emptyEditablePersona")} onAdd={() => setShowLibrary(true)} />}
         </div>
       </div>
@@ -530,7 +617,13 @@ function FormatsView() {
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_400px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
-        <Header title={t("templates.formats")} actionLabel={t("common.add")} onAction={() => setShowLibrary((value) => !value)} />
+        <Header
+          title={t("templates.formats")}
+          subtitle={t("templates.formatHelp")}
+          actionLabel={t("templates.fromBuiltin")}
+          onAction={() => setShowLibrary((value) => !value)}
+          metrics={<StatusPill tone="info">{t("templates.formatCount", { count: items.length })}</StatusPill>}
+        />
         {showLibrary && (
           <BuiltinLibrary
             title={t("templates.formatBuiltin")}
@@ -543,67 +636,97 @@ function FormatsView() {
         )}
         <TagFilterBar items={formats.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
         <div className="space-y-3">
-          {items.map((format: DebateFormat) => (
-            <div
-              key={format.id}
-              className={`panel cursor-pointer p-4 transition hover:border-brand ${editingFormatId === format.id ? "ring-1 ring-brand" : ""}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => loadFormat(format)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  loadFormat(format);
-                }
-              }}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-semibold">{format.name}</h2>
-                  <p className="mt-1 text-sm text-muted">{format.description}</p>
+          {items.map((format: DebateFormat) => {
+            const active = editingFormatId === format.id;
+            return (
+              <div
+                key={format.id}
+                className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-panel p-4 shadow-card transition hover:border-brand ${
+                  active ? "border-brand ring-1 ring-brand" : "border-border"
+                }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => loadFormat(format)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    loadFormat(format);
+                  }
+                }}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute left-0 top-3 h-8 w-1 rounded-r-full ${active ? "bg-brand" : "bg-brand/40"}`}
+                />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-brand/10 text-brand">
+                      <Workflow size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-sm font-semibold">{format.name}</h2>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted">{format.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <StatusPill tone="brand">{t("common.phaseCount", { count: format.phase_sequence.length })}</StatusPill>
+                    <button
+                      className="btn h-7 w-7 px-0"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        loadFormat(format);
+                      }}
+                      title={t("common.edit")}
+                      aria-label={t("common.edit")}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <button
+                      className="btn btn-danger h-7 w-7 px-0"
+                      type="button"
+                      onClick={(event) => deleteFormat(format, event)}
+                      disabled={remove.isPending && remove.variables === format.id}
+                      title={t("common.delete")}
+                      aria-label={t("common.delete")}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <StatusPill tone="brand">{t("common.phaseCount", { count: format.phase_sequence.length })}</StatusPill>
-                  <button
-                    className="btn h-8 px-2 text-xs"
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      loadFormat(format);
-                    }}
-                  >
-                    <Pencil size={14} />
-                    {t("common.edit")}
-                  </button>
-                  <button
-                    className="btn btn-danger h-8 px-2 text-xs"
-                    type="button"
-                    onClick={(event) => deleteFormat(format, event)}
-                    disabled={remove.isPending && remove.variables === format.id}
-                  >
-                    <Trash2 size={14} />
-                    {t("common.delete")}
-                  </button>
-                </div>
+                <ol className="mai-scrollbar mt-3 flex items-center gap-1 overflow-x-auto text-xs">
+                  {format.phase_sequence.slice(0, 8).map((slot, index) => {
+                    const phase = phaseById.get(slot.phase_template_id);
+                    return (
+                      <li key={`${format.id}-${index}-${slot.phase_template_id}`} className="flex shrink-0 items-center gap-1">
+                        <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] text-muted">
+                          <span className="text-[10px]">{index + 1}</span>
+                          <span className="max-w-[8rem] truncate">{phase?.name ?? slot.phase_template_id}</span>
+                        </span>
+                        {index < Math.min(format.phase_sequence.length, 8) - 1 && (
+                          <span className="text-muted">→</span>
+                        )}
+                      </li>
+                    );
+                  })}
+                  {format.phase_sequence.length > 8 && (
+                    <li className="shrink-0 text-[11px] text-muted">
+                      +{format.phase_sequence.length - 8}
+                    </li>
+                  )}
+                </ol>
+                {format.tags.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                    {format.tags.slice(0, 4).map((tag) => (
+                      <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                        #{tag}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
-              <ol className="mt-3 space-y-1 text-sm text-muted">
-                {format.phase_sequence.slice(0, 5).map((slot, index) => (
-                  <li key={`${format.id}-${index}-${slot.phase_template_id}`} className="flex gap-2">
-                    <span className="text-xs text-muted">{index + 1}.</span>
-                    <span>{phaseById.get(slot.phase_template_id)?.name ?? slot.phase_template_id}</span>
-                  </li>
-                ))}
-                {format.phase_sequence.length > 5 && <li>{t("templates.remainingPhaseCount", { count: format.phase_sequence.length - 5 })}</li>}
-              </ol>
-              {format.tags.length > 0 && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {format.tags.map((tag) => (
-                    <StatusPill key={tag}>{tag}</StatusPill>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
+            );
+          })}
           {items.length === 0 && <EmptyState title={t("templates.emptyEditableFormat")} onAdd={() => setShowLibrary(true)} />}
         </div>
       </div>
@@ -870,7 +993,13 @@ function PhasesView() {
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_440px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
-        <Header title={t("templates.phases")} actionLabel={t("common.add")} onAction={() => setShowLibrary((value) => !value)} />
+        <Header
+          title={t("templates.phases")}
+          subtitle={t("templates.phaseHelp")}
+          actionLabel={t("templates.fromBuiltin")}
+          onAction={() => setShowLibrary((value) => !value)}
+          metrics={<StatusPill>{t("common.phaseCount", { count: items.length })}</StatusPill>}
+        />
         {showLibrary && (
           <BuiltinLibrary
             title={t("templates.phaseBuiltin")}
@@ -887,69 +1016,95 @@ function PhasesView() {
           />
         )}
         <TagFilterBar items={phases.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
-        {items.map((phase: PhaseTemplate) => (
-          <div
-            key={phase.id}
-            className={`panel cursor-pointer p-4 transition hover:border-brand ${editingPhaseId === phase.id ? "ring-1 ring-brand" : ""}`}
-            role="button"
-            tabIndex={0}
-            onClick={() => loadPhase(phase)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                loadPhase(phase);
-              }
-            }}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-semibold">{phase.name}</h2>
-                <p className="mt-1 text-sm text-muted">{phase.description}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  className="btn h-8 px-2 text-xs"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
+        <div className="grid grid-cols-1 gap-3">
+          {items.map((phase: PhaseTemplate) => {
+            const active = editingPhaseId === phase.id;
+            return (
+              <div
+                key={phase.id}
+                className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-panel p-4 shadow-card transition hover:border-brand ${
+                  active ? "border-brand ring-1 ring-brand" : "border-border"
+                }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => loadPhase(phase)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
                     loadPhase(phase);
-                  }}
-                >
-                  <Pencil size={14} />
-                  {t("common.edit")}
-                </button>
-                <a
-                  className="btn h-8 px-2 text-xs"
-                  href={`/api/templates/phases/${phase.id}/export`}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Download size={14} />
-                  {t("common.export")}
-                </a>
-                <button
-                  className="btn btn-danger h-8 px-2 text-xs"
-                  type="button"
-                  onClick={(event) => deletePhase(phase, event)}
-                  disabled={remove.isPending && remove.variables === phase.id}
-                >
-                  <Trash2 size={14} />
-                  {t("common.delete")}
-                </button>
+                  }
+                }}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute left-0 top-3 h-8 w-1 rounded-r-full ${active ? "bg-brand" : "bg-info/50"}`}
+                />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span
+                      aria-hidden
+                      className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-info/10 text-info"
+                    >
+                      <Layers size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-sm font-semibold">{phase.name}</h2>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted">{phase.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      className="btn h-7 w-7 px-0"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        loadPhase(phase);
+                      }}
+                      title={t("common.edit")}
+                      aria-label={t("common.edit")}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <a
+                      className="btn h-7 w-7 px-0"
+                      href={`/api/templates/phases/${phase.id}/export`}
+                      onClick={(event) => event.stopPropagation()}
+                      title={t("common.export")}
+                      aria-label={t("common.export")}
+                    >
+                      <Download size={13} />
+                    </a>
+                    <button
+                      className="btn btn-danger h-7 w-7 px-0"
+                      type="button"
+                      onClick={(event) => deletePhase(phase, event)}
+                      disabled={remove.isPending && remove.variables === phase.id}
+                      title={t("common.delete")}
+                      aria-label={t("common.delete")}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-xs">
+                  <StatusPill tone="brand">{display("orderingRule", phase.ordering_rule.type)}</StatusPill>
+                  <StatusPill tone="accent">{display("allowedSpeakers", String(phase.allowed_speakers.type ?? "allowed"))}</StatusPill>
+                  {phase.auto_discuss && <StatusPill tone="accent">{t("templates.autoDiscuss")}</StatusPill>}
+                  {phase.exit_conditions.slice(0, 3).map((condition, index) => (
+                    <StatusPill key={`${phase.id}-exit-${index}`}>
+                      {display("exitCondition", String(condition.type ?? "exit"))}
+                    </StatusPill>
+                  ))}
+                  {phase.tags.slice(0, 4).map((tag) => (
+                    <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <StatusPill tone="brand">{display("orderingRule", phase.ordering_rule.type)}</StatusPill>
-              <StatusPill tone="accent">{display("allowedSpeakers", String(phase.allowed_speakers.type ?? "allowed"))}</StatusPill>
-              {phase.auto_discuss && <StatusPill tone="accent">{t("templates.autoDiscuss")}</StatusPill>}
-              {phase.exit_conditions.slice(0, 3).map((condition, index) => (
-                <StatusPill key={`${phase.id}-exit-${index}`}>{display("exitCondition", String(condition.type ?? "exit"))}</StatusPill>
-              ))}
-              {phase.tags.map((tag) => (
-                <StatusPill key={tag}>{tag}</StatusPill>
-              ))}
-            </div>
-          </div>
-        ))}
+            );
+          })}
+        </div>
         {items.length === 0 && <EmptyState title={t("templates.emptyEditablePhase")} onAdd={() => setShowLibrary(true)} />}
       </div>
       <aside className="panel p-4">
@@ -1155,7 +1310,13 @@ function RecipesView() {
   return (
     <section className="grid grid-cols-[minmax(0,1fr)_360px] gap-4 max-xl:grid-cols-1">
       <div className="space-y-3">
-        <Header title={t("templates.recipes")} actionLabel={t("common.add")} onAction={() => setShowLibrary((value) => !value)} />
+        <Header
+          title={t("templates.recipes")}
+          subtitle={t("templates.recipeHelp")}
+          actionLabel={t("templates.fromBuiltin")}
+          onAction={() => setShowLibrary((value) => !value)}
+          metrics={<StatusPill tone="info">{t("templates.recipeCount", { count: items.length })}</StatusPill>}
+        />
         {showLibrary && (
           <BuiltinLibrary
             title={t("templates.recipeBuiltin")}
@@ -1167,71 +1328,111 @@ function RecipesView() {
           />
         )}
         <TagFilterBar items={recipes.data ?? []} selected={selectedTags} onChange={setSelectedTags} />
-        {items.map((recipe: Recipe) => (
-          <div
-            key={recipe.id}
-            className={`panel cursor-pointer p-4 transition hover:border-brand ${editingRecipeId === recipe.id ? "ring-1 ring-brand" : ""}`}
-            role="button"
-            tabIndex={0}
-            onClick={() => loadRecipe(recipe)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                loadRecipe(recipe);
-              }
-            }}
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <h2 className="font-semibold">{recipe.name}</h2>
-                <p className="mt-1 text-sm text-muted">{recipe.description}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  className="btn h-8 px-2 text-xs"
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
+        <div className="space-y-3">
+          {items.map((recipe: Recipe) => {
+            const active = editingRecipeId === recipe.id;
+            const personaSample = recipe.persona_ids
+              .map((id) => personaById.get(id))
+              .filter(Boolean)
+              .slice(0, 5);
+            return (
+              <div
+                key={recipe.id}
+                className={`group relative cursor-pointer overflow-hidden rounded-lg border bg-panel p-4 shadow-card transition hover:border-brand ${
+                  active ? "border-brand ring-1 ring-brand" : "border-border"
+                }`}
+                role="button"
+                tabIndex={0}
+                onClick={() => loadRecipe(recipe)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
                     loadRecipe(recipe);
-                  }}
-                >
-                  <Pencil size={14} />
-                  {t("common.edit")}
-                </button>
-                <a
-                  className="btn h-8 px-2 text-xs"
-                  href={`/api/templates/recipes/${recipe.id}/export`}
-                  onClick={(event) => event.stopPropagation()}
-                >
-                  <Download size={14} />
-                  {t("common.export")}
-                </a>
-                <button
-                  className="btn btn-danger h-8 px-2 text-xs"
-                  type="button"
-                  onClick={(event) => deleteRecipe(recipe, event)}
-                  disabled={remove.isPending && remove.variables === recipe.id}
-                >
-                  <Trash2 size={14} />
-                  {t("common.delete")}
-                </button>
+                  }
+                }}
+              >
+                <span
+                  aria-hidden
+                  className={`absolute left-0 top-3 h-8 w-1 rounded-r-full ${active ? "bg-brand" : "bg-accent/50"}`}
+                />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex min-w-0 items-start gap-3">
+                    <span aria-hidden className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-accent/10 text-accent">
+                      <ScrollText size={16} />
+                    </span>
+                    <div className="min-w-0">
+                      <h2 className="truncate text-sm font-semibold">{recipe.name}</h2>
+                      <p className="mt-1 line-clamp-2 text-xs text-muted">{recipe.description}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    <button
+                      className="btn h-7 w-7 px-0"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        loadRecipe(recipe);
+                      }}
+                      title={t("common.edit")}
+                      aria-label={t("common.edit")}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                    <a
+                      className="btn h-7 w-7 px-0"
+                      href={`/api/templates/recipes/${recipe.id}/export`}
+                      onClick={(event) => event.stopPropagation()}
+                      title={t("common.export")}
+                      aria-label={t("common.export")}
+                    >
+                      <Download size={13} />
+                    </a>
+                    <button
+                      className="btn btn-danger h-7 w-7 px-0"
+                      type="button"
+                      onClick={(event) => deleteRecipe(recipe, event)}
+                      disabled={remove.isPending && remove.variables === recipe.id}
+                      title={t("common.delete")}
+                      aria-label={t("common.delete")}
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                  <StatusPill tone="brand">{t("common.personaCount", { count: recipe.persona_ids.length })}</StatusPill>
+                  {recipe.format_id && (
+                    <StatusPill tone="info">
+                      {formatById.get(recipe.format_id)?.name ?? t("templates.formatFallback")}
+                    </StatusPill>
+                  )}
+                  {recipe.tags.slice(0, 4).map((tag) => (
+                    <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+                {personaSample.length > 0 && (
+                  <div className="mt-3 flex items-center gap-1.5">
+                    {personaSample.map((persona) => (
+                      <span
+                        key={persona!.id}
+                        className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand"
+                        title={persona!.name}
+                      >
+                        {persona!.name.trim().slice(0, 2) || "?"}
+                      </span>
+                    ))}
+                    {recipe.persona_ids.length > personaSample.length && (
+                      <span className="text-[11px] text-muted">+{recipe.persona_ids.length - personaSample.length}</span>
+                    )}
+                  </div>
+                )}
               </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <StatusPill tone="brand">{t("common.personaCount", { count: recipe.persona_ids.length })}</StatusPill>
-              {recipe.format_id && <StatusPill tone="accent">{formatById.get(recipe.format_id)?.name ?? t("templates.formatFallback")}</StatusPill>}
-              {recipe.tags.map((tag) => (
-                <StatusPill key={tag}>{tag}</StatusPill>
-              ))}
-            </div>
-            {recipe.persona_ids.length > 0 && (
-              <div className="mt-2 truncate text-xs text-muted">
-                {recipe.persona_ids.map((id) => personaById.get(id)?.name ?? id).join(" / ")}
-              </div>
-            )}
-          </div>
-        ))}
-        {items.length === 0 && <EmptyState title={t("templates.emptyEditableRecipe")} onAdd={() => setShowLibrary(true)} />}
+            );
+          })}
+          {items.length === 0 && <EmptyState title={t("templates.emptyEditableRecipe")} onAdd={() => setShowLibrary(true)} />}
+        </div>
       </div>
       <aside className="panel p-4">
         <div className="flex items-center justify-between gap-2">
@@ -2007,21 +2208,24 @@ function BuiltinLibrary<T extends BuiltinItem>({
 }) {
   const { t } = useI18n();
   return (
-    <div className="panel p-3">
+    <div className="rounded-lg border border-brand/30 bg-brand/5 p-3">
       <div className="mb-3 flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold">{title}</h2>
-        <StatusPill>{t("templates.libraryCount", { count: items.length })}</StatusPill>
+        <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold text-brand">
+          <Sparkles size={14} />
+          {title}
+        </h2>
+        <StatusPill tone="brand">{t("templates.libraryCount", { count: items.length })}</StatusPill>
       </div>
       <div className="grid grid-cols-2 gap-2 max-lg:grid-cols-1">
         {items.map((item) => (
-          <div key={item.id} className="rounded-md border border-border bg-surface p-3">
+          <div key={item.id} className="rounded-md border border-border bg-panel p-3 shadow-card transition hover:border-brand">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
                 <h3 className="truncate text-sm font-medium">{item.name}</h3>
                 <p className="mt-1 line-clamp-2 text-xs text-muted">{item.description}</p>
               </div>
               <button
-                className="btn h-8 shrink-0 px-2 text-xs"
+                className="btn btn-primary h-8 shrink-0 px-2 text-xs"
                 type="button"
                 onClick={() => onAdd(item)}
                 disabled={isAdding && addingId === item.id}
@@ -2073,22 +2277,27 @@ function Placeholder({ title }: { title: string }) {
 
 function Header({
   title,
+  subtitle,
   actionLabel,
-  onAction
+  onAction,
+  metrics
 }: {
   title: string;
+  subtitle?: string;
   actionLabel?: string;
   onAction?: () => void;
+  metrics?: ReactNode;
 }) {
   const { t } = useI18n();
   return (
-    <div className="flex items-center justify-between">
-      <div>
-        <h1 className="text-xl font-semibold">{title}</h1>
-        <p className="mt-1 text-sm text-muted">{t("templates.headerHelp")}</p>
+    <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="min-w-0">
+        <h1 className="text-xl font-semibold tracking-normal">{title}</h1>
+        <p className="mt-1 text-sm text-muted">{subtitle ?? t("templates.headerHelp")}</p>
+        {metrics && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">{metrics}</div>}
       </div>
       {onAction && (
-        <button className="btn" type="button" onClick={onAction}>
+        <button className="btn btn-primary rounded-full px-4" type="button" onClick={onAction}>
           <Plus size={16} />
           {actionLabel ?? t("common.add")}
         </button>

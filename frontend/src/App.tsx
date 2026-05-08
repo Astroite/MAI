@@ -9,6 +9,7 @@ import { DashboardPage } from "./pages/DashboardPage";
 import { NewDiscussionPage } from "./pages/NewDiscussionPage";
 import { RoomPage } from "./pages/RoomPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
+import { ToolsPage } from "./pages/ToolsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useI18n } from "./i18n";
 
@@ -42,7 +43,7 @@ export function App() {
                 <Route path="/dashboard/new" element={<NewDiscussionPage />} />
                 <Route path="/templates/:kind" element={<TemplatesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/tools" element={<SettingsPage />} />
+                <Route path="/tools" element={<ToolsPage />} />
               </Routes>
             </div>
           </main>
