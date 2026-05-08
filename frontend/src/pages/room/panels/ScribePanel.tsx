@@ -4,29 +4,38 @@ import type { ScribeState } from "../../../types";
 import { useI18n } from "../../../i18n";
 
 const SECTIONS = ["decisions", "consensus", "disagreements", "open_questions", "artifacts", "dead_ends"] as const;
+const SUMMARY_SECTIONS = ["decisions", "consensus", "disagreements"] as const;
 const COLLAPSED_LIMIT = 3;
 
-export function ScribePanel({ state }: { state: ScribeState }) {
+export function ScribePanel({
+  state,
+  mode = "full"
+}: {
+  state: ScribeState;
+  mode?: "full" | "summary";
+}) {
   const { t, display } = useI18n();
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const sections = mode === "summary" ? SUMMARY_SECTIONS : SECTIONS;
 
   return (
     <section>
-      <div className="label">{t("panel.scribe.title")}</div>
-      <div className="mt-3 space-y-3">
-        {SECTIONS.map((key) => {
+      {mode === "full" && <div className="label">{t("panel.scribe.title")}</div>}
+      <div className={`${mode === "full" ? "mt-3 " : ""}space-y-3`}>
+        {sections.map((key) => {
           const items = state[key as keyof ScribeState] ?? [];
           const isExpanded = expanded[key];
           // Show the latest items first, since users care about the most
           // recent additions.
           const ordered = [...items].reverse();
-          const visible = isExpanded ? ordered : ordered.slice(0, COLLAPSED_LIMIT);
+          const visible =
+            mode === "summary" ? ordered.slice(0, COLLAPSED_LIMIT) : isExpanded ? ordered : ordered.slice(0, COLLAPSED_LIMIT);
           const overflow = items.length - COLLAPSED_LIMIT;
           return (
             <div key={key}>
               <div className="flex items-center justify-between">
                 <div className="text-sm font-medium">{display("scribeSection", key)}</div>
-                {overflow > 0 && (
+                {mode === "full" && overflow > 0 && (
                   <button
                     type="button"
                     className="flex items-center gap-1 text-xs text-muted hover:text-brand"

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Plus, Search, Settings, Trash2, Workflow } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { api } from "../../api";
 import { StatusPill } from "../../components/StatusPill";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -187,16 +187,6 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
           );
         })}
       </div>
-      <nav className="flex items-center gap-1 border-t border-border/80 bg-surface px-3 py-3">
-        <NavLink to="/templates/personas" className="btn h-8 flex-1 px-2 text-xs">
-          <Workflow size={14} />
-          {t("nav.templates")}
-        </NavLink>
-        <NavLink to="/settings" className="btn h-8 flex-1 px-2 text-xs">
-          <Settings size={14} />
-          {t("nav.settings")}
-        </NavLink>
-      </nav>
     </aside>
   );
 }

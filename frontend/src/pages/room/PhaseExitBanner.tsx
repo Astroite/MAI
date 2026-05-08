@@ -17,7 +17,7 @@ export function PhaseExitBanner({
   const { t, display } = useI18n();
   const label = matched.map((item) => display("exitCondition", String(item.type ?? "condition"))).join(", ");
   return (
-    <div className="border-b border-accent bg-accent/10 px-4 py-3">
+    <div className="flex-shrink-0 border-b border-accent bg-accent/10 px-4 py-3">
       <div className="mx-auto flex max-w-4xl items-start justify-between gap-3 max-md:flex-col max-md:items-stretch">
         <div>
           <div className="text-sm font-semibold text-accent">{t("phaseExit.title")}</div>

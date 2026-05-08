@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Ban, Gavel, MessageSquarePlus, SendHorizontal, UserRoundCheck } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
+import { Ban, Gavel, MessageSquarePlus, Paperclip, SendHorizontal, UserRoundCheck } from "lucide-react";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
 import type { PersonaInstance } from "../../types";
@@ -20,6 +21,7 @@ export function Composer({
 }) {
   const queryClient = useQueryClient();
   const { t, display } = useI18n();
+  const [params, setParams] = useSearchParams();
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<Mode>("normal");
   const [guestName, setGuestName] = useState(() => t("message.guest"));
@@ -27,6 +29,12 @@ export function Composer({
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const openUploadPanel = () => {
+    const next = new URLSearchParams(params);
+    next.set("panel", "upload");
+    setParams(next, { replace: true });
+  };
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -127,7 +135,7 @@ export function Composer({
     m === "judge" ? <Gavel size={14} /> : m === "dead_end" ? <Ban size={14} /> : m === "masquerade" ? <UserRoundCheck size={14} /> : <MessageSquarePlus size={14} />;
 
   return (
-    <div className="border-t border-border/80 bg-panel px-5 py-4 shadow-card max-sm:px-3">
+    <div className="flex-shrink-0 border-t border-border/80 bg-panel px-5 py-4 shadow-card max-sm:px-3">
       <div className="mx-auto max-w-5xl rounded-lg border border-border/90 bg-panel p-3 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/80 bg-surface p-1">
@@ -156,6 +164,16 @@ export function Composer({
               placeholder={t("composer.guestName")}
             />
           )}
+          <button
+            type="button"
+            className="ml-auto inline-flex h-8 items-center gap-1 rounded-md border border-border/80 bg-panel px-2 text-xs text-muted transition hover:border-brand hover:text-brand"
+            onClick={openUploadPanel}
+            disabled={frozen}
+            title={t("composer.attach")}
+          >
+            <Paperclip size={13} />
+            <span>{t("composer.attach")}</span>
+          </button>
         </div>
         <div className="mt-3 flex items-end gap-2 max-sm:flex-col max-sm:items-stretch">
           <div className="relative flex-1">
@@ -213,7 +231,7 @@ export function Composer({
             />
           </div>
           <button
-            className="btn btn-primary h-10 px-4 max-sm:w-full"
+            className="btn btn-primary h-10 rounded-full px-5 text-sm max-sm:w-full max-sm:rounded-md"
             disabled={frozen || !content.trim() || submit.isPending}
             onClick={() => submit.mutate()}
             title={submit.isPending ? t("composer.sending") : t("composer.enterHint")}

@@ -14,11 +14,13 @@ interface FacilitatorSignal {
 export function FacilitatorPanel({
   roomId,
   frozen,
-  signals
+  signals,
+  compact = false
 }: {
   roomId: string;
   frozen: boolean;
   signals: FacilitatorSignal[];
+  compact?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
@@ -26,10 +28,11 @@ export function FacilitatorPanel({
     mutationFn: () => api.askFacilitator(roomId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
   });
+  const visible = compact ? signals.slice(0, 1) : signals.slice(0, 4);
   return (
     <section>
       <div className="flex items-center justify-between gap-2">
-        <div className="label">{t("panel.facilitator.title")}</div>
+        {compact ? <span /> : <div className="label">{t("panel.facilitator.title")}</div>}
         <button
           className="btn h-8 px-2 text-xs"
           disabled={frozen || ask.isPending}
@@ -41,7 +44,7 @@ export function FacilitatorPanel({
         </button>
       </div>
       <div className="mt-3 space-y-2">
-        {signals.slice(0, 4).map((signal) => (
+        {visible.map((signal) => (
           <div key={signal.id} className="rounded-md border border-border p-2">
             <div className="flex items-center justify-between gap-2">
               <div className="text-sm font-medium">{signal.overall_health}</div>

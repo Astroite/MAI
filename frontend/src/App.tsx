@@ -1,73 +1,53 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ReactNode } from "react";
 import { NavLink, Route, Routes, useMatch } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Check, ChevronRight, Download, Loader2, Moon, PanelsTopLeft, RefreshCw, Settings, Sun, Workflow, X } from "lucide-react";
+import { AlertTriangle, Check, ChevronRight, Download, Loader2, RefreshCw, X } from "lucide-react";
 import { api } from "./api";
 import { useUIStore } from "./store";
+import { AppRail } from "./components/AppRail";
 import { DashboardPage } from "./pages/DashboardPage";
+import { NewDiscussionPage } from "./pages/NewDiscussionPage";
 import { RoomPage } from "./pages/RoomPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
 import { SettingsPage } from "./pages/SettingsPage";
-import { LanguageToggle, useI18n } from "./i18n";
+import { useI18n } from "./i18n";
 
 export function App() {
   const dark = useUIStore((state) => state.dark);
-  const toggleDark = useUIStore((state) => state.toggleDark);
-  const { t } = useI18n();
-  // The room view is its own three-column shell with its own left nav, so we
-  // suppress the global top header there to give the chat the full viewport.
   const inRoomView = useMatch({ path: "/rooms/:roomId/*", end: false });
 
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
-  if (inRoomView) {
-    return (
-      <div className="min-h-screen bg-surface text-text">
+  return (
+    <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-surface text-text">
+      <AppRail />
+      <div className="flex min-w-0 flex-1 flex-col">
         <UpdateBanner />
         <SetupBanner />
-        <Routes>
-          <Route path="/rooms/:roomId" element={<RoomPage />} />
-          <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
-        </Routes>
-      </div>
-    );
-  }
-
-  return (
-    <div className="min-h-screen bg-surface text-text">
-      <UpdateBanner />
-      <SetupBanner />
-      <header className="sticky top-0 z-20 border-b border-border/80 bg-panel/95 shadow-card backdrop-blur">
-        <div className="mx-auto flex h-14 max-w-[1500px] items-center justify-between px-4">
-          <div className="flex items-center gap-2">
-            <div className="grid h-8 w-8 place-items-center rounded-md bg-brand text-sm font-bold text-white shadow-card">M</div>
-            <div>
-              <div className="text-sm font-semibold">MAI</div>
-              <div className="text-xs text-muted">{t("app.subtitle")}</div>
+        {inRoomView ? (
+          <main className="flex min-h-0 flex-1 flex-col">
+            <Routes>
+              <Route path="/rooms/:roomId" element={<RoomPage />} />
+              <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />
+            </Routes>
+          </main>
+        ) : (
+          <main className="mai-scrollbar flex-1 overflow-auto">
+            <div className="mx-auto w-full max-w-[1500px] px-4 py-5">
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/dashboard/new" element={<NewDiscussionPage />} />
+                <Route path="/templates/:kind" element={<TemplatesPage />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/tools" element={<SettingsPage />} />
+              </Routes>
             </div>
-          </div>
-          <nav className="flex items-center gap-1">
-            <NavItem to="/dashboard" icon={<PanelsTopLeft size={16} />} label={t("nav.rooms")} />
-            <NavItem to="/templates/phases" icon={<Workflow size={16} />} label={t("nav.templates")} />
-            <NavItem to="/settings" icon={<Settings size={16} />} label={t("nav.settings")} />
-            <LanguageToggle compact />
-            <button className="btn w-9 px-0" onClick={toggleDark} title={t("theme.toggle")}>
-              {dark ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-          </nav>
-        </div>
-      </header>
-      <main className="mx-auto max-w-[1500px] px-4 py-5">
-        <Routes>
-          <Route path="/" element={<DashboardPage />} />
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/templates/:kind" element={<TemplatesPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
-      </main>
+          </main>
+        )}
+      </div>
     </div>
   );
 }
@@ -235,19 +215,5 @@ function UpdateBanner() {
         )}
       </div>
     </div>
-  );
-}
-
-function NavItem({ to, icon, label }: { to: string; icon: ReactNode; label: string }) {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        `btn border-transparent bg-transparent ${isActive ? "border-border bg-surface text-brand" : "text-muted"}`
-      }
-    >
-      {icon}
-      <span>{label}</span>
-    </NavLink>
   );
 }

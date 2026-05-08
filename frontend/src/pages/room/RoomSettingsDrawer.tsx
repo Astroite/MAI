@@ -126,6 +126,7 @@ export function RoomSettingsDrawer({
               roomId={state.room.id}
               parentRoomId={state.room.parent_room_id}
               title={state.room.title}
+              recipeId={state.room.recipe_id ?? null}
               formatId={state.room.format_id ?? undefined}
               personaIds={discussantIds}
               childRooms={childRooms}

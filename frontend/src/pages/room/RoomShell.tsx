@@ -12,12 +12,12 @@ import {
   GitBranchPlus,
   Layers,
   Loader2,
+  Menu,
   Pencil,
   Plus,
   Save,
   Scale,
   Scroll,
-  Settings,
   Settings2,
   Shield,
   Snowflake,
@@ -36,7 +36,7 @@ import { MessageList } from "./MessageList";
 import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
-import { LanguageToggle, useI18n } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
 
 export function RoomShell() {
@@ -52,6 +52,7 @@ export function RoomShell() {
   });
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
+  const [showRoomsDrawer, setShowRoomsDrawer] = useState(false);
   const [params, setParams] = useSearchParams();
   const state = room.data;
   const hydrateStream = useUIStore((store) => store.hydrateStream);
@@ -62,6 +63,10 @@ export function RoomShell() {
       hydrateStream(activeRoomId, partial.message_id, partial.persona_id, partial.content, partial.last_chunk_index);
     }
   }, [activeRoomId, hydrateStream, state?.in_flight_partial]);
+
+  useEffect(() => {
+    setShowRoomsDrawer(false);
+  }, [activeRoomId]);
 
   // Watchdog: SSE may keep the connection alive (heartbeats) while a backend
   // call silently dies, leaving a "typing…" bubble forever. If we haven't seen
@@ -121,8 +126,10 @@ export function RoomShell() {
   };
 
   return (
-    <div className="grid h-[100dvh] overflow-hidden bg-surface text-text grid-cols-[320px_minmax(0,1fr)_380px] max-2xl:grid-cols-[300px_minmax(0,1fr)_360px] max-xl:grid-cols-[280px_minmax(0,1fr)] max-lg:grid-cols-1">
-      <RoomListSidebar activeRoomId={activeRoomId} />
+    <div className="grid h-[100dvh] overflow-hidden bg-surface text-text grid-cols-[300px_minmax(0,1fr)_360px] max-2xl:grid-cols-[280px_minmax(0,1fr)_340px] max-xl:grid-cols-[260px_minmax(0,1fr)] max-md:grid-cols-1">
+      <div className="max-md:hidden">
+        <RoomListSidebar activeRoomId={activeRoomId} />
+      </div>
 
       <section className="flex min-w-0 flex-col overflow-hidden border-r border-border/70 bg-surface max-xl:border-r-0">
         {!activeRoomId || !state ? (
@@ -131,10 +138,19 @@ export function RoomShell() {
           </div>
         ) : (
           <>
-            <header className="border-b border-border/80 bg-panel/95 px-5 py-4 shadow-card">
+            <header className="flex-shrink-0 border-b border-border/80 bg-panel/95 px-5 py-4 shadow-card">
               <div className="flex items-center justify-between gap-4 max-md:flex-col max-md:items-stretch">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn hidden h-8 w-8 px-0 max-md:inline-flex"
+                    onClick={() => setShowRoomsDrawer(true)}
+                    title={t("room.allRooms")}
+                    aria-label={t("room.allRooms")}
+                  >
+                    <Menu size={16} />
+                  </button>
                   {state.room.parent_room_id && (
                     <Link
                       to={`/rooms/${state.room.parent_room_id}`}
@@ -170,28 +186,15 @@ export function RoomShell() {
                 </div>
               </div>
               <div className="flex flex-shrink-0 items-center gap-2 max-md:flex-wrap">
-                <div className="mr-2 hidden min-w-[150px] flex-col gap-1 text-xs text-muted lg:flex">
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="inline-flex items-center gap-1">
-                      <CircleGauge size={13} />
-                      {t("room.tokenUsage")}
-                    </span>
-                    <span className="font-medium text-text">{tokenPercent(state.runtime.token_counter_total, state.runtime.max_room_tokens)}%</span>
-                  </div>
-                  <div className="h-1.5 overflow-hidden rounded-full bg-surface">
-                    <div
-                      className="h-full rounded-full bg-brand"
-                      style={{ width: `${tokenPercent(state.runtime.token_counter_total, state.runtime.max_room_tokens)}%` }}
-                    />
-                  </div>
-                </div>
                 {/* Quick-access icons for the right-rail panels — only visible
-                    when the right column is hidden by viewport. */}
+                    when the right column is hidden by viewport. Below md only
+                    the 4 primary shortcuts show, the rest fold into the
+                    Settings drawer's tab list. */}
                 <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1">
-                  {PANEL_SHORTCUTS.map((entry) => (
+                  {PANEL_SHORTCUTS.map((entry, index) => (
                     <button
                       key={entry.key}
-                      className="btn h-9 w-9 px-0"
+                      className={`btn h-9 w-9 px-0 ${index >= 4 ? "max-md:hidden" : ""}`}
                       type="button"
                       onClick={() => openSettings(entry.key)}
                       title={t(entry.labelKey)}
@@ -217,28 +220,21 @@ export function RoomShell() {
                     {t("room.freeze")}
                   </button>
                 )}
-                <LanguageToggle compact />
-                <button
-                  className="btn h-9 w-9 px-0"
-                  type="button"
-                  onClick={() => openSettings("phase")}
-                  title={t("room.settings")}
-                >
-                  <Settings size={16} />
-                </button>
               </div>
               </div>
             </header>
             <ConnectionBanner />
-            <div className="border-b border-border/80 bg-surface px-5 py-4">
+            <div className="flex-shrink-0 border-b border-border/80 bg-surface px-5 py-4">
               <RoomPhaseOverview
+                roomId={activeRoomId!}
                 steps={phaseSteps}
                 currentPhaseName={currentPhaseTemplate?.name}
                 tokenUsed={state.runtime.token_counter_total}
                 tokenMax={state.runtime.max_room_tokens}
+                background={state.room.background ?? ""}
+                frozen={state.runtime.frozen}
                 onEditPhase={() => openSettings("phase")}
               />
-              <RoomBackgroundCard roomId={activeRoomId!} background={state.room.background ?? ""} frozen={state.runtime.frozen} />
             </div>
             {state.runtime.phase_exit_suggested && (
               <PhaseExitBanner
@@ -278,6 +274,15 @@ export function RoomShell() {
       </div>
 
       {state && <RoomSettingsDrawer state={state} childRooms={childRooms} />}
+
+      {showRoomsDrawer && (
+        <div className="fixed inset-0 z-30 flex md:hidden">
+          <div className="flex-1 bg-black/40" onClick={() => setShowRoomsDrawer(false)} />
+          <div className="h-full w-[300px] max-w-[85vw] bg-panel shadow-soft drawer-enter">
+            <RoomListSidebar activeRoomId={activeRoomId} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -314,16 +319,22 @@ function tokenPercent(used: number, max: number): number {
 }
 
 function RoomPhaseOverview({
+  roomId,
   steps,
   currentPhaseName,
   tokenUsed,
   tokenMax,
+  background,
+  frozen,
   onEditPhase
 }: {
+  roomId: string;
   steps: PhaseStep[];
   currentPhaseName?: string;
   tokenUsed: number;
   tokenMax: number;
+  background: string;
+  frozen: boolean;
   onEditPhase: () => void;
 }) {
   const { t } = useI18n();
@@ -358,7 +369,7 @@ function RoomPhaseOverview({
           <CircleGauge size={13} />
           <span>{t("room.tokenUsage")}</span>
         </div>
-        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface max-sm:order-last max-sm:basis-full">
+        <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface max-sm:order-last max-sm:basis-full">
           <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
         </div>
         <span className="shrink-0 font-medium text-text">
@@ -367,11 +378,13 @@ function RoomPhaseOverview({
             : t("room.tokensShort", { count: tokenUsed })}
         </span>
       </div>
+
+      <RoomBackgroundInline roomId={roomId} background={background} frozen={frozen} />
     </div>
   );
 }
 
-function RoomBackgroundCard({
+function RoomBackgroundInline({
   roomId,
   background,
   frozen
@@ -387,7 +400,6 @@ function RoomBackgroundCard({
   const [draft, setDraft] = useState(background);
   const [error, setError] = useState<string | null>(null);
 
-  // Reset draft when the saved value changes (e.g., another tab edited).
   useEffect(() => {
     setDraft(background);
   }, [background]);
@@ -403,11 +415,11 @@ function RoomBackgroundCard({
   });
 
   const trimmed = background.trim();
-  const isLong = trimmed.length > 140;
+  const isLong = trimmed.length > 100;
 
   if (editing) {
     return (
-      <div className="mt-3 rounded-lg border border-border/90 bg-panel p-3 shadow-card">
+      <div className="mt-3 rounded-md border border-border/80 bg-surface p-3">
         <div className="flex items-center gap-2 text-xs font-semibold text-muted">
           <Scroll size={13} />
           <span>{t("room.background")}</span>
@@ -452,9 +464,9 @@ function RoomBackgroundCard({
 
   if (!trimmed) {
     return (
-      <div className="mt-3 rounded-lg border border-dashed border-border bg-panel/70 p-3">
+      <div className="mt-3 border-t border-dashed border-border pt-2">
         <button
-          className="flex items-center gap-2 text-xs text-muted hover:text-brand"
+          className="flex items-center gap-1.5 text-xs text-muted hover:text-brand"
           type="button"
           onClick={() => setEditing(true)}
           disabled={frozen}
@@ -466,38 +478,36 @@ function RoomBackgroundCard({
     );
   }
 
-  const displayText = expanded || !isLong ? trimmed : `${trimmed.slice(0, 140)}...`;
+  const displayText = expanded || !isLong ? trimmed : `${trimmed.slice(0, 100)}...`;
   return (
-    <div className="mt-3 rounded-lg border border-info/30 bg-info/5 p-3">
-      <div className="flex items-start gap-2">
-        <Scroll size={13} className="mt-1 flex-shrink-0 text-info" />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-info">{t("room.backgroundPreview")}</span>
-            <div className="flex items-center gap-1">
-              {isLong && (
-                <button
-                  className="btn h-6 px-2 text-xs"
-                  type="button"
-                  onClick={() => setExpanded((value) => !value)}
-                  title={expanded ? t("common.collapse") : t("common.expand")}
-                >
-                  {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
-                </button>
-              )}
+    <div className="mt-3 flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-2">
+      <Scroll size={13} className="mt-0.5 flex-shrink-0 text-info" />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[11px] font-semibold text-info">{t("room.backgroundPreview")}</span>
+          <div className="flex items-center gap-1">
+            {isLong && (
               <button
-                className="btn h-6 px-2 text-xs"
+                className="grid h-6 w-6 place-items-center rounded text-muted hover:bg-info/10 hover:text-info"
                 type="button"
-                onClick={() => setEditing(true)}
-                disabled={frozen}
-                title={t("room.backgroundEdit")}
+                onClick={() => setExpanded((value) => !value)}
+                title={expanded ? t("common.collapse") : t("common.expand")}
               >
-                <Pencil size={12} />
+                {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
               </button>
-            </div>
+            )}
+            <button
+              className="grid h-6 w-6 place-items-center rounded text-muted hover:bg-info/10 hover:text-info"
+              type="button"
+              onClick={() => setEditing(true)}
+              disabled={frozen}
+              title={t("room.backgroundEdit")}
+            >
+              <Pencil size={12} />
+            </button>
           </div>
-          <p className="mt-1 whitespace-pre-wrap text-xs text-muted">{displayText}</p>
         </div>
+        <p className="mt-0.5 whitespace-pre-wrap text-xs text-muted">{displayText}</p>
       </div>
     </div>
   );
@@ -511,7 +521,7 @@ function ConnectionBanner() {
   const isOffline = status === "offline";
   return (
     <div
-      className={`flex items-center gap-2 border-b px-4 py-1.5 text-xs ${
+      className={`flex flex-shrink-0 items-center gap-2 border-b px-4 py-1.5 text-xs ${
         isOffline
           ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
           : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"

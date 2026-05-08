@@ -138,6 +138,7 @@ export interface Room {
   title: string;
   background: string;
   status: "active" | "frozen" | "archived";
+  recipe_id?: string | null;
   format_id?: string | null;
   created_at: string;
 }

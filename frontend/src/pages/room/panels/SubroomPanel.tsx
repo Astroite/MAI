@@ -10,6 +10,7 @@ export function SubroomPanel({
   roomId,
   parentRoomId,
   title,
+  recipeId,
   formatId,
   personaIds,
   childRooms
@@ -17,6 +18,7 @@ export function SubroomPanel({
   roomId: string;
   parentRoomId?: string | null;
   title: string;
+  recipeId?: string | null;
   formatId?: string;
   personaIds: string[];
   childRooms: Room[];
@@ -32,8 +34,13 @@ export function SubroomPanel({
     mutationFn: () =>
       api.createSubroom(roomId, {
         title: subroomTitle,
-        format_id: formatId,
-        persona_ids: personaIds
+        // Inherit the parent's recipe so the subroom keeps its phase plan,
+        // personas, and format. If the parent has no recipe, fall back to
+        // the format + persona ids the parent currently uses so we don't
+        // silently regress to the global default room shape.
+        recipe_id: recipeId ?? null,
+        format_id: recipeId ? undefined : formatId,
+        persona_ids: recipeId ? [] : personaIds
       }),
     onSuccess: (state) => {
       void queryClient.invalidateQueries({ queryKey: ["rooms"] });

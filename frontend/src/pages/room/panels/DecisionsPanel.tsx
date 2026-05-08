@@ -8,11 +8,15 @@ import { useI18n } from "../../../i18n";
 export function DecisionsPanel({
   roomId,
   frozen,
-  decisions
+  decisions,
+  limit,
+  hideLabel = false
 }: {
   roomId: string;
   frozen: boolean;
   decisions: Decision[];
+  limit?: number;
+  hideLabel?: boolean;
 }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
@@ -21,19 +25,20 @@ export function DecisionsPanel({
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
   });
   const active = decisions.filter((decision) => !decision.revoked_by_message_id);
+  const visible = typeof limit === "number" ? active.slice(0, limit) : active;
   if (!active.length) {
     return (
       <section>
-        <div className="label">{t("room.panel.decisions")}</div>
-        <div className="mt-3 text-sm text-muted">{t("panel.decisions.empty")}</div>
+        {!hideLabel && <div className="label">{t("room.panel.decisions")}</div>}
+        <div className={hideLabel ? "text-sm text-muted" : "mt-3 text-sm text-muted"}>{t("panel.decisions.empty")}</div>
       </section>
     );
   }
   return (
     <section>
-      <div className="label">{t("room.panel.decisions")}</div>
-      <ul className="mt-3 space-y-2">
-        {active.map((decision) => (
+      {!hideLabel && <div className="label">{t("room.panel.decisions")}</div>}
+      <ul className={`${hideLabel ? "" : "mt-3 "}space-y-2`}>
+        {visible.map((decision) => (
           <li key={decision.id} className="rounded-md border border-border p-2">
             <div className="flex items-start justify-between gap-2">
               <div className="text-sm">{decision.content}</div>
