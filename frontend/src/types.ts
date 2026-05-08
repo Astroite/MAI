@@ -187,8 +187,70 @@ export type MessageType =
   | "dead_end"
   | "facilitator_signal"
   | "user_doc"
+  | "tool_invocation"
   | "masquerade_reveal"
   | "meta";
+
+export interface ToolSchema {
+  name: string;
+  display_name: string;
+  description: string;
+  server_id?: string | null;
+  server_name?: string | null;
+  source: "builtin" | "mcp";
+  input_schema: Record<string, unknown>;
+  read_only: boolean;
+  enabled: boolean;
+}
+
+export interface ToolServer {
+  id: string;
+  name: string;
+  description: string;
+  kind: "mcp";
+  transport: "streamable_http" | "sse";
+  url?: string | null;
+  enabled: boolean;
+  allow_write: boolean;
+  manifest: { tools?: Array<Record<string, unknown>> } & Record<string, unknown>;
+  last_synced_at?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ToolInvocation {
+  id: string;
+  room_id: string;
+  message_id?: string | null;
+  parent_message_id?: string | null;
+  server_id?: string | null;
+  tool_name: string;
+  display_name: string;
+  status: "pending" | "success" | "error";
+  arguments: Record<string, unknown>;
+  result?: unknown;
+  error?: string | null;
+  started_at: string;
+  completed_at?: string | null;
+  created_at: string;
+}
+
+export interface Scenario {
+  id: string;
+  title: string;
+  description: string;
+  prompt: string;
+  tags: string[];
+  recipe_id?: string | null;
+  format_id?: string | null;
+}
+
+export interface TemplateDraft {
+  kind: "persona" | "phase" | "recipe";
+  payload: Record<string, unknown>;
+  rationale: string;
+}
 
 export interface Message {
   id: string;
@@ -206,6 +268,7 @@ export interface Message {
   content: string;
   truncated_reason?: string | null;
   user_revealed_at?: string | null;
+  tool_invocation?: ToolInvocation | null;
   created_at: string;
 }
 
@@ -250,6 +313,7 @@ export interface RoomState {
   };
   facilitator_signals: FacilitatorSignal[];
   decisions: Decision[];
+  tool_invocations: ToolInvocation[];
   in_flight_partial: InFlightPartial[];
 }
 

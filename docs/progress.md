@@ -1,6 +1,6 @@
 # 项目进度与状态快照
 
-> 最近更新：2026-05-07
+> 最近更新：2026-05-08
 > 基线文档：`product_design.md` / `technical_design.md`
 
 ## 1. 总览
@@ -18,6 +18,9 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 子讨论与合并。
 - 一键冻结和恢复。
 - 模板编辑与内置模板复制。
+- 工具与 MCP server 注册、同步、调用审计。
+- 场景化开房和初始问题预填。
+- 人设模板 AI 起草。
 - 中英文界面切换。
 - Tauri 桌面壳打包。
 
@@ -30,6 +33,8 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 | LLM 调用 | 完成 | LiteLLM stream + tool calling；支持 provider/model 配置 |
 | API 配置 | 完成 | `ApiProvider` + `ApiModel` + `AppSettings.default_api_model_id` |
 | 模板系统 | 完成 | 内置只读，duplicate 后编辑；人设/阶段/赛制/配方/API 页可用 |
+| 工具与 MCP | 完成 | 内置工具、MCP server manifest 同步、成员级工具权限、调用记录 |
+| 场景启动 | 完成 | 首页场景卡片可预填标题、初始问题、赛制或配方 |
 | 房间 UI | 完成 | 三栏聊天壳、成员编辑、右侧设置抽屉 |
 | Scribe | 完成 | 每 5 条消息和阶段边界折叠状态 |
 | Facilitator | 完成 | 周期触发、手动询问、cooldown、observer-only |
@@ -94,6 +99,16 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 
 用户内容不自动翻译。
 
+### 3.4 AgentVerse 启发的能力层
+
+本轮新增了 5 个方向：
+
+- MCP / 工具注册层：`tool_servers`、`tool_invocations`、`/tools` API 和房间工具面板。
+- 成员能力控制：房间内人设可独立配置自动回复、工具调用和写入工具权限。
+- 工具调用可视化：`tool_invocation` 消息进入消息流，并在右侧工具面板显示最近调用。
+- 场景化开房：首页场景卡片预填标题、初始问题、赛制或配方。
+- 模板起草助手：人设编辑器可用自然语言填入可编辑草稿。
+
 ## 4. 后端完成点
 
 - `ACTIVE_CALLS` 按 room + message 跟踪。
@@ -108,17 +123,23 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - RoomRuntimeState 支持分层 token 和 phase round 限额。
 - SQLite 启用 WAL 与 busy timeout。
 - `/api` 前缀中间件和 SPA fallback 支持单进程托管。
+- `tools.py` 统一 MAI 内置工具与 MCP 工具 manifest。
+- LLM 调用支持工具调用轮次，未开启工具的人设仍走原 streaming 路径。
 
 ## 5. 前端完成点
 
 - Dashboard 创建房间，支持配方、赛制、人设选择。
+- Dashboard 创建房间支持场景卡片和初始消息。
 - Room 三栏布局和设置抽屉。
 - Composer 支持 normal / judge / dead_end / 群友发言。
 - parallel 多气泡 streaming。
 - `message.cancelled` 清理 streaming 状态。
 - 断线重连通过 `in_flight_partial` 恢复。
 - 成员编辑器可为房间内人设选择模型。
+- 成员编辑器可配置自动回复和工具权限。
+- 右侧工具面板可管理 MCP server、查看工具清单、手动执行只读工具。
 - 模板页可编辑人设、阶段、赛制、配方和 API 配置。
+- 模板页人设编辑器支持 AI 起草。
 - API 配置页可测试 provider 和 model。
 - 设置页选择默认模型。
 - 语言切换和暗色模式。
@@ -158,6 +179,13 @@ pnpm build
 
 当前已知的前端构建提示是 Vite 大 chunk warning，来自 Markdown/KaTeX/Shiki 相关 bundle，不是失败。
 
+本次变更已额外做过：
+
+- `backend/.venv/bin/python -m py_compile backend/app/*.py`
+- FastAPI app import smoke
+- 临时 SQLite smoke：创建房间、初始消息、执行 `mai_list_room_members`
+- `npm --prefix frontend run build`
+
 ## 7. 打包状态
 
 - `scripts/package.ps1`：普通 release 包。
@@ -196,3 +224,4 @@ pnpm build
 - 梳理大 chunk 体积，考虑 Markdown/代码高亮按需加载。
 - 做一次完整桌面安装包 smoke test。
 - 如果要公开分发，再补隐私说明和 API key 本地存储说明。
+- 接入真实 MCP server 做端到端兼容性测试，优先覆盖 streamable_http。

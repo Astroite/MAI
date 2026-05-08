@@ -12,7 +12,12 @@ import type {
   PhaseTemplate,
   Recipe,
   Room,
-  RoomState
+  RoomState,
+  Scenario,
+  TemplateDraft,
+  ToolInvocation,
+  ToolSchema,
+  ToolServer
 } from "./types";
 
 declare global {
@@ -67,7 +72,13 @@ export const api = {
   roomState: (roomId: string) => request<RoomState>(`/rooms/${roomId}/state`),
   deleteRoom: (roomId: string) =>
     request<{ status: string; room_id: string }>(`/rooms/${roomId}`, { method: "DELETE" }),
-  createRoom: (body: { title: string; recipe_id?: string | null; format_id?: string | null; persona_ids: string[] }) =>
+  createRoom: (body: {
+    title: string;
+    recipe_id?: string | null;
+    format_id?: string | null;
+    persona_ids: string[];
+    initial_message?: string | null;
+  }) =>
     request<RoomState>("/rooms", { method: "POST", body: JSON.stringify(body) }),
   createSubroom: (
     roomId: string,
@@ -164,6 +175,29 @@ export const api = {
     request<{ status: string }>(`/templates/api-models/${modelId}`, { method: "DELETE" }),
   testApiModel: (modelId: string) =>
     request<ApiProviderTestResult>(`/templates/api-models/${modelId}/test`, { method: "POST" }),
+  scenarios: () => request<Scenario[]>("/scenarios"),
+  tools: () => request<ToolSchema[]>("/tools"),
+  toolServers: () => request<ToolServer[]>("/tools/mcp-servers"),
+  createToolServer: (body: {
+    name: string;
+    description?: string;
+    transport?: "streamable_http" | "sse";
+    url: string;
+    enabled?: boolean;
+    allow_write?: boolean;
+  }) => request<ToolServer>("/tools/mcp-servers", { method: "POST", body: JSON.stringify(body) }),
+  updateToolServer: (serverId: string, body: Partial<ToolServer>) =>
+    request<ToolServer>(`/tools/mcp-servers/${serverId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteToolServer: (serverId: string) =>
+    request<{ status: string }>(`/tools/mcp-servers/${serverId}`, { method: "DELETE" }),
+  syncToolServer: (serverId: string) =>
+    request<ToolServer>(`/tools/mcp-servers/${serverId}/sync`, { method: "POST" }),
+  executeTool: (
+    roomId: string,
+    body: { tool_name: string; arguments?: Record<string, unknown>; parent_message_id?: string | null; allow_write?: boolean }
+  ) => request<ToolInvocation>(`/rooms/${roomId}/tools/execute`, { method: "POST", body: JSON.stringify(body) }),
+  templateDraft: (body: { kind: "persona" | "phase" | "recipe"; prompt: string }) =>
+    request<TemplateDraft>("/assistants/template-draft", { method: "POST", body: JSON.stringify(body) }),
   phases: (builtin?: boolean) =>
     request<PhaseTemplate[]>(`/templates/phases${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
   formats: (builtin?: boolean) =>

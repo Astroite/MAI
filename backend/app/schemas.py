@@ -406,6 +406,97 @@ class ApiProviderUpdate(APIModel):
     api_base: str | None = None
 
 
+class ToolSchemaOut(APIModel):
+    name: str
+    display_name: str
+    description: str = ""
+    server_id: str | None = None
+    server_name: str | None = None
+    source: Literal["builtin", "mcp"] = "builtin"
+    input_schema: dict[str, Any] = Field(default_factory=dict)
+    read_only: bool = True
+    enabled: bool = True
+
+
+class ToolServerOut(APIModel):
+    id: str
+    name: str
+    description: str
+    kind: Literal["mcp"] = "mcp"
+    transport: Literal["streamable_http", "sse"] = "streamable_http"
+    url: str | None = None
+    enabled: bool
+    allow_write: bool
+    manifest: dict[str, Any] = Field(default_factory=dict)
+    last_synced_at: datetime | None = None
+    last_error: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ToolServerCreate(APIModel):
+    name: str
+    description: str = ""
+    transport: Literal["streamable_http", "sse"] = "streamable_http"
+    url: str
+    enabled: bool = True
+    allow_write: bool = False
+
+
+class ToolServerUpdate(APIModel):
+    name: str | None = None
+    description: str | None = None
+    transport: Literal["streamable_http", "sse"] | None = None
+    url: str | None = None
+    enabled: bool | None = None
+    allow_write: bool | None = None
+
+
+class ToolInvocationOut(APIModel):
+    id: str
+    room_id: str
+    message_id: str | None = None
+    parent_message_id: str | None = None
+    server_id: str | None = None
+    tool_name: str
+    display_name: str
+    status: Literal["pending", "success", "error"]
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    result: Any = None
+    error: str | None = None
+    started_at: datetime
+    completed_at: datetime | None = None
+    created_at: datetime
+
+
+class ToolExecuteRequest(APIModel):
+    tool_name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    parent_message_id: str | None = None
+    allow_write: bool = False
+
+
+class TemplateDraftRequest(APIModel):
+    kind: Literal["persona", "phase", "recipe"]
+    prompt: str
+
+
+class TemplateDraftOut(APIModel):
+    kind: Literal["persona", "phase", "recipe"]
+    payload: dict[str, Any]
+    rationale: str = ""
+
+
+class ScenarioOut(APIModel):
+    id: str
+    title: str
+    description: str
+    prompt: str
+    tags: list[str] = Field(default_factory=list)
+    recipe_id: str | None = None
+    format_id: str | None = None
+
+
 class PhaseTemplateOut(APIModel):
     id: str
     version: int
@@ -567,6 +658,7 @@ class RoomCreate(APIModel):
     format_id: str | None = None
     persona_ids: list[str] = Field(default_factory=list)
     parent_room_id: str | None = None
+    initial_message: str | None = None
 
 
 class AddPersonasRequest(APIModel):
@@ -613,6 +705,7 @@ class MessageOut(APIModel):
     completion_tokens: int | None = None
     cost_usd: float | None = None
     user_revealed_at: datetime | None = None
+    tool_invocation: ToolInvocationOut | None = None
     created_at: datetime
 
 
@@ -767,4 +860,5 @@ class RoomState(APIModel):
     scribe_state: ScribeStateOut
     facilitator_signals: list[FacilitatorSignalOut]
     decisions: list[DecisionOut] = Field(default_factory=list)
+    tool_invocations: list[ToolInvocationOut] = Field(default_factory=list)
     in_flight_partial: list[InFlightPartialOut] = Field(default_factory=list)

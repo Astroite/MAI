@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Virtuoso } from "react-virtuoso";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Wrench } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
 import type { Message, PersonaInstance } from "../../types";
@@ -22,6 +22,12 @@ function personaInitial(name?: string | null): string {
   const trimmed = name.trim();
   if (!trimmed) return "?";
   return trimmed.slice(0, 2);
+}
+
+function previewValue(value: unknown, fallback = ""): string {
+  if (value == null) return fallback;
+  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
+  return text.length > 520 ? `${text.slice(0, 520)}...` : text;
 }
 
 type Entry =
@@ -136,6 +142,47 @@ function StreamingRow({
   );
 }
 
+function ToolInvocationRow({ message }: { message: Message }) {
+  const { t } = useI18n();
+  const parsed = useMemo(() => {
+    if (message.tool_invocation) return message.tool_invocation;
+    try {
+      return JSON.parse(message.content) as {
+        display_name?: string;
+        tool_name?: string;
+        status?: "pending" | "success" | "error";
+        arguments?: Record<string, unknown>;
+        result?: unknown;
+        error?: string | null;
+      };
+    } catch {
+      return null;
+    }
+  }, [message.content, message.tool_invocation]);
+  const status = parsed?.status ?? "pending";
+  return (
+    <div className="my-1 flex justify-center">
+      <div className="w-full max-w-2xl rounded-md border border-border bg-panel px-3 py-2 text-xs shadow-soft">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2 font-medium">
+              <Wrench size={14} />
+              <span className="truncate">{parsed?.display_name || parsed?.tool_name || t("message.tool.unknown")}</span>
+            </div>
+            {parsed?.tool_name && <code className="mt-1 block truncate text-[11px] text-muted">{parsed.tool_name}</code>}
+          </div>
+          <StatusPill tone={status === "success" ? "brand" : status === "error" ? "danger" : "neutral"}>
+            {status}
+          </StatusPill>
+        </div>
+        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-surface p-2 text-[11px] text-muted">
+          {parsed?.error || previewValue(parsed?.result, previewValue(parsed?.arguments, message.content))}
+        </pre>
+      </div>
+    </div>
+  );
+}
+
 function MessageRow({
   roomId,
   frozen,
@@ -156,6 +203,10 @@ function MessageRow({
       api.verdict(roomId, t("message.revokeVerdict", { content: message.content }), false, { revoke_message_id: message.id }),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
   });
+
+  if (message.message_type === "tool_invocation") {
+    return <ToolInvocationRow message={message} />;
+  }
 
   // Render system/meta/dead_end messages as a centered info strip, not a bubble.
   if (

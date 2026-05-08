@@ -1,7 +1,7 @@
 import json
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Awaitable, Callable
 
 from litellm import acompletion
 from pydantic import BaseModel
@@ -15,6 +15,12 @@ class StreamChunk:
     index: int
 
 
+@dataclass
+class ToolCompletion:
+    content: str
+    tool_call_count: int = 0
+
+
 class LLMAdapter:
     async def stream(
         self,
@@ -25,10 +31,7 @@ class LLMAdapter:
         scribe_state: dict[str, Any] | None = None,
         api_provider: ApiProvider | None = None,
     ) -> AsyncIterator[StreamChunk]:
-        messages = [{"role": "system", "content": self._build_system_prompt(persona, phase, scribe_state)}]
-        for message in context[-50:]:
-            role = "assistant" if message.author_actual in {"ai", "user_as_persona"} else "user"
-            messages.append({"role": role, "content": message.content})
+        messages = self._build_messages(persona, context, phase, scribe_state)
 
         response = await acompletion(
             model=persona.backing_model,
@@ -45,6 +48,60 @@ class LLMAdapter:
             if delta:
                 yield StreamChunk(text=delta, index=index)
                 index += 1
+
+    async def complete_with_tools(
+        self,
+        persona: Persona,
+        context: list[Message],
+        phase: PhaseTemplate | None,
+        max_tokens: int,
+        tools: list[dict[str, Any]],
+        execute_tool: Callable[[str, dict[str, Any]], Awaitable[str]],
+        scribe_state: dict[str, Any] | None = None,
+        api_provider: ApiProvider | None = None,
+        max_tool_rounds: int = 4,
+    ) -> ToolCompletion:
+        messages = self._build_messages(persona, context, phase, scribe_state)
+        tool_call_count = 0
+        for _ in range(max_tool_rounds + 1):
+            response = await acompletion(
+                model=persona.backing_model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=persona.temperature,
+                tools=tools or None,
+                **self._build_extra_params(persona),
+                **self._build_provider_params(api_provider),
+            )
+            message = response.choices[0].message
+            content = self._read_attr(message, "content") or ""
+            tool_calls = self._read_attr(message, "tool_calls") or []
+            if not tool_calls:
+                return ToolCompletion(content=content, tool_call_count=tool_call_count)
+
+            normalized_calls = [self._normalize_tool_call(call) for call in tool_calls]
+            tool_call_count += len(normalized_calls)
+            messages.append({"role": "assistant", "content": content, "tool_calls": normalized_calls})
+            for call in normalized_calls:
+                function = call.get("function") or {}
+                name = function.get("name") or ""
+                raw_args = function.get("arguments") or "{}"
+                try:
+                    parsed_args = json.loads(raw_args) if isinstance(raw_args, str) else dict(raw_args)
+                except Exception:
+                    parsed_args = {"raw_arguments": raw_args}
+                result_text = await execute_tool(name, parsed_args)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "content": result_text,
+                    }
+                )
+        return ToolCompletion(
+            content="工具调用轮次已达到上限，请基于已获得的工具结果继续推进。",
+            tool_call_count=tool_call_count,
+        )
 
     async def complete_tool(
         self,
@@ -128,6 +185,19 @@ class LLMAdapter:
             parts.append(f"当前结构化记录：\n{brief}")
         return "\n\n".join(part for part in parts if part)
 
+    def _build_messages(
+        self,
+        persona: Persona,
+        context: list[Message],
+        phase: PhaseTemplate | None,
+        scribe_state: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        messages = [{"role": "system", "content": self._build_system_prompt(persona, phase, scribe_state)}]
+        for message in context[-50:]:
+            role = "assistant" if message.author_actual in {"ai", "user_as_persona"} else "user"
+            messages.append({"role": role, "content": message.content})
+        return messages
+
     def _render_scribe_brief(self, scribe_state: dict[str, Any] | None) -> str:
         if not scribe_state:
             return ""
@@ -152,6 +222,16 @@ class LLMAdapter:
             function = self._read_attr(tool_calls[0], "function") or {}
             return self._read_attr(function, "arguments") or ""
         return self._read_attr(message, "content") or "{}"
+
+    def _normalize_tool_call(self, call: Any) -> dict[str, Any]:
+        function = self._read_attr(call, "function") or {}
+        name = self._read_attr(function, "name") or ""
+        arguments = self._read_attr(function, "arguments") or "{}"
+        return {
+            "id": self._read_attr(call, "id") or f"tool_{name}",
+            "type": self._read_attr(call, "type") or "function",
+            "function": {"name": name, "arguments": arguments},
+        }
 
     @staticmethod
     def _read_attr(value: Any, key: str) -> Any:
