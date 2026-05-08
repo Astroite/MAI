@@ -12,14 +12,19 @@ export default {
         text: "rgb(var(--text) / <alpha-value>)",
         muted: "rgb(var(--muted) / <alpha-value>)",
         brand: "rgb(var(--brand) / <alpha-value>)",
+        "brand-strong": "rgb(var(--brand-strong) / <alpha-value>)",
+        info: "rgb(var(--info) / <alpha-value>)",
         accent: "rgb(var(--accent) / <alpha-value>)",
+        success: "rgb(var(--success) / <alpha-value>)",
+        warning: "rgb(var(--warning) / <alpha-value>)",
         danger: "rgb(var(--danger) / <alpha-value>)"
       },
       boxShadow: {
-        soft: "0 12px 36px rgba(15, 23, 42, 0.08)"
+        card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.02)",
+        soft: "0 8px 24px rgba(15, 23, 42, 0.06)",
+        pop: "0 16px 40px rgba(15, 23, 42, 0.10)"
       }
     }
   },
   plugins: []
 } satisfies Config;
-

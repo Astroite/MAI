@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate } from "react-router-dom";
-import { MessagesSquare, Plus, Settings, Trash2, Workflow } from "lucide-react";
+import { Plus, Search, Settings, Trash2, Workflow } from "lucide-react";
 import { api } from "../../api";
 import { StatusPill } from "../../components/StatusPill";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -23,6 +23,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   });
   const [creating, setCreating] = useState(false);
   const [title, setTitle] = useState(() => t("room.newDiscussion"));
+  const [query, setQuery] = useState("");
 
   const defaultRecipeId = useMemo(
     () => recipes.data?.find((item) => item.name === "方案评审默认配方")?.id,
@@ -88,25 +89,49 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
     }
     return map;
   }, [rooms.data]);
+  const normalizedQuery = query.trim().toLowerCase();
+  const visibleTopLevel = useMemo(
+    () =>
+      topLevel.filter((room) => {
+        if (!normalizedQuery) return true;
+        const children = childrenByParent.get(room.id) ?? [];
+        return matchesRoom(room, normalizedQuery) || children.some((child) => matchesRoom(child, normalizedQuery));
+      }),
+    [childrenByParent, normalizedQuery, topLevel]
+  );
 
   return (
-    <aside className="flex h-full min-h-0 flex-col border-r border-border bg-panel">
-      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-3">
-        <div className="flex items-center gap-2 font-semibold">
-          <MessagesSquare size={16} />
-          <span>{t("dashboard.title")}</span>
+    <aside className="flex h-full min-h-0 flex-col border-r border-border/80 bg-panel">
+      <div className="space-y-3 border-b border-border/80 px-4 py-4">
+        <div className="flex items-center gap-2">
+          <div className="grid h-8 w-8 place-items-center rounded-md bg-brand text-sm font-bold text-white shadow-card">M</div>
+          <div>
+            <div className="text-lg font-semibold leading-6">MAI</div>
+            <div className="text-xs text-muted">{t("dashboard.title")}</div>
+          </div>
+        </div>
+        <div className="relative">
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            name="room-search"
+            className="input w-full pl-8"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={t("room.searchRooms")}
+          />
         </div>
         <button
           type="button"
-          className="btn h-8 w-8 px-0"
+          className="btn btn-primary h-9 w-full justify-between px-3"
           title={t("dashboard.newRoom")}
           onClick={() => setCreating((value) => !value)}
         >
+          <span>{t("dashboard.newRoom")}</span>
           <Plus size={16} />
         </button>
       </div>
       {creating && (
-        <div className="border-b border-border bg-surface p-3 space-y-2">
+        <div className="space-y-2 border-b border-border/80 bg-surface p-3">
           <input
             name="new-room-title"
             className="input w-full"
@@ -129,30 +154,40 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
           </div>
         </div>
       )}
-      <div className="min-h-0 flex-1 overflow-auto p-2">
-        {topLevel.length === 0 && (
+      <div className="mai-scrollbar min-h-0 flex-1 overflow-auto p-3">
+        <div className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-muted">
+          <span>{t("room.allRooms")}</span>
+          <span>{visibleTopLevel.length}</span>
+        </div>
+        {visibleTopLevel.length === 0 && (
           <div className="px-2 py-6 text-center text-sm text-muted">
             {t("dashboard.emptyRooms")} <Plus size={12} className="inline" /> {t("common.create")}
           </div>
         )}
-        {topLevel.map((room) => (
-          <RoomEntry key={room.id} room={room} active={room.id === activeRoomId} onDelete={() => handleDelete(room)} />
-        ))}
-        {topLevel.flatMap((room) => {
+        {visibleTopLevel.map((room) => {
           const children = childrenByParent.get(room.id) ?? [];
-          return children.map((child) => (
-            <RoomEntry
-              key={child.id}
-              room={child}
-              active={child.id === activeRoomId}
-              indent
-              parentId={room.id}
-              onDelete={() => handleDelete(child)}
-            />
-          ));
+          const visibleChildren =
+            normalizedQuery && !matchesRoom(room, normalizedQuery)
+              ? children.filter((child) => matchesRoom(child, normalizedQuery))
+              : children;
+          return (
+            <div key={room.id} className="mb-2">
+              <RoomEntry room={room} active={room.id === activeRoomId} onDelete={() => handleDelete(room)} />
+              {visibleChildren.map((child) => (
+                <RoomEntry
+                  key={child.id}
+                  room={child}
+                  active={child.id === activeRoomId}
+                  indent
+                  parentId={room.id}
+                  onDelete={() => handleDelete(child)}
+                />
+              ))}
+            </div>
+          );
         })}
       </div>
-      <nav className="flex items-center gap-1 border-t border-border bg-surface px-2 py-2">
+      <nav className="flex items-center gap-1 border-t border-border/80 bg-surface px-3 py-3">
         <NavLink to="/templates/personas" className="btn h-8 flex-1 px-2 text-xs">
           <Workflow size={14} />
           {t("nav.templates")}
@@ -164,6 +199,10 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       </nav>
     </aside>
   );
+}
+
+function matchesRoom(room: Room, query: string): boolean {
+  return room.title.toLowerCase().includes(query) || room.status.toLowerCase().includes(query);
 }
 
 function RoomEntry({
@@ -182,19 +221,24 @@ function RoomEntry({
   const { t, display } = useI18n();
   const to = parentId ? `/rooms/${parentId}/sub/${room.id}` : `/rooms/${room.id}`;
   return (
-    <div className={`group relative ${indent ? "ml-4" : ""}`}>
+    <div className={`group relative ${indent ? "ml-5 border-l border-border/80 pl-2" : ""}`}>
       <NavLink
         to={to}
-        className={`flex items-center gap-2 rounded-md px-2 py-2 pr-9 text-sm transition ${
-          active ? "bg-brand/10 text-brand" : "text-text hover:bg-surface"
+        className={`flex items-center gap-2 rounded-lg border px-2 py-2 pr-9 text-sm shadow-card transition ${
+          active ? "border-brand/60 bg-brand/10 text-brand" : "border-transparent text-text hover:border-border hover:bg-surface"
         }`}
       >
-        <div className="grid h-7 w-7 flex-shrink-0 place-items-center rounded-md bg-surface text-xs">
+        <div className={`grid h-8 w-8 flex-shrink-0 place-items-center rounded-md text-xs font-semibold ${
+          active ? "bg-brand text-white" : "bg-surface text-muted"
+        }`}>
           {indent ? "↳" : room.title.slice(0, 2)}
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate font-medium">{room.title}</div>
-          <div className="mt-0.5 text-xs text-muted">{display("roomStatus", room.status)}</div>
+          <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
+            <span className={`h-1.5 w-1.5 rounded-full ${room.status === "frozen" ? "bg-danger" : "bg-success"}`} />
+            {display("roomStatus", room.status)}
+          </div>
         </div>
         {room.status === "frozen" && <StatusPill tone="danger">{display("roomStatus", room.status)}</StatusPill>}
       </NavLink>

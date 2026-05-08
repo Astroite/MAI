@@ -107,35 +107,49 @@ export function MembersSidebar({
 
   if (compact) {
     return (
-      <div className="border-b border-border px-3 py-2">
-        <div className="mb-1 flex items-center gap-1 text-xs font-semibold text-muted">
-          <Users size={12} />
+      <div className="border-b border-border/80 bg-panel px-4 py-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+          <Users size={14} className="text-brand" />
           {t("room.members", { count: discussants.length })}
         </div>
-        <div className="flex flex-wrap gap-1">
+        <div className="grid grid-cols-2 gap-2">
           {discussants.map((persona) => (
-            <span
+            <div
               key={persona.id}
-              className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ${
-                activePersonaIds.has(persona.id) ? "bg-brand/10 text-brand" : "bg-surface text-muted"
+              className={`min-w-0 rounded-lg border px-2 py-2 shadow-card ${
+                activePersonaIds.has(persona.id) ? "border-brand/50 bg-brand/10" : "border-border/80 bg-panel"
               }`}
               title={persona.name}
             >
-              <span
-                className="inline-block h-3.5 w-3.5 rounded-full text-[8px] font-semibold leading-3.5 text-white text-center"
-                style={{ background: personaColor(persona.id) }}
-              >
-                {personaInitial(persona.name).slice(0, 1)}
-              </span>
-              {persona.name}
-              {Boolean(persona.config?.tools_enabled) && <Wrench size={11} aria-label={t("room.toolsEnabled")} />}
-              {(persona.config?.auto_reply_enabled ?? true) === false && (
-                <PauseCircle size={11} aria-label={t("room.autoReplyDisabled")} />
-              )}
-              {activePersonaIds.has(persona.id) && (
-                <span className="h-1.5 w-1.5 rounded-full bg-brand" style={{ animation: "pulse-ring 1.4s ease-out infinite" }} />
-              )}
-            </span>
+              <div className="flex min-w-0 items-center gap-2">
+                <span
+                  className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-semibold text-white"
+                  style={{ background: personaColor(persona.id) }}
+                  aria-hidden="true"
+                >
+                  {personaInitial(persona.name).slice(0, 1)}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-text">{persona.name}</div>
+                  <div className="mt-0.5 truncate text-[11px] text-muted">
+                    {personaModelLabel(persona, modelById, providerById, t)}
+                  </div>
+                </div>
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    activePersonaIds.has(persona.id) ? "bg-brand" : "bg-success"
+                  }`}
+                  style={activePersonaIds.has(persona.id) ? { animation: "pulse-ring 1.4s ease-out infinite" } : undefined}
+                />
+              </div>
+              <div className="mt-2 flex items-center gap-1 text-[11px] text-muted">
+                {Boolean(persona.config?.tools_enabled) && <Wrench size={11} aria-label={t("room.toolsEnabled")} />}
+                {(persona.config?.auto_reply_enabled ?? true) === false && (
+                  <PauseCircle size={11} aria-label={t("room.autoReplyDisabled")} />
+                )}
+                <span className="truncate">{persona.tags?.slice(0, 2).join(" · ") || persona.description}</span>
+              </div>
+            </div>
           ))}
         </div>
       </div>

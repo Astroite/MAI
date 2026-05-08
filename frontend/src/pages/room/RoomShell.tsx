@@ -4,8 +4,10 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   BookOpen,
+  CalendarDays,
   ChevronDown,
   ChevronUp,
+  CircleGauge,
   FileText,
   GitBranchPlus,
   Layers,
@@ -35,11 +37,12 @@ import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { LanguageToggle, useI18n } from "../../i18n";
+import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
 
 export function RoomShell() {
   const { roomId, subId } = useParams();
   const activeRoomId = subId ?? roomId;
-  const { t, display } = useI18n();
+  const { t, display, locale } = useI18n();
   useRoomEvents(activeRoomId);
   const queryClient = useQueryClient();
   const room = useQuery({
@@ -90,6 +93,26 @@ export function RoomShell() {
   const currentPhaseTemplate = phases.data?.find(
     (phase) => phase.id === state?.current_phase?.phase_template_id
   );
+  const phaseSteps = useMemo<PhaseStep[]>(() => {
+    if (!state) return [];
+    const currentPosition = state.current_phase?.plan_position ?? -1;
+    return state.phase_plan.map((slot) => {
+      const phase = phases.data?.find((item) => item.id === slot.phase_template_id);
+      const status: PhaseStep["status"] =
+        currentPosition < 0
+          ? "upcoming"
+          : slot.position < currentPosition
+            ? "done"
+            : slot.position === currentPosition
+              ? "current"
+              : "upcoming";
+      return {
+        id: `${slot.room_id}-${slot.position}`,
+        label: phase?.name ?? slot.phase_template_id,
+        status
+      };
+    });
+  }, [phases.data, state]);
 
   const openSettings = (tab: string = "phase") => {
     const next = new URLSearchParams(params);
@@ -98,17 +121,18 @@ export function RoomShell() {
   };
 
   return (
-    <div className="grid h-[calc(100vh-0px)] grid-cols-[260px_minmax(0,1fr)_320px] max-xl:grid-cols-[240px_minmax(0,1fr)] max-lg:grid-cols-1">
+    <div className="grid h-[100dvh] overflow-hidden bg-surface text-text grid-cols-[320px_minmax(0,1fr)_380px] max-2xl:grid-cols-[300px_minmax(0,1fr)_360px] max-xl:grid-cols-[280px_minmax(0,1fr)] max-lg:grid-cols-1">
       <RoomListSidebar activeRoomId={activeRoomId} />
 
-      <section className="flex min-w-0 flex-col overflow-hidden bg-panel">
+      <section className="flex min-w-0 flex-col overflow-hidden border-r border-border/70 bg-surface max-xl:border-r-0">
         {!activeRoomId || !state ? (
           <div className="grid flex-1 place-items-center text-sm text-muted">
             {room.isLoading ? t("common.loading") : t("room.selectOrCreate")}
           </div>
         ) : (
           <>
-            <header className="flex items-center justify-between gap-3 border-b border-border bg-panel px-4 py-3">
+            <header className="border-b border-border/80 bg-panel/95 px-5 py-4 shadow-card">
+              <div className="flex items-center justify-between gap-4 max-md:flex-col max-md:items-stretch">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   {state.room.parent_room_id && (
@@ -121,12 +145,17 @@ export function RoomShell() {
                       {t("room.parent")}
                     </Link>
                   )}
-                  <h1 className="truncate text-base font-semibold">{state.room.title}</h1>
+                  <h1 className="truncate text-xl font-semibold tracking-normal">{state.room.title}</h1>
                 </div>
                 <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-                  <StatusPill tone={state.room.status === "frozen" ? "danger" : "brand"}>
+                  <StatusPill tone={state.room.status === "frozen" ? "danger" : "brand"} dot>
                     {display("roomStatus", state.room.status)}
                   </StatusPill>
+                  <span>{t("room.roomId", { id: shortId(state.room.id) })}</span>
+                  <span className="hidden items-center gap-1 sm:inline-flex">
+                    <CalendarDays size={12} />
+                    {t("room.createdAt", { date: formatDateTime(state.room.created_at, locale) })}
+                  </span>
                   {currentPhaseTemplate && (
                     <button
                       type="button"
@@ -136,11 +165,26 @@ export function RoomShell() {
                       {t("room.phase", { name: currentPhaseTemplate.name })}
                     </button>
                   )}
-                  <span>{t("room.tokens", { count: state.runtime.token_counter_total })}</span>
+                  <span>{t("room.members", { count: state.personas.filter((p) => p.kind === "discussant").length })}</span>
                   {state.room.parent_room_id && <StatusPill tone="accent">{t("room.childRoom")}</StatusPill>}
                 </div>
               </div>
-              <div className="flex flex-shrink-0 items-center gap-2">
+              <div className="flex flex-shrink-0 items-center gap-2 max-md:flex-wrap">
+                <div className="mr-2 hidden min-w-[150px] flex-col gap-1 text-xs text-muted lg:flex">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="inline-flex items-center gap-1">
+                      <CircleGauge size={13} />
+                      {t("room.tokenUsage")}
+                    </span>
+                    <span className="font-medium text-text">{tokenPercent(state.runtime.token_counter_total, state.runtime.max_room_tokens)}%</span>
+                  </div>
+                  <div className="h-1.5 overflow-hidden rounded-full bg-surface">
+                    <div
+                      className="h-full rounded-full bg-brand"
+                      style={{ width: `${tokenPercent(state.runtime.token_counter_total, state.runtime.max_room_tokens)}%` }}
+                    />
+                  </div>
+                </div>
                 {/* Quick-access icons for the right-rail panels — only visible
                     when the right column is hidden by viewport. */}
                 <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1">
@@ -183,9 +227,19 @@ export function RoomShell() {
                   <Settings size={16} />
                 </button>
               </div>
+              </div>
             </header>
             <ConnectionBanner />
-            <RoomBackgroundCard roomId={activeRoomId!} background={state.room.background ?? ""} frozen={state.runtime.frozen} />
+            <div className="border-b border-border/80 bg-surface px-5 py-4">
+              <RoomPhaseOverview
+                steps={phaseSteps}
+                currentPhaseName={currentPhaseTemplate?.name}
+                tokenUsed={state.runtime.token_counter_total}
+                tokenMax={state.runtime.max_room_tokens}
+                onEditPhase={() => openSettings("phase")}
+              />
+              <RoomBackgroundCard roomId={activeRoomId!} background={state.room.background ?? ""} frozen={state.runtime.frozen} />
+            </div>
             {state.runtime.phase_exit_suggested && (
               <PhaseExitBanner
                 matched={state.runtime.phase_exit_matched_conditions}
@@ -239,6 +293,84 @@ const PANEL_SHORTCUTS = [
   { key: "limits", labelKey: "room.panel.limits", icon: Settings2 }
 ] as const;
 
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(-8) : id;
+}
+
+function formatDateTime(value: string, locale: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function tokenPercent(used: number, max: number): number {
+  if (!max || max <= 0) return 0;
+  return Math.min(100, Math.max(0, Math.round((used / max) * 100)));
+}
+
+function RoomPhaseOverview({
+  steps,
+  currentPhaseName,
+  tokenUsed,
+  tokenMax,
+  onEditPhase
+}: {
+  steps: PhaseStep[];
+  currentPhaseName?: string;
+  tokenUsed: number;
+  tokenMax: number;
+  onEditPhase: () => void;
+}) {
+  const { t } = useI18n();
+  const pct = tokenPercent(tokenUsed, tokenMax);
+
+  return (
+    <div className="panel px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="label">{t("room.phaseProgress")}</div>
+          <div className="mt-1 flex min-w-0 items-center gap-2">
+            <Layers size={16} className="shrink-0 text-brand" />
+            <span className="truncate text-sm font-semibold">{currentPhaseName ?? t("room.stepper.empty")}</span>
+          </div>
+        </div>
+        <button className="btn h-8 shrink-0 px-2 text-xs" type="button" onClick={onEditPhase}>
+          <Settings2 size={13} />
+          {t("room.openPhaseSettings")}
+        </button>
+      </div>
+
+      <div className="mt-3">
+        {steps.length ? (
+          <PhaseStepper steps={steps} onSelect={onEditPhase} />
+        ) : (
+          <div className="text-xs text-muted">{t("room.stepper.empty")}</div>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 text-xs text-muted max-sm:flex-wrap">
+        <div className="flex min-w-[8.5rem] items-center gap-1">
+          <CircleGauge size={13} />
+          <span>{t("room.tokenUsage")}</span>
+        </div>
+        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-surface max-sm:order-last max-sm:basis-full">
+          <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+        </div>
+        <span className="shrink-0 font-medium text-text">
+          {tokenMax > 0
+            ? t("room.tokenBudget", { used: tokenUsed, max: tokenMax })
+            : t("room.tokensShort", { count: tokenUsed })}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function RoomBackgroundCard({
   roomId,
   background,
@@ -275,7 +407,7 @@ function RoomBackgroundCard({
 
   if (editing) {
     return (
-      <div className="border-b border-border bg-surface/50 px-4 py-2">
+      <div className="mt-3 rounded-lg border border-border/90 bg-panel p-3 shadow-card">
         <div className="flex items-center gap-2 text-xs font-semibold text-muted">
           <Scroll size={13} />
           <span>{t("room.background")}</span>
@@ -320,7 +452,7 @@ function RoomBackgroundCard({
 
   if (!trimmed) {
     return (
-      <div className="border-b border-border bg-surface/30 px-4 py-2">
+      <div className="mt-3 rounded-lg border border-dashed border-border bg-panel/70 p-3">
         <button
           className="flex items-center gap-2 text-xs text-muted hover:text-brand"
           type="button"
@@ -336,12 +468,12 @@ function RoomBackgroundCard({
 
   const displayText = expanded || !isLong ? trimmed : `${trimmed.slice(0, 140)}...`;
   return (
-    <div className="border-b border-border bg-surface/30 px-4 py-2">
+    <div className="mt-3 rounded-lg border border-info/30 bg-info/5 p-3">
       <div className="flex items-start gap-2">
-        <Scroll size={13} className="mt-1 flex-shrink-0 text-muted" />
+        <Scroll size={13} className="mt-1 flex-shrink-0 text-info" />
         <div className="min-w-0 flex-1">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold text-muted">{t("room.background")}</span>
+            <span className="text-xs font-semibold text-info">{t("room.backgroundPreview")}</span>
             <div className="flex items-center gap-1">
               {isLong && (
                 <button

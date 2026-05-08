@@ -75,14 +75,16 @@ export function MessageList({
   if (!entries.length) {
     return (
       <div className="min-h-0 flex-1 overflow-auto bg-surface">
-        <div className="mt-12 text-center text-sm text-muted">{t("message.empty")}</div>
+        <div className="mx-auto mt-12 max-w-md rounded-lg border border-dashed border-border bg-panel/70 px-4 py-6 text-center text-sm text-muted">
+          {t("message.empty")}
+        </div>
       </div>
     );
   }
 
   return (
     <Virtuoso
-      className="min-h-0 flex-1 bg-surface"
+      className="mai-scrollbar min-h-0 flex-1 bg-surface"
       data={entries}
       followOutput="smooth"
       // Smooth-scroll on append rather than fixed-bottom so users reading
@@ -93,8 +95,8 @@ export function MessageList({
         Footer: () => <div className="h-3" />
       }}
       itemContent={(_, entry) => (
-        <div className="px-4">
-          <div className="mx-auto max-w-3xl py-1.5">
+        <div className="px-5">
+          <div className="mx-auto max-w-5xl py-2">
             {entry.kind === "message" ? (
               <MessageRow
                 roomId={roomId}
@@ -132,10 +134,11 @@ function StreamingRow({
       side="left"
       avatar={{ label: personaInitial(personaName), color: personaColor(personaId) }}
     >
-      <div className="text-xs font-medium text-brand">
-        {t("message.streaming", { name: personaName ?? "AI" })}
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+        <span className="font-semibold text-text">{t("message.streaming", { name: personaName ?? "AI" })}</span>
+        <span className="h-1.5 w-1.5 rounded-full bg-brand" style={{ animation: "pulse-ring 1.4s ease-out infinite" }} />
       </div>
-      <div className="mt-1">
+      <div className="mt-1 rounded-lg border border-brand/30 bg-panel px-3 py-2 text-sm shadow-card">
         <MarkdownBlock content={text} />
       </div>
     </ChatRow>
@@ -162,7 +165,7 @@ function ToolInvocationRow({ message }: { message: Message }) {
   const status = parsed?.status ?? "pending";
   return (
     <div className="my-1 flex justify-center">
-      <div className="w-full max-w-2xl rounded-md border border-border bg-panel px-3 py-2 text-xs shadow-soft">
+      <div className="w-full max-w-3xl rounded-lg border border-border/90 bg-panel px-3 py-2 text-xs shadow-card">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 font-medium">
@@ -175,7 +178,7 @@ function ToolInvocationRow({ message }: { message: Message }) {
             {status}
           </StatusPill>
         </div>
-        <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded bg-surface p-2 text-[11px] text-muted">
+        <pre className="mai-scrollbar mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface p-2 text-[11px] text-muted">
           {parsed?.error || previewValue(parsed?.result, previewValue(parsed?.arguments, message.content))}
         </pre>
       </div>
@@ -197,7 +200,7 @@ function MessageRow({
   revoked: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { t, display } = useI18n();
+  const { t, display, locale } = useI18n();
   const revoke = useMutation({
     mutationFn: () =>
       api.verdict(roomId, t("message.revokeVerdict", { content: message.content }), false, { revoke_message_id: message.id }),
@@ -246,7 +249,7 @@ function MessageRow({
     return (
       <div className="my-1 flex items-center justify-center gap-2 text-xs text-muted">
         <div className="h-px flex-1 bg-border" />
-        <span>{label}</span>
+        <span className="max-w-2xl rounded-md border border-border/80 bg-panel px-2 py-1 text-center shadow-card">{label}</span>
         <div className="h-px flex-1 bg-border" />
       </div>
     );
@@ -272,15 +275,16 @@ function MessageRow({
           : persona?.name ?? "AI";
 
   const bubbleTone = isUser
-    ? "bg-brand text-white"
+    ? "border border-brand/50 bg-brand/5 text-text"
     : message.author_actual === "user_as_persona"
-      ? "bg-panel border border-brand"
-      : "bg-panel border border-border";
+      ? "border border-brand/50 bg-panel"
+      : "border border-border/90 bg-panel";
 
   return (
     <ChatRow side={side} avatar={avatar}>
-      <div className={`flex flex-wrap items-center gap-2 text-xs ${isUser ? "justify-end" : ""}`}>
-        <span className="font-semibold">{authorName}</span>
+      <div className={`flex flex-wrap items-center gap-2 text-xs text-muted ${isUser ? "justify-end" : ""}`}>
+        <span className="font-semibold text-text">{authorName}</span>
+        <span>{formatMessageTime(message.created_at, locale)}</span>
         {message.message_type !== "speech" && (
           <StatusPill tone={message.message_type === "facilitator_signal" ? "accent" : "neutral"}>
             {display("messageType", message.message_type)}
@@ -302,8 +306,11 @@ function MessageRow({
             {t("message.revoke")}
           </button>
         )}
+        <span className="rounded-md border border-border/80 bg-panel px-1.5 py-0.5 text-[11px] text-muted">
+          #{shortMessageId(message.id)}
+        </span>
       </div>
-      <div className={`mt-1 rounded-2xl px-3 py-2 text-sm shadow-soft ${bubbleTone}`}>
+      <div className={`mt-1 rounded-lg px-3 py-2 text-sm shadow-card ${bubbleTone}`}>
         <MarkdownBlock content={message.content} />
       </div>
     </ChatRow>
@@ -328,7 +335,17 @@ function ChatRow({
       >
         {avatar.label}
       </div>
-      <div className={`min-w-0 max-w-[min(680px,80%)] ${side === "right" ? "text-right" : ""}`}>{children}</div>
+      <div className={`min-w-0 max-w-[min(760px,82%)] ${side === "right" ? "text-right" : ""}`}>{children}</div>
     </div>
   );
+}
+
+function shortMessageId(id: string): string {
+  return id.length > 4 ? id.slice(-4) : id;
+}
+
+function formatMessageTime(value: string, locale: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
 }

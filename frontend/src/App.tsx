@@ -40,10 +40,10 @@ export function App() {
     <div className="min-h-screen bg-surface text-text">
       <UpdateBanner />
       <SetupBanner />
-      <header className="sticky top-0 z-20 border-b border-border bg-panel/95 backdrop-blur">
+      <header className="sticky top-0 z-20 border-b border-border/80 bg-panel/95 shadow-card backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1500px] items-center justify-between px-4">
           <div className="flex items-center gap-2">
-              <div className="grid h-8 w-8 place-items-center rounded-md bg-brand text-sm font-bold text-white">M</div>
+            <div className="grid h-8 w-8 place-items-center rounded-md bg-brand text-sm font-bold text-white shadow-card">M</div>
             <div>
               <div className="text-sm font-semibold">MAI</div>
               <div className="text-xs text-muted">{t("app.subtitle")}</div>
@@ -60,7 +60,7 @@ export function App() {
           </nav>
         </div>
       </header>
-      <main className="mx-auto max-w-[1500px] px-4 py-4">
+      <main className="mx-auto max-w-[1500px] px-4 py-5">
         <Routes>
           <Route path="/" element={<DashboardPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />

@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Ban, Gavel, MessageSquarePlus, MoreHorizontal, UserRoundCheck } from "lucide-react";
+import { Ban, Gavel, MessageSquarePlus, SendHorizontal, UserRoundCheck } from "lucide-react";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
 import type { PersonaInstance } from "../../types";
 
 type Mode = "normal" | "judge" | "dead_end" | "masquerade";
+
+const MODES: Mode[] = ["normal", "judge", "dead_end", "masquerade"];
 
 export function Composer({
   roomId,
@@ -21,21 +23,10 @@ export function Composer({
   const [content, setContent] = useState("");
   const [mode, setMode] = useState<Mode>("normal");
   const [guestName, setGuestName] = useState(() => t("message.guest"));
-  const [menuOpen, setMenuOpen] = useState(false);
   const [cursorPosition, setCursorPosition] = useState(0);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState("");
-  const menuRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-
-  useEffect(() => {
-    if (!menuOpen) return;
-    const handler = (event: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(event.target as Node)) setMenuOpen(false);
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [menuOpen]);
 
   const submit = useMutation({
     mutationFn: async () => {
@@ -136,140 +127,102 @@ export function Composer({
     m === "judge" ? <Gavel size={14} /> : m === "dead_end" ? <Ban size={14} /> : m === "masquerade" ? <UserRoundCheck size={14} /> : <MessageSquarePlus size={14} />;
 
   return (
-    <div className="border-t border-border bg-panel">
-      {mode !== "normal" && (
-        <div className="flex items-center justify-between gap-3 border-b border-border bg-surface px-3 py-2 text-xs">
-          <div className="flex items-center gap-2">
-            {modeIcon(mode)}
-            <span>{t("composer.mode", { mode: display("mode", mode) })}</span>
-            {mode === "masquerade" && (
-              <input
-                name="masquerade-guest-name"
-                className="input h-7 w-32 text-xs"
-                value={guestName}
-                onChange={(event) => setGuestName(event.target.value)}
-                placeholder={t("composer.guestName")}
-              />
-            )}
+    <div className="border-t border-border/80 bg-panel px-5 py-4 shadow-card max-sm:px-3">
+      <div className="mx-auto max-w-5xl rounded-lg border border-border/90 bg-panel p-3 shadow-card">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/80 bg-surface p-1">
+            {MODES.map((entry) => (
+              <button
+                key={entry}
+                type="button"
+                className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition ${
+                  mode === entry ? "bg-panel text-brand shadow-card" : "text-muted hover:text-text"
+                }`}
+                onClick={() => setMode(entry)}
+                disabled={frozen}
+                title={display("mode", entry)}
+              >
+                {modeIcon(entry)}
+                <span>{display("mode", entry)}</span>
+              </button>
+            ))}
           </div>
-          <button className="text-xs text-muted underline" type="button" onClick={() => setMode("normal")}>
-            {t("common.cancel")}
-          </button>
+          {mode === "masquerade" && (
+            <input
+              name="masquerade-guest-name"
+              className="input h-8 w-36 text-xs"
+              value={guestName}
+              onChange={(event) => setGuestName(event.target.value)}
+              placeholder={t("composer.guestName")}
+            />
+          )}
         </div>
-      )}
-      <div className="flex items-end gap-2 p-3">
-        <div className="relative" ref={menuRef}>
+        <div className="mt-3 flex items-end gap-2 max-sm:flex-col max-sm:items-stretch">
+          <div className="relative flex-1">
+            {mentionPanelOpen && (
+              <div className="absolute bottom-full left-0 z-20 mb-2 max-h-56 w-full max-w-md overflow-hidden rounded-md border border-border bg-panel shadow-soft">
+                <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted">{t("composer.mentionMembers")}</div>
+                {mentionSuggestions.length === 0 ? (
+                  <div className="px-3 py-3 text-sm text-muted">{t("composer.noMentionMatches")}</div>
+                ) : (
+                  <div className="mai-scrollbar max-h-44 overflow-auto py-1">
+                    {mentionSuggestions.map((persona, index) => {
+                      const active = index === activeMentionIndex;
+                      return (
+                        <button
+                          key={persona.id}
+                          type="button"
+                          className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm ${
+                            active ? "bg-brand text-white" : "hover:bg-surface"
+                          }`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            insertMention(persona);
+                          }}
+                        >
+                          <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface text-xs text-muted">
+                            {persona.name.slice(0, 1)}
+                          </span>
+                          <span className="min-w-0">
+                            <span className="block truncate font-medium">{persona.name}</span>
+                            <span className={`mt-0.5 block truncate text-xs ${active ? "text-white/80" : "text-muted"}`}>{persona.description}</span>
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            <textarea
+              ref={textareaRef}
+              name="message-content"
+              className="textarea min-h-[72px] w-full resize-none"
+              value={content}
+              onChange={(event) => {
+                setContent(event.target.value);
+                setCursorPosition(event.target.selectionStart ?? 0);
+                setDismissedMentionKey("");
+              }}
+              onClick={updateCursor}
+              onKeyDown={handleKeyDown}
+              onKeyUp={updateCursor}
+              rows={3}
+              placeholder={frozen ? t("composer.frozenPlaceholder") : t("composer.placeholder")}
+              disabled={frozen}
+            />
+          </div>
           <button
-            type="button"
-            className="btn h-9 w-9 px-0"
-            onClick={() => setMenuOpen((open) => !open)}
-            disabled={frozen}
-            title={t("composer.moreModes")}
+            className="btn btn-primary h-10 px-4 max-sm:w-full"
+            disabled={frozen || !content.trim() || submit.isPending}
+            onClick={() => submit.mutate()}
+            title={submit.isPending ? t("composer.sending") : t("composer.enterHint")}
           >
-            <MoreHorizontal size={16} />
+            <SendHorizontal size={16} />
+            {submit.isPending ? t("composer.sending") : t("composer.send")}
           </button>
-          {menuOpen && (
-            <div className="absolute bottom-11 left-0 z-10 w-40 overflow-hidden rounded-md border border-border bg-panel shadow-soft">
-              <ModeOption
-                onClick={() => {
-                  setMode("judge");
-                  setMenuOpen(false);
-                }}
-                icon={<Gavel size={14} />}
-                label={t("composer.judge")}
-              />
-              <ModeOption
-                onClick={() => {
-                  setMode("dead_end");
-                  setMenuOpen(false);
-                }}
-                icon={<Ban size={14} />}
-                label={t("composer.deadEnd")}
-              />
-              <ModeOption
-                onClick={() => {
-                  setMode("masquerade");
-                  setMenuOpen(false);
-                }}
-                icon={<UserRoundCheck size={14} />}
-                label={t("composer.masquerade")}
-              />
-            </div>
-          )}
         </div>
-        <div className="relative flex-1">
-          {mentionPanelOpen && (
-            <div className="absolute bottom-full left-0 z-20 mb-2 max-h-56 w-full max-w-md overflow-hidden rounded-md border border-border bg-panel shadow-soft">
-              <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted">{t("composer.mentionMembers")}</div>
-              {mentionSuggestions.length === 0 ? (
-                <div className="px-3 py-3 text-sm text-muted">{t("composer.noMentionMatches")}</div>
-              ) : (
-                <div className="max-h-44 overflow-auto py-1">
-                  {mentionSuggestions.map((persona, index) => {
-                    const active = index === activeMentionIndex;
-                    return (
-                      <button
-                        key={persona.id}
-                        type="button"
-                        className={`flex w-full items-start gap-2 px-3 py-2 text-left text-sm ${
-                          active ? "bg-brand text-white" : "hover:bg-surface"
-                        }`}
-                        onMouseDown={(event) => {
-                          event.preventDefault();
-                          insertMention(persona);
-                        }}
-                      >
-                        <span className="mt-0.5 inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-surface text-xs text-muted">
-                          {persona.name.slice(0, 1)}
-                        </span>
-                        <span className="min-w-0">
-                          <span className="block truncate font-medium">{persona.name}</span>
-                          <span className={`mt-0.5 block truncate text-xs ${active ? "text-white/80" : "text-muted"}`}>{persona.description}</span>
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-          <textarea
-            ref={textareaRef}
-            name="message-content"
-            className="textarea min-h-[40px] w-full resize-none"
-            value={content}
-            onChange={(event) => {
-              setContent(event.target.value);
-              setCursorPosition(event.target.selectionStart ?? 0);
-              setDismissedMentionKey("");
-            }}
-            onClick={updateCursor}
-            onKeyDown={handleKeyDown}
-            onKeyUp={updateCursor}
-            rows={2}
-            placeholder={frozen ? t("composer.frozenPlaceholder") : t("composer.placeholder")}
-            disabled={frozen}
-          />
-        </div>
-        <button
-          className="btn btn-primary"
-          disabled={frozen || !content.trim() || submit.isPending}
-          onClick={() => submit.mutate()}
-          title={submit.isPending ? t("composer.sending") : t("composer.enterHint")}
-        >
-          {modeIcon(mode)}
-          {submit.isPending ? t("composer.sending") : t("composer.send")}
-        </button>
       </div>
     </div>
-  );
-}
-
-function ModeOption({ onClick, icon, label }: { onClick: () => void; icon: React.ReactNode; label: string }) {
-  return (
-    <button type="button" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-surface" onClick={onClick}>
-      {icon}
-      {label}
-    </button>
   );
 }
