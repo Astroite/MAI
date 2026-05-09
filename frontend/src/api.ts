@@ -248,8 +248,15 @@ export const api = {
     request<PhaseTemplate>(`/templates/phases/${phaseId}/duplicate`, { method: "POST" }),
   deletePhase: (phaseId: string) =>
     request<{ status: string }>(`/templates/phases/${phaseId}`, { method: "DELETE" }),
-  appendMessage: (roomId: string, content: string) =>
-    request<Message>(`/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ content }) }),
+  appendMessage: (
+    roomId: string,
+    content: string,
+    options?: { message_type?: string; as_character_id?: string | null }
+  ) =>
+    request<Message>(`/rooms/${roomId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ content, ...(options ?? {}) })
+    }),
   verdict: (
     roomId: string,
     content: string,

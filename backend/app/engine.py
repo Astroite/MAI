@@ -119,7 +119,7 @@ def _unregister_active_call(call: InFlightCall) -> None:
 # scheduling rather than queueing. Users can still POST /turn manually.
 _AUTODRIVE_LOCKS: dict[str, asyncio.Lock] = {}
 _AUTODRIVE_TRIGGER_AUTHORS = {"user", "user_as_persona", "user_as_judge"}
-_AUTODRIVE_TRIGGER_TYPES = {"speech", "question", "answer", "user_doc"}
+_AUTODRIVE_TRIGGER_TYPES = {"speech", "question", "answer", "user_doc", "narration"}
 
 
 def _autodrive_lock(room_id: str) -> asyncio.Lock:

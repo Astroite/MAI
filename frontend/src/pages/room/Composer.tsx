@@ -1,34 +1,70 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "react-router-dom";
-import { Ban, Gavel, MessageSquarePlus, Paperclip, SendHorizontal, UserRoundCheck } from "lucide-react";
+import {
+  Ban,
+  BookOpen,
+  Drama,
+  Gavel,
+  MessageSquarePlus,
+  Paperclip,
+  SendHorizontal,
+  UserRoundCheck
+} from "lucide-react";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
-import type { PersonaInstance } from "../../types";
+import { PersonaIcon } from "../../components/PersonaIcon";
+import type { PersonaInstance, WorldCharacter } from "../../types";
 
-type Mode = "normal" | "judge" | "dead_end" | "masquerade";
+type DiscussionMode = "normal" | "judge" | "dead_end" | "masquerade";
+type StoryMode = "narration" | "act_as";
 
-const MODES: Mode[] = ["normal", "judge", "dead_end", "masquerade"];
+const DISCUSSION_MODES: DiscussionMode[] = ["normal", "judge", "dead_end", "masquerade"];
+
+export interface StoryComposerContext {
+  worldId: string;
+  userCharacters: WorldCharacter[];
+}
 
 export function Composer({
   roomId,
   personas,
-  frozen
+  frozen,
+  story
 }: {
   roomId: string;
   personas: PersonaInstance[];
   frozen: boolean;
+  story?: StoryComposerContext | null;
 }) {
   const queryClient = useQueryClient();
   const { t, display } = useI18n();
   const [params, setParams] = useSearchParams();
   const [content, setContent] = useState("");
-  const [mode, setMode] = useState<Mode>("normal");
+  const [discussionMode, setDiscussionMode] = useState<DiscussionMode>("normal");
+  const [storyMode, setStoryMode] = useState<StoryMode>("narration");
+  const [actCharacterId, setActCharacterId] = useState<string | null>(
+    story?.userCharacters[0]?.id ?? null
+  );
   const [guestName, setGuestName] = useState(() => t("message.guest"));
   const [cursorPosition, setCursorPosition] = useState(0);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const [dismissedMentionKey, setDismissedMentionKey] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  // Keep the act-as selection valid as the roster shifts (character exits,
+  // user adds new user character mid-scene, etc).
+  useEffect(() => {
+    if (!story) return;
+    if (story.userCharacters.length === 0) {
+      setActCharacterId(null);
+      if (storyMode === "act_as") setStoryMode("narration");
+      return;
+    }
+    if (!actCharacterId || !story.userCharacters.find((c) => c.id === actCharacterId)) {
+      setActCharacterId(story.userCharacters[0].id);
+    }
+  }, [story, actCharacterId, storyMode]);
 
   const openUploadPanel = () => {
     const next = new URLSearchParams(params);
@@ -38,9 +74,18 @@ export function Composer({
 
   const submit = useMutation({
     mutationFn: async () => {
-      if (mode === "judge") return api.verdict(roomId, content, true);
-      if (mode === "dead_end") return api.verdict(roomId, content, false, { dead_end: true });
-      if (mode === "masquerade") return api.masquerade(roomId, guestName.trim() || t("message.guest"), content);
+      if (story) {
+        if (storyMode === "narration") {
+          return api.appendMessage(roomId, content, { message_type: "narration" });
+        }
+        // act_as
+        return api.appendMessage(roomId, content, { as_character_id: actCharacterId });
+      }
+      if (discussionMode === "judge") return api.verdict(roomId, content, true);
+      if (discussionMode === "dead_end")
+        return api.verdict(roomId, content, false, { dead_end: true });
+      if (discussionMode === "masquerade")
+        return api.masquerade(roomId, guestName.trim() || t("message.guest"), content);
       return api.appendMessage(roomId, content);
     },
     onSuccess: () => {
@@ -48,7 +93,7 @@ export function Composer({
       void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
       // Reset back to the default mode after special-mode submissions so the
       // next message is a normal one (matches QQ-like ergonomics).
-      setMode("normal");
+      if (!story) setDiscussionMode("normal");
       requestAnimationFrame(() => textareaRef.current?.focus());
     }
   });
@@ -131,31 +176,99 @@ export function Composer({
     }
   };
 
-  const modeIcon = (m: Mode) =>
+  const modeIcon = (m: DiscussionMode) =>
     m === "judge" ? <Gavel size={14} /> : m === "dead_end" ? <Ban size={14} /> : m === "masquerade" ? <UserRoundCheck size={14} /> : <MessageSquarePlus size={14} />;
+
+  const canActAs = story && story.userCharacters.length > 0;
+  const activeActCharacter =
+    story && actCharacterId
+      ? story.userCharacters.find((c) => c.id === actCharacterId) ?? null
+      : null;
 
   return (
     <div className="flex-shrink-0 border-t border-border/80 bg-panel px-5 py-4 shadow-card max-sm:px-3">
       <div className="mx-auto max-w-5xl rounded-lg border border-border/90 bg-panel p-3 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/80 bg-surface p-1">
-            {MODES.map((entry) => (
+          {story ? (
+            // Story World mode bar — narration vs act-as. Discussion modes
+            // (judge/dead_end/masquerade) intentionally don't appear: the
+            // story shell isn't a deliberation room.
+            <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/80 bg-surface p-1">
               <button
-                key={entry}
                 type="button"
                 className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition ${
-                  mode === entry ? "bg-panel text-brand shadow-card" : "text-muted hover:text-text"
+                  storyMode === "narration" ? "bg-panel text-brand shadow-card" : "text-muted hover:text-text"
                 }`}
-                onClick={() => setMode(entry)}
+                onClick={() => setStoryMode("narration")}
                 disabled={frozen}
-                title={display("mode", entry)}
+                title="背景陈述：以旁白身份推进故事，AI 角色会把它当成场景变化来反应"
               >
-                {modeIcon(entry)}
-                <span>{display("mode", entry)}</span>
+                <BookOpen size={14} />
+                <span>旁白</span>
               </button>
-            ))}
-          </div>
-          {mode === "masquerade" && (
+              <button
+                type="button"
+                className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition ${
+                  storyMode === "act_as"
+                    ? "bg-panel text-accent shadow-card"
+                    : canActAs
+                      ? "text-muted hover:text-text"
+                      : "text-muted/50"
+                }`}
+                onClick={() => canActAs && setStoryMode("act_as")}
+                disabled={frozen || !canActAs}
+                title={
+                  canActAs
+                    ? "扮演发言：以你某个 user 角色的身份说话/做动作"
+                    : "本幕没有可扮演的 user 角色（需要先在世界里加 user 角色并放进名册）"
+                }
+              >
+                <Drama size={14} />
+                <span>扮演</span>
+              </button>
+              {storyMode === "act_as" && story && story.userCharacters.length > 0 && (
+                <div className="ml-1 flex items-center gap-1 border-l border-border/80 pl-2">
+                  {story.userCharacters.map((character) => {
+                    const active = character.id === actCharacterId;
+                    return (
+                      <button
+                        key={character.id}
+                        type="button"
+                        className={`inline-flex h-7 items-center gap-1.5 rounded px-1.5 text-xs transition ${
+                          active ? "bg-accent/15 text-accent" : "text-muted hover:text-text"
+                        }`}
+                        onClick={() => setActCharacterId(character.id)}
+                        disabled={frozen}
+                        title={character.identity || character.name}
+                      >
+                        <PersonaIcon icon={character.icon} color={character.color} size={18} />
+                        <span>{character.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/80 bg-surface p-1">
+              {DISCUSSION_MODES.map((entry) => (
+                <button
+                  key={entry}
+                  type="button"
+                  className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition ${
+                    discussionMode === entry ? "bg-panel text-brand shadow-card" : "text-muted hover:text-text"
+                  }`}
+                  onClick={() => setDiscussionMode(entry)}
+                  disabled={frozen}
+                  title={display("mode", entry)}
+                >
+                  {modeIcon(entry)}
+                  <span>{display("mode", entry)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {!story && discussionMode === "masquerade" && (
             <input
               name="masquerade-guest-name"
               className="input h-8 w-36 text-xs"
