@@ -911,6 +911,11 @@ class MessageCreate(APIModel):
     content: str
     message_type: str = "speech"
     parent_message_id: str | None = None
+    # Story World only: when set, the user is speaking AS this WorldCharacter
+    # (which must be kind=user and on the scene's roster with
+    # speak_as_user=True). The message is recorded as user_as_persona with
+    # the character's name as the masquerade label.
+    as_character_id: str | None = None
 
 
 class VerdictCreate(APIModel):

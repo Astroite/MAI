@@ -126,6 +126,33 @@ export function RoomShell() {
     [rooms.data, state?.room.id]
   );
 
+  // Story World scene context: when this room is a scene, fetch the world
+  // (for character details) and roster (for who's on stage). The composer
+  // uses this to offer 旁白 / 扮演 modes with a user-character picker.
+  const worldId = state?.room.world_id ?? null;
+  const worldQuery = useQuery({
+    queryKey: ["world", worldId],
+    queryFn: () => api.world(worldId!),
+    enabled: Boolean(worldId)
+  });
+  const sceneMembersQuery = useQuery({
+    queryKey: ["scene-members", activeRoomId],
+    queryFn: () => api.sceneMembers(activeRoomId!),
+    enabled: Boolean(worldId && activeRoomId)
+  });
+  const storyContext = useMemo(() => {
+    if (!worldId || !worldQuery.data || !sceneMembersQuery.data) return null;
+    const onStageIds = new Set(
+      sceneMembersQuery.data
+        .filter((member) => member.exited_at_message_id === null)
+        .map((member) => member.world_character_id)
+    );
+    const userCharacters = worldQuery.data.characters.filter(
+      (character) => character.kind === "user" && onStageIds.has(character.id)
+    );
+    return { worldId, userCharacters };
+  }, [worldId, worldQuery.data, sceneMembersQuery.data]);
+
   const currentPhaseTemplate = phases.data?.find(
     (phase) => phase.id === state?.current_phase?.phase_template_id
   );
@@ -339,6 +366,7 @@ export function RoomShell() {
               roomId={activeRoomId}
               personas={state.personas.filter((p) => p.kind === "discussant")}
               frozen={state.runtime.frozen}
+              story={storyContext}
             />
           </>
         )}

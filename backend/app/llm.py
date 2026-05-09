@@ -432,6 +432,11 @@ class LLMAdapter:
             return ("user", label)
         if author_actual == "user_as_judge":
             return ("user", "裁判")
+        # Story World narration: out-of-character scene push by the human user.
+        # Label as 旁白 so AI characters treat it as scene context rather than
+        # a peer's utterance.
+        if message.message_type == "narration":
+            return ("user", "旁白")
         # Real user, system messages, dead_end markers, etc.
         return ("user", "用户" if author_actual == "user" else None)
 

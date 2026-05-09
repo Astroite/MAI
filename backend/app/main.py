@@ -1560,12 +1560,33 @@ async def delete_persona_instance(
 async def append_user_message(room_id: str, body: MessageCreate, session: AsyncSession = Depends(get_session)):
     runtime = await _runtime_or_404(session, room_id)
     _ensure_not_frozen(runtime)
+    author_actual = "user"
+    masquerade_name: str | None = None
+    if body.as_character_id is not None:
+        # Story World "扮演发言" path. Validate the character is on this scene's
+        # roster and is a user-kind slot the human controls. AI characters are
+        # excluded — the engine drives those, the user can't take over.
+        room = await session.get(Room, room_id)
+        if room is None or room.world_id is None:
+            raise HTTPException(409, "as_character_id only valid in Story World scenes")
+        member = await session.get(
+            WorldSceneMember,
+            {"scene_id": room_id, "world_character_id": body.as_character_id},
+        )
+        if member is None or member.exited_at_message_id is not None:
+            raise HTTPException(422, "character is not currently on this scene's roster")
+        character = await session.get(WorldCharacter, body.as_character_id)
+        if character is None or character.kind != "user":
+            raise HTTPException(422, "as_character_id must reference a kind=user character")
+        author_actual = "user_as_persona"
+        masquerade_name = character.name
     message = Message(
         room_id=room_id,
         phase_instance_id=runtime.current_phase_instance_id,
         parent_message_id=body.parent_message_id,
         message_type=body.message_type,
-        author_actual="user",
+        author_actual=author_actual,
+        user_masquerade_name=masquerade_name,
         visibility="public",
         visibility_to_models=True,
         content=body.content,
