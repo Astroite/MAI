@@ -474,3 +474,54 @@ class TraceEvent(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
     summary: Mapped[str] = mapped_column(Text)
     payload_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class World(Base):
+    __tablename__ = "worlds"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    owner_user_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    name: Mapped[str] = mapped_column(String(200))
+    synopsis: Mapped[str] = mapped_column(Text, default="")
+    setting: Mapped[str] = mapped_column(Text, default="")
+    calendar_hint: Mapped[str] = mapped_column(Text, default="")
+    cover_color: Mapped[str] = mapped_column(String(16), default="#3b82f6")
+    cover_icon: Mapped[str] = mapped_column(String(48), default="Globe")
+    status: Mapped[str] = mapped_column(String(32), default="active")
+    config: Mapped[dict] = mapped_column(JSONType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+
+class WorldCharacter(Base):
+    """A character that lives inside a World. kind=ai binds to a PersonaTemplate
+    and carries memory; kind=user is a lightweight slot driven by the human user."""
+
+    __tablename__ = "world_characters"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    world_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("worlds.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))  # "ai" | "user"
+    name: Mapped[str] = mapped_column(String(120))
+    identity: Mapped[str] = mapped_column(String(120), default="")
+    brief: Mapped[str] = mapped_column(Text, default="")
+    persona_template_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("persona_templates.id", ondelete="RESTRICT"), nullable=True
+    )
+    persona_template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    backing_overrides: Mapped[dict] = mapped_column(JSONType, default=dict)
+    color: Mapped[str] = mapped_column(String(16), default="#3b82f6")
+    icon: Mapped[str] = mapped_column(String(48), default="Sparkles")
+    core_identity: Mapped[str] = mapped_column(Text, default="")
+    skills_text: Mapped[str] = mapped_column(Text, default="")
+    goals_text: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(32), default="active")  # active | retired
+    config: Mapped[dict] = mapped_column(JSONType, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        Index("ix_world_characters_world_status", "world_id", "status"),
+    )

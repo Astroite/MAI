@@ -1051,3 +1051,131 @@ class RoomState(APIModel):
     decisions: list[DecisionOut] = Field(default_factory=list)
     tool_invocations: list[ToolInvocationOut] = Field(default_factory=list)
     in_flight_partial: list[InFlightPartialOut] = Field(default_factory=list)
+
+
+# --- Story World ---------------------------------------------------------
+
+WORLD_CHARACTER_KINDS = ("ai", "user")
+WORLD_STATUSES = ("active", "archived")
+WORLD_CHARACTER_STATUSES = ("active", "retired")
+
+
+class WorldCharacterOut(APIModel):
+    id: str
+    world_id: str
+    kind: Literal["ai", "user"]
+    name: str
+    identity: str = ""
+    brief: str = ""
+    persona_template_id: str | None = None
+    persona_template_version: int | None = None
+    backing_overrides: dict[str, Any] = Field(default_factory=dict)
+    color: str = "#3b82f6"
+    icon: str = "Sparkles"
+    core_identity: str = ""
+    skills_text: str = ""
+    goals_text: str = ""
+    status: Literal["active", "retired"] = "active"
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorldCharacterCreate(APIModel):
+    kind: Literal["ai", "user"] = "ai"
+    name: str = Field(min_length=1, max_length=120)
+    identity: str = Field(default="", max_length=120)
+    brief: str = ""
+    persona_template_id: str | None = None
+    backing_overrides: dict[str, Any] = Field(default_factory=dict)
+    color: str = Field("#3b82f6", pattern=PERSONA_COLOR_HEX_PATTERN)
+    icon: str = "Sparkles"
+    core_identity: str = ""
+    skills_text: str = ""
+    goals_text: str = ""
+    config: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("icon")
+    @classmethod
+    def _icon_in_set(cls, v: str) -> str:
+        if v not in PERSONA_ICON_NAMES:
+            return "Sparkles"
+        return v
+
+
+class WorldCharacterUpdate(APIModel):
+    """Patch a character. `kind` is immutable post-create; sending it triggers
+    422 via extra='forbid'. PersonaTemplate binding can be re-pointed for
+    ai characters but cleared only by setting it to null explicitly."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=120)
+    identity: str | None = Field(default=None, max_length=120)
+    brief: str | None = None
+    persona_template_id: str | None = None
+    backing_overrides: dict[str, Any] | None = None
+    color: str | None = Field(default=None, pattern=PERSONA_COLOR_HEX_PATTERN)
+    icon: str | None = None
+    core_identity: str | None = None
+    skills_text: str | None = None
+    goals_text: str | None = None
+    status: Literal["active", "retired"] | None = None
+    config: dict[str, Any] | None = None
+
+    @field_validator("icon")
+    @classmethod
+    def _icon_in_set(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in PERSONA_ICON_NAMES:
+            return "Sparkles"
+        return v
+
+
+class WorldOut(APIModel):
+    id: str
+    owner_user_id: str | None = None
+    name: str
+    synopsis: str = ""
+    setting: str = ""
+    calendar_hint: str = ""
+    cover_color: str = "#3b82f6"
+    cover_icon: str = "Globe"
+    status: Literal["active", "archived"] = "active"
+    config: dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorldDetailOut(WorldOut):
+    characters: list[WorldCharacterOut] = Field(default_factory=list)
+
+
+class WorldSummaryOut(WorldOut):
+    character_count: int = 0
+    scene_count: int = 0
+    last_activity_at: datetime | None = None
+
+
+class WorldCreate(APIModel):
+    name: str = Field(min_length=1, max_length=200)
+    synopsis: str = ""
+    setting: str = ""
+    calendar_hint: str = ""
+    cover_color: str = Field("#3b82f6", pattern=PERSONA_COLOR_HEX_PATTERN)
+    cover_icon: str = "Globe"
+    config: dict[str, Any] = Field(default_factory=dict)
+
+
+class WorldUpdate(APIModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    synopsis: str | None = None
+    setting: str | None = None
+    calendar_hint: str | None = None
+    cover_color: str | None = Field(default=None, pattern=PERSONA_COLOR_HEX_PATTERN)
+    cover_icon: str | None = None
+    status: Literal["active", "archived"] | None = None
+    config: dict[str, Any] | None = None

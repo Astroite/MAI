@@ -61,6 +61,8 @@ from .models import (
     ToolInvocation,
     ToolServer,
     Upload,
+    World,
+    WorldCharacter,
 )
 from .schemas import (
     AddPersonaInstancesRequest,
@@ -123,6 +125,14 @@ from .schemas import (
     TurnRequest,
     UploadOut,
     VerdictCreate,
+    WorldCharacterCreate,
+    WorldCharacterOut,
+    WorldCharacterUpdate,
+    WorldCreate,
+    WorldDetailOut,
+    WorldOut,
+    WorldSummaryOut,
+    WorldUpdate,
 )
 from .llm import llm_adapter
 from .seed import seed_builtins
@@ -2012,6 +2022,213 @@ async def export_room(
         media_type="text/markdown; charset=utf-8",
         headers={"Content-Disposition": build_content_disposition(filename)},
     )
+
+
+# --- Story World ---------------------------------------------------------
+
+
+async def _get_world_or_404(session: AsyncSession, world_id: str) -> World:
+    world = await session.get(World, world_id)
+    if world is None:
+        raise HTTPException(404, "world not found")
+    return world
+
+
+async def _get_character_or_404(
+    session: AsyncSession, world_id: str, character_id: str
+) -> WorldCharacter:
+    character = await session.get(WorldCharacter, character_id)
+    if character is None or character.world_id != world_id:
+        raise HTTPException(404, "character not found")
+    return character
+
+
+async def _validate_persona_template_for_character(
+    session: AsyncSession, kind: str, persona_template_id: str | None
+) -> tuple[str | None, int | None]:
+    """For ai characters, persona_template_id is required and must resolve to
+    an existing template. Returns (template_id, template_version) snapshot."""
+    if kind == "ai":
+        if not persona_template_id:
+            raise HTTPException(422, "ai characters require persona_template_id")
+        template = await session.get(PersonaTemplate, persona_template_id)
+        if template is None:
+            raise HTTPException(422, "persona_template_id does not exist")
+        return template.id, template.version
+    # user characters never bind to a template
+    return None, None
+
+
+@app.get("/worlds", response_model=list[WorldSummaryOut])
+async def list_worlds(session: AsyncSession = Depends(get_session)):
+    worlds = (await session.scalars(select(World).order_by(World.created_at.desc()))).all()
+    if not worlds:
+        return []
+    world_ids = [w.id for w in worlds]
+    counts = dict(
+        (
+            await session.execute(
+                select(WorldCharacter.world_id, func.count(WorldCharacter.id))
+                .where(WorldCharacter.world_id.in_(world_ids))
+                .where(WorldCharacter.status == "active")
+                .group_by(WorldCharacter.world_id)
+            )
+        ).all()
+    )
+    out: list[WorldSummaryOut] = []
+    for world in worlds:
+        summary = WorldSummaryOut.model_validate(world)
+        summary.character_count = int(counts.get(world.id, 0))
+        # scene_count + last_activity_at populated in PR 2 once Room.world_id exists.
+        out.append(summary)
+    return out
+
+
+@app.post("/worlds", response_model=WorldDetailOut)
+async def create_world(body: WorldCreate, session: AsyncSession = Depends(get_session)):
+    world = World(
+        id=new_id(),
+        name=body.name,
+        synopsis=body.synopsis,
+        setting=body.setting,
+        calendar_hint=body.calendar_hint,
+        cover_color=body.cover_color,
+        cover_icon=body.cover_icon,
+        config=dict(body.config or {}),
+    )
+    session.add(world)
+    await session.commit()
+    await session.refresh(world)
+    detail = WorldDetailOut.model_validate(world)
+    detail.characters = []
+    return detail
+
+
+@app.get("/worlds/{world_id}", response_model=WorldDetailOut)
+async def get_world(world_id: str, session: AsyncSession = Depends(get_session)):
+    world = await _get_world_or_404(session, world_id)
+    characters = (
+        await session.scalars(
+            select(WorldCharacter)
+            .where(WorldCharacter.world_id == world_id)
+            .order_by(WorldCharacter.created_at)
+        )
+    ).all()
+    detail = WorldDetailOut.model_validate(world)
+    detail.characters = [WorldCharacterOut.model_validate(c) for c in characters]
+    return detail
+
+
+@app.patch("/worlds/{world_id}", response_model=WorldDetailOut)
+async def update_world(
+    world_id: str, body: WorldUpdate, session: AsyncSession = Depends(get_session)
+):
+    world = await _get_world_or_404(session, world_id)
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for field, value in changes.items():
+        setattr(world, field, value)
+    await session.commit()
+    await session.refresh(world)
+    characters = (
+        await session.scalars(
+            select(WorldCharacter)
+            .where(WorldCharacter.world_id == world_id)
+            .order_by(WorldCharacter.created_at)
+        )
+    ).all()
+    detail = WorldDetailOut.model_validate(world)
+    detail.characters = [WorldCharacterOut.model_validate(c) for c in characters]
+    return detail
+
+
+@app.delete("/worlds/{world_id}")
+async def delete_world(world_id: str, session: AsyncSession = Depends(get_session)):
+    world = await _get_world_or_404(session, world_id)
+    # Characters cascade via FK ON DELETE CASCADE. Scenes (Room.world_id) come
+    # in PR 2; their cascade is added when that column is introduced.
+    await session.delete(world)
+    await session.commit()
+    return {"status": "deleted"}
+
+
+@app.post("/worlds/{world_id}/characters", response_model=WorldCharacterOut)
+async def create_world_character(
+    world_id: str,
+    body: WorldCharacterCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    await _get_world_or_404(session, world_id)
+    template_id, template_version = await _validate_persona_template_for_character(
+        session, body.kind, body.persona_template_id
+    )
+    character = WorldCharacter(
+        id=new_id(),
+        world_id=world_id,
+        kind=body.kind,
+        name=body.name,
+        identity=body.identity,
+        brief=body.brief,
+        persona_template_id=template_id,
+        persona_template_version=template_version,
+        backing_overrides=dict(body.backing_overrides or {}),
+        color=body.color,
+        icon=body.icon,
+        core_identity=body.core_identity,
+        skills_text=body.skills_text,
+        goals_text=body.goals_text,
+        config=dict(body.config or {}),
+    )
+    session.add(character)
+    await session.commit()
+    await session.refresh(character)
+    return character
+
+
+@app.get("/worlds/{world_id}/characters/{character_id}", response_model=WorldCharacterOut)
+async def get_world_character(
+    world_id: str, character_id: str, session: AsyncSession = Depends(get_session)
+):
+    return await _get_character_or_404(session, world_id, character_id)
+
+
+@app.patch("/worlds/{world_id}/characters/{character_id}", response_model=WorldCharacterOut)
+async def update_world_character(
+    world_id: str,
+    character_id: str,
+    body: WorldCharacterUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    character = await _get_character_or_404(session, world_id, character_id)
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "persona_template_id" in changes:
+        new_template_id = changes["persona_template_id"]
+        if character.kind == "user":
+            if new_template_id is not None:
+                raise HTTPException(422, "user characters cannot bind to a persona template")
+        elif new_template_id is None:
+            raise HTTPException(422, "ai characters require persona_template_id")
+        else:
+            template = await session.get(PersonaTemplate, new_template_id)
+            if template is None:
+                raise HTTPException(422, "persona_template_id does not exist")
+            changes["persona_template_version"] = template.version
+    for field, value in changes.items():
+        setattr(character, field, value)
+    await session.commit()
+    await session.refresh(character)
+    return character
+
+
+@app.delete("/worlds/{world_id}/characters/{character_id}", response_model=WorldCharacterOut)
+async def delete_world_character(
+    world_id: str, character_id: str, session: AsyncSession = Depends(get_session)
+):
+    """Soft delete: status -> retired so existing scenes/memories keep their references."""
+    character = await _get_character_or_404(session, world_id, character_id)
+    character.status = "retired"
+    await session.commit()
+    await session.refresh(character)
+    return character
 
 
 async def _scenario_catalog(session: AsyncSession) -> list[ScenarioOut]:
