@@ -71,6 +71,16 @@ fn stop_backend(app: &tauri::AppHandle) {
 
 fn main() {
     tauri::Builder::default()
+        // single-instance must be registered first so a duplicate launch is
+        // intercepted before we spawn another sidecar (which would race with
+        // the existing one for the backend port and write-lock the SQLite DB).
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.unminimize();
+                let _ = window.show();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
