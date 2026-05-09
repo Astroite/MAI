@@ -26,10 +26,13 @@ from .models import (
     RoomRuntimeState,
     RoomSnapshot,
     ScribeState,
+    World,
+    WorldCharacter,
+    WorldCharacterMemory,
     WorldSceneMember,
     now_utc,
 )
-from .schemas import FacilitatorEvaluation, ScribeUpdate
+from .schemas import FacilitatorEvaluation, MemoryDistillation, ScribeUpdate
 from .tools import execute_tool, list_tool_schemas, tool_definitions_for_llm, tool_result_as_text
 from .trace import trace_record
 
@@ -1051,6 +1054,219 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
     await trace_record(session, room_id, "scribe_update", "ScribeState tool folded", {"update": update, "state": current})
     await session.flush()
     await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
+
+
+SCENE_MEMORY_TOOL_DESCRIPTION = (
+    "Distill what THIS character experienced in this scene into 0–6 short, "
+    "first-person memory entries. Each entry is one sentence the character "
+    "would actually remember (specific event, vow they made, or sharp impression). "
+    "Skip generic recap. Reuse none of the existing-memories the payload lists — "
+    "those are already saved. Salience: 0.3 trivial, 0.6 notable, 0.9 turning-point."
+)
+
+
+async def _scene_memory_already_written(
+    session: AsyncSession, character_id: str, scene_id: str
+) -> bool:
+    """Idempotency: scribing for (character, scene) is one-shot. Re-sealing
+    a scene won't duplicate memory rows."""
+    existing = await session.scalar(
+        select(WorldCharacterMemory.id)
+        .where(
+            WorldCharacterMemory.world_character_id == character_id,
+            WorldCharacterMemory.source_scene_id == scene_id,
+        )
+        .limit(1)
+    )
+    return existing is not None
+
+
+async def _slice_messages_for_character(
+    session: AsyncSession,
+    scene_id: str,
+    member: WorldSceneMember,
+) -> list[Message]:
+    """Return the visible messages a character actually witnessed.
+
+    Without an explicit entered_at_message_id the character was on stage from
+    scene open; without an exited_at_message_id they're still there at seal.
+    The bounds are inclusive of the participant.enter / .exit messages
+    themselves so the scribe sees its own arrival/departure beat.
+    """
+    messages = list(
+        (
+            await session.scalars(
+                select(Message)
+                .where(
+                    Message.room_id == scene_id,
+                    Message.visibility_to_models.is_(True),
+                )
+                .order_by(Message.created_at)
+            )
+        ).all()
+    )
+    if member.entered_at_message_id is None and member.exited_at_message_id is None:
+        return messages
+    in_range: list[Message] = []
+    started = member.entered_at_message_id is None
+    for message in messages:
+        if not started:
+            if message.id == member.entered_at_message_id:
+                started = True
+            else:
+                continue
+        in_range.append(message)
+        if member.exited_at_message_id and message.id == member.exited_at_message_id:
+            break
+    return in_range
+
+
+async def _scribe_memory_for_character(
+    session: AsyncSession,
+    scene: Room,
+    member: WorldSceneMember,
+    character: WorldCharacter,
+    peer_names: dict[str, str],
+) -> int:
+    """Run the LLM tool-call for a single character and persist its output.
+    Returns the number of new memory rows created (0 if skipped/idempotent)."""
+    if character.kind != "ai":
+        return 0
+    if await _scene_memory_already_written(session, character.id, scene.id):
+        return 0
+    witnessed = await _slice_messages_for_character(session, scene.id, member)
+    if not witnessed:
+        return 0
+    existing = (
+        await session.scalars(
+            select(WorldCharacterMemory)
+            .where(WorldCharacterMemory.world_character_id == character.id)
+            .order_by(
+                WorldCharacterMemory.salience.desc(),
+                WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
+            )
+            .limit(20)
+        )
+    ).all()
+    scribe = await get_room_system_persona(session, scene.id, "scribe")
+    scribe, scribe_provider = await resolve_persona_runtime(session, scribe)
+    payload = {
+        "scene": {
+            "id": scene.id,
+            "scene_index": scene.scene_index,
+            "title": scene.title,
+            "background": scene.background,
+            "in_world_time_start": scene.in_world_time_start,
+            "in_world_time_end": scene.in_world_time_end,
+        },
+        "character": {
+            "id": character.id,
+            "name": character.name,
+            "identity": character.identity,
+            "core_identity": character.core_identity,
+            "goals_text": character.goals_text,
+        },
+        "peers_on_stage": [
+            {"id": pid, "name": pname} for pid, pname in peer_names.items() if pid != character.id
+        ],
+        "existing_memories": [
+            {"kind": m.kind, "content": m.content, "salience": m.salience} for m in existing
+        ],
+        "witnessed_messages": [message_to_tool_payload(m) for m in witnessed],
+    }
+    try:
+        result = await llm_adapter.complete_tool(
+            scribe,
+            "scene_memory_distill",
+            SCENE_MEMORY_TOOL_DESCRIPTION,
+            MemoryDistillation,
+            payload,
+            api_provider=scribe_provider,
+        )
+    except Exception as exc:
+        await trace_record(
+            session,
+            scene.id,
+            "scene_memory_failed",
+            "scene memory distill failed for character",
+            {"character_id": character.id, "error": str(exc)},
+        )
+        return 0
+    new_episodes = result.get("new_episodes") or []
+    written = 0
+    in_world_time = scene.in_world_time_start or scene.in_world_time_end or ""
+    for entry in new_episodes:
+        content = (entry.get("content") or "").strip()
+        if not content:
+            continue
+        memory = WorldCharacterMemory(
+            id=new_id(),
+            world_character_id=character.id,
+            source_scene_id=scene.id,
+            scene_index_at_write=scene.scene_index,
+            in_world_time_at_event=in_world_time,
+            kind=entry.get("kind") or "episode",
+            content=content,
+            salience=float(entry.get("salience", 0.5)),
+        )
+        session.add(memory)
+        written += 1
+    await trace_record(
+        session,
+        scene.id,
+        "scene_memory_written",
+        "scene memory rows persisted",
+        {
+            "character_id": character.id,
+            "written": written,
+            "reasoning": result.get("reasoning"),
+        },
+    )
+    return written
+
+
+async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[str, int]:
+    """Scribe the scene per AI character, in parallel.
+
+    Returns a {character_id: rows_written} dict for telemetry. Rooms that
+    aren't scenes (world_id IS NULL) are no-ops.
+    """
+    if scene.world_id is None:
+        return {}
+    members = list(
+        (
+            await session.scalars(
+                select(WorldSceneMember).where(WorldSceneMember.scene_id == scene.id)
+            )
+        ).all()
+    )
+    if not members:
+        return {}
+    char_ids = [m.world_character_id for m in members]
+    characters = {
+        c.id: c
+        for c in (
+            await session.scalars(
+                select(WorldCharacter).where(WorldCharacter.id.in_(char_ids))
+            )
+        ).all()
+    }
+    peer_names = {c.id: c.name for c in characters.values()}
+    ai_pairs = [
+        (m, characters[m.world_character_id])
+        for m in members
+        if m.world_character_id in characters and characters[m.world_character_id].kind == "ai"
+    ]
+    # Run sequentially — concurrent SQLAlchemy session use isn't safe and
+    # parallel LLM calls would each need their own session. v2 can spawn
+    # background tasks with separate sessions if latency becomes an issue.
+    results: dict[str, int] = {}
+    for member, character in ai_pairs:
+        results[character.id] = await _scribe_memory_for_character(
+            session, scene, member, character, peer_names
+        )
+    await session.flush()
+    return results
 
 
 async def run_facilitator_eval(

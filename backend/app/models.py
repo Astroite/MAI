@@ -568,3 +568,42 @@ class WorldSceneMember(Base):
     __table_args__ = (
         Index("ix_world_scene_members_character", "world_character_id"),
     )
+
+
+class WorldCharacterMemory(Base):
+    """Episodic memory entry for a WorldCharacter.
+
+    Three writers feed this table:
+      * scene-end memory scribe (PR 3+) writes kind in {"episode", "vow"}
+        with source_scene_id pointing at the Room that produced it.
+      * relationship-card scribe (PR 4) writes kind="impression" tagged at
+        a specific peer (target_character_id).
+      * manual user edit (PR 5) writes kind="backstory" with NULL source
+        scene — backstory enters the world before any scene exists.
+
+    Retrieval at next-scene creation pulls top-K rows ordered by
+    salience * recency_decay (PR 3 v1: just salience DESC, scene_index DESC).
+    """
+
+    __tablename__ = "world_character_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    world_character_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("world_characters.id", ondelete="CASCADE"), index=True
+    )
+    source_scene_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    scene_index_at_write: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    in_world_time_at_event: Mapped[str] = mapped_column(Text, default="")
+    kind: Mapped[str] = mapped_column(String(32))  # episode | impression | vow | fact | backstory
+    target_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    content: Mapped[str] = mapped_column(Text)
+    salience: Mapped[float] = mapped_column(default=0.5)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    __table_args__ = (
+        Index(
+            "ix_world_character_memories_char_recent",
+            "world_character_id",
+            "scene_index_at_write",
+        ),
+    )
