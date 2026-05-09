@@ -290,8 +290,19 @@ export const api = {
     }
     const blob = await resp.blob();
     const cd = resp.headers.get("content-disposition") || "";
-    const match = cd.match(/filename="?([^";]+)"?/i);
-    const filename = match?.[1] ?? `room-${roomId}.md`;
+    let filename = `room-${roomId}.md`;
+    const utf8Match = cd.match(/filename\*\s*=\s*UTF-8''([^;]+)/i);
+    if (utf8Match) {
+      try {
+        filename = decodeURIComponent(utf8Match[1]);
+      } catch {
+        /* fall through to ASCII fallback */
+      }
+    }
+    if (!utf8Match) {
+      const ascii = cd.match(/filename\s*=\s*"?([^";]+)"?/i);
+      if (ascii) filename = ascii[1];
+    }
     return { blob, filename };
   },
   messageFromUpload: (roomId: string, upload_id: string) =>

@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from urllib.parse import quote
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +29,9 @@ EXPORT_MESSAGE_TYPES = (
 
 _META_TYPES = {"verdict", "verdict_revoke", "dead_end"}
 
+# Strip characters that are illegal in filenames across Windows/macOS/Linux.
+# Keep the rest (including non-ASCII chars) — the HTTP header uses
+# RFC 5987 UTF-8 encoding so unicode filenames round-trip correctly.
 _FILENAME_STRIP = re.compile(r"[\\/:*?\"<>|\s]+")
 
 
@@ -36,7 +40,25 @@ def _safe_filename_stem(name: str) -> str:
     return cleaned or "room"
 
 
-def _format_ts(dt: datetime) -> str:
+def build_content_disposition(filename: str) -> str:
+    """Return a Content-Disposition value that survives non-ASCII filenames.
+
+    HTTP headers are latin-1 only; a Chinese-titled room's filename would
+    otherwise blow up uvicorn's header encoding and drop the connection,
+    which surfaces as `Failed to fetch` in the browser. Emits both an
+    ASCII-safe `filename=` fallback and the RFC 5987 `filename*=` form.
+    """
+    ascii_fallback = filename.encode("ascii", "ignore").decode("ascii") or "export.md"
+    encoded = quote(filename, safe="")
+    return (
+        f'attachment; filename="{ascii_fallback}"; '
+        f"filename*=UTF-8''{encoded}"
+    )
+
+
+def _format_ts(dt: datetime | None) -> str:
+    if dt is None:
+        return "时间未知"
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -105,12 +127,15 @@ async def render_room_markdown(
                 and_(
                     Message.room_id == room.id,
                     Message.message_type.in_(EXPORT_MESSAGE_TYPES),
-                    Message.visibility == "public",
                 )
             )
             .order_by(Message.created_at)
         )
     ).all()
+    # Defensively drop explicitly-hidden rows. Old data may have NULL
+    # visibility; treat that as visible (the message_type filter above
+    # already excludes the system-only types).
+    messages = [m for m in messages if (m.visibility or "public") != "observer_only"]
 
     timeline: list[Message] = []
     meta_by_type: dict[str, list[Message]] = defaultdict(list)

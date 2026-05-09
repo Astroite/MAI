@@ -38,7 +38,7 @@ from .engine import (
     unfreeze_room,
 )
 from .event_bus import event_bus
-from .exporter import render_room_markdown
+from .exporter import build_content_disposition, render_room_markdown
 from .ids import new_id
 from .models import (
     ApiProvider,
@@ -2008,7 +2008,7 @@ async def export_room(
     return Response(
         content=markdown,
         media_type="text/markdown; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": build_content_disposition(filename)},
     )
 
 

@@ -164,3 +164,47 @@ def test_export_room_unsupported_format_returns_400(client, discussant_personas)
 def test_export_room_404_when_room_missing(client):
     resp = client.get("/rooms/does-not-exist/export")
     assert resp.status_code == 404
+
+
+def test_export_room_handles_legacy_rows_with_null_visibility_and_chinese_title(
+    client, discussant_personas, instance_for_template
+):
+    """Regression: rooms upgraded from older DBs can have messages with
+    NULL visibility and rooms with non-ASCII titles. Both previously
+    caused the export to either silently drop all content or fail the
+    HTTP fetch entirely because non-ASCII filenames in the
+    Content-Disposition header aborted the response."""
+    speaker = discussant_personas[0]
+    fmt = _make_minimal_format(client)
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "我的旧房间",
+            "format_id": fmt["id"],
+            "persona_ids": [speaker["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
+
+    _add_message(
+        room_id,
+        message_type="speech",
+        author_actual="ai",
+        author_persona_id=speaker_instance_id,
+        visibility=None,  # legacy row: no visibility set
+        visibility_to_models=True,
+        content="LEGACY_LINE — should still appear.",
+    )
+
+    resp = client.get(f"/rooms/{room_id}/export")
+    assert resp.status_code == 200
+    cd = resp.headers["content-disposition"]
+    # RFC 5987 form must be present so non-ASCII filenames round-trip.
+    assert "filename*=UTF-8''" in cd
+    # Header itself must be pure ASCII — otherwise uvicorn's latin-1
+    # encoding drops the connection and the client sees `Failed to fetch`.
+    cd.encode("ascii")
+    body = resp.text
+    assert "# 我的旧房间" in body
+    assert "LEGACY_LINE" in body
