@@ -1321,7 +1321,7 @@ async def list_rooms(session: AsyncSession = Depends(get_session)):
             select(Message.room_id, func.count(Message.id), func.max(Message.created_at))
             .where(
                 Message.room_id.in_(room_ids),
-                Message.visibility_to_user.is_(True),
+                Message.visibility == "public",
             )
             .group_by(Message.room_id)
         )
@@ -1869,6 +1869,10 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     # Uploads are tied loosely (nullable room_id) — keep the file row, null out
     # the link so the upload library survives.
     await session.execute(update(Upload).where(Upload.room_id == room_id).values(room_id=None))
+    # Subrooms reference parent via parent_room_id (no FK). Without this, deleting
+    # a parent leaves orphan children whose non-null parent_room_id makes the
+    # sidebar filter hide them — they vanish from the list.
+    await session.execute(update(Room).where(Room.parent_room_id == room_id).values(parent_room_id=None))
     await session.delete(room)
     await session.commit()
     await event_bus.publish(room_id, {"type": "room.deleted"})
