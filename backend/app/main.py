@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pypdf import PdfReader
 from sqlalchemy import delete, func, select, update
@@ -38,6 +38,7 @@ from .engine import (
     unfreeze_room,
 )
 from .event_bus import event_bus
+from .exporter import render_room_markdown
 from .ids import new_id
 from .models import (
     ApiProvider,
@@ -1990,6 +1991,25 @@ async def merge_back(room_id: str, body: MergeBackCreate, session: AsyncSession 
     await trace_record(session, sub_room.parent_room_id, "state_mutation", "sub-room merged", {"sub_room_id": room_id})
     await session.commit()
     return {"status": "ok", "merge_back_id": merge.id}
+
+
+@app.get("/rooms/{room_id}/export")
+async def export_room(
+    room_id: str,
+    format: str = "md",
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    if format != "md":
+        raise HTTPException(400, "unsupported export format")
+    room = await session.get(Room, room_id)
+    if room is None:
+        raise HTTPException(404, "room not found")
+    markdown, filename = await render_room_markdown(session, room)
+    return Response(
+        content=markdown,
+        media_type="text/markdown; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 async def _scenario_catalog(session: AsyncSession) -> list[ScenarioOut]:

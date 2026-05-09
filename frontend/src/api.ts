@@ -282,6 +282,18 @@ export const api = {
     data.append("file", file);
     return request<{ id: string }>(`/upload?room_id=${roomId}`, { method: "POST", body: data });
   },
+  exportRoom: async (roomId: string): Promise<{ blob: Blob; filename: string }> => {
+    const resp = await fetch(`${API_BASE}/rooms/${roomId}/export?format=md`);
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(text || resp.statusText);
+    }
+    const blob = await resp.blob();
+    const cd = resp.headers.get("content-disposition") || "";
+    const match = cd.match(/filename="?([^";]+)"?/i);
+    const filename = match?.[1] ?? `room-${roomId}.md`;
+    return { blob, filename };
+  },
   messageFromUpload: (roomId: string, upload_id: string) =>
     request<Message>(`/rooms/${roomId}/messages/from_upload`, {
       method: "POST",

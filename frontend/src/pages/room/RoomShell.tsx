@@ -8,6 +8,7 @@ import {
   ChevronDown,
   ChevronUp,
   CircleGauge,
+  FileDown,
   FileText,
   GitBranchPlus,
   Layers,
@@ -30,6 +31,7 @@ import { api } from "../../api";
 import { useRoomEvents } from "../../hooks";
 import { useUIStore } from "../../store";
 import { StatusPill } from "../../components/StatusPill";
+import { toast } from "../../components/Toaster";
 import { RoomListSidebar } from "./RoomListSidebar";
 import { RightPanel } from "./RightPanel";
 import { MessageList } from "./MessageList";
@@ -90,6 +92,23 @@ export function RoomShell() {
   const extendPhase = useMutation({ mutationFn: () => api.extendPhase(activeRoomId!), onSuccess: invalidate });
   const freeze = useMutation({ mutationFn: () => api.freeze(activeRoomId!), onSuccess: invalidate });
   const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidate });
+
+  const handleExport = async () => {
+    if (!activeRoomId) return;
+    try {
+      const { blob, filename } = await api.exportRoom(activeRoomId);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("room.export.failed"));
+    }
+  };
 
   const childRooms = useMemo(
     () => (rooms.data ?? []).filter((item) => item.parent_room_id === state?.room.id),
@@ -221,6 +240,14 @@ export function RoomShell() {
                     {t("room.freeze")}
                   </button>
                 )}
+                <button
+                  className="btn h-9 w-9 px-0"
+                  type="button"
+                  onClick={handleExport}
+                  title={t("common.export")}
+                >
+                  <FileDown size={16} />
+                </button>
               </div>
               </div>
             </header>
