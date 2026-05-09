@@ -26,6 +26,7 @@ from .models import (
     RoomRuntimeState,
     RoomSnapshot,
     ScribeState,
+    WorldSceneMember,
     now_utc,
 )
 from .schemas import FacilitatorEvaluation, ScribeUpdate
@@ -329,7 +330,27 @@ async def get_room_discussants(session: AsyncSession, room_id: str) -> list[Pers
         .where(and_(PersonaInstance.room_id == room_id, PersonaInstance.kind == "discussant"))
         .order_by(PersonaInstance.position, PersonaInstance.name)
     )
-    return list((await session.scalars(stmt)).all())
+    discussants = list((await session.scalars(stmt)).all())
+    # Filter out scene members who have exited (Story World N5). Non-scene
+    # rooms are unaffected — those instances have world_character_id IS NULL.
+    bound_ids = [p.world_character_id for p in discussants if p.world_character_id]
+    if not bound_ids:
+        return discussants
+    exited = set(
+        (
+            await session.scalars(
+                select(WorldSceneMember.world_character_id)
+                .where(
+                    WorldSceneMember.scene_id == room_id,
+                    WorldSceneMember.world_character_id.in_(bound_ids),
+                    WorldSceneMember.exited_at_message_id.is_not(None),
+                )
+            )
+        ).all()
+    )
+    if not exited:
+        return discussants
+    return [p for p in discussants if p.world_character_id not in exited]
 
 
 async def get_room_system_persona(
@@ -981,6 +1002,13 @@ async def after_message_appended(session: AsyncSession, room_id: str, message: M
 
 
 async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_id: str) -> None:
+    # Story World scenes use a different folding pipeline (per-character episodic
+    # memory, landed in PR 3+). The room-level scribe tracks discussion
+    # consensus / decisions / etc. that don't make sense for a story scene, so
+    # short-circuit here when this room is a scene.
+    room = await session.get(Room, room_id)
+    if room is not None and room.world_id is not None:
+        return
     state = await session.get(ScribeState, room_id)
     if state is None:
         state = ScribeState(room_id=room_id, current_state=DEFAULT_SCRIBE_STATE.copy())

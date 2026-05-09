@@ -276,6 +276,7 @@ class PersonaInstanceOut(APIModel):
     icon: str = "Sparkles"
     config: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
+    world_character_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -784,6 +785,13 @@ class RoomOut(APIModel):
     format_version: int | None = None
     status: Literal["active", "frozen", "archived"]
     frozen_at: datetime | None = None
+    # Story World scene fields. Non-null world_id marks the room as a scene.
+    world_id: str | None = None
+    scene_index: int | None = None
+    in_world_time_start: str = ""
+    in_world_time_end: str = ""
+    in_world_duration_hint: str = ""
+    sealed_at: datetime | None = None
     created_at: datetime
 
 
@@ -1181,3 +1189,74 @@ class WorldUpdate(APIModel):
     cover_icon: str | None = None
     status: Literal["active", "archived"] | None = None
     config: dict[str, Any] | None = None
+
+
+# --- Scene (a Room within a World) --------------------------------------
+
+
+class WorldSceneMemberOut(APIModel):
+    scene_id: str
+    world_character_id: str
+    role_in_scene: str = ""
+    speak_as_user: bool = False
+    entered_at_message_id: str | None = None
+    exited_at_message_id: str | None = None
+    joined_at: datetime
+
+
+class SceneRosterEntry(APIModel):
+    """One entry in the scene-create roster: which World character to seat,
+    plus optional per-scene role hint and (for `kind=user` characters) whether
+    the human user controls them in this scene."""
+
+    world_character_id: str
+    role_in_scene: str = ""
+    speak_as_user: bool = False
+
+
+class SceneCreate(APIModel):
+    title: str = Field(min_length=1, max_length=200)
+    background: str = ""
+    members: list[SceneRosterEntry] = Field(default_factory=list)
+    in_world_time_start: str = ""
+    in_world_time_end: str = ""
+    in_world_duration_hint: str = ""
+    # Format/recipe overrides — defaults to story_format if omitted.
+    format_id: str | None = None
+    recipe_id: str | None = None
+
+
+class SceneTimelineEntry(APIModel):
+    """Compact scene representation for the World timeline view."""
+
+    id: str
+    scene_index: int
+    title: str
+    status: Literal["active", "frozen", "archived"]
+    sealed_at: datetime | None = None
+    in_world_time_start: str = ""
+    in_world_time_end: str = ""
+    in_world_duration_hint: str = ""
+    member_count: int = 0
+    message_count: int = 0
+    created_at: datetime
+
+
+class SceneEnterRequest(APIModel):
+    world_character_id: str
+    role_in_scene: str = ""
+    speak_as_user: bool = False
+    description: str = Field(
+        default="",
+        max_length=500,
+        description="可选的入场系统消息文本。留空时使用默认 '<角色名> 进入了场景。'",
+    )
+
+
+class SceneExitRequest(APIModel):
+    world_character_id: str
+    description: str = Field(
+        default="",
+        max_length=500,
+        description="可选的离场系统消息文本。留空时使用默认 '<角色名> 离开了场景。'",
+    )

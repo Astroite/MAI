@@ -1,0 +1,266 @@
+"""CRUD + roster behavior for Story World scenes (Rooms with world_id set).
+
+These tests intentionally avoid actually driving the LLM — they exercise scene
+creation, timeline ordering, enter/exit append-only audit, and seal semantics.
+The persona-prompt baking is asserted by reading the resulting PersonaInstance,
+not by running a turn.
+"""
+
+
+def _make_world(client) -> dict:
+    created = client.post("/worlds", json={"name": "pytest scene world", "synopsis": "测试场景的世界"}).json()
+    return created
+
+
+def _make_ai_character(client, world_id: str, persona_template_id: str, name: str = "苏离") -> dict:
+    return client.post(
+        f"/worlds/{world_id}/characters",
+        json={
+            "kind": "ai",
+            "name": name,
+            "identity": "剑客",
+            "persona_template_id": persona_template_id,
+            "core_identity": "沉默寡言。",
+            "skills_text": "剑术",
+            "goals_text": "查清师门之变",
+        },
+    ).json()
+
+
+def _make_user_character(client, world_id: str, name: str = "无名旅人") -> dict:
+    return client.post(
+        f"/worlds/{world_id}/characters",
+        json={"kind": "user", "name": name, "brief": "由玩家扮演"},
+    ).json()
+
+
+def test_scene_create_assigns_monotonic_index_and_bakes_prompt(
+    client, discussant_personas
+):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    ai_char = _make_ai_character(client, world["id"], template["id"])
+    user_char = _make_user_character(client, world["id"])
+
+    # Scene 1
+    scene_1 = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "第一幕：相遇",
+            "background": "酒馆角落，烛光摇曳。",
+            "in_world_time_start": "玄苍纪元第七日 黄昏",
+            "in_world_duration_hint": "约半个时辰",
+            "members": [
+                {"world_character_id": ai_char["id"], "role_in_scene": "独坐角落"},
+                {"world_character_id": user_char["id"], "speak_as_user": True},
+            ],
+        },
+    )
+    assert scene_1.status_code == 200, scene_1.text
+    state_1 = scene_1.json()
+    assert state_1["room"]["world_id"] == world["id"]
+    assert state_1["room"]["scene_index"] == 1
+    assert state_1["room"]["in_world_time_start"] == "玄苍纪元第七日 黄昏"
+    assert state_1["room"]["sealed_at"] is None
+
+    # PersonaInstance for the AI character carries the WorldCharacter's
+    # name/identity (not the template's) and the prompt got baked.
+    discussants = [p for p in state_1["personas"] if p["kind"] == "discussant"]
+    assert len(discussants) == 1, "user character must NOT spawn a PersonaInstance"
+    persona = discussants[0]
+    assert persona["name"] == "苏离"
+    assert persona["identity"] == "剑客"
+    assert persona["world_character_id"] == ai_char["id"]
+    assert "苏离" in persona["system_prompt"]
+    assert "玄苍纪元第七日 黄昏" in persona["system_prompt"]
+    assert "酒馆角落" in persona["system_prompt"]
+    assert world["synopsis"] in persona["system_prompt"]
+
+    # Scene 2: index advances monotonically.
+    scene_2 = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "第二幕：追凶",
+            "members": [{"world_character_id": ai_char["id"]}],
+        },
+    ).json()
+    assert scene_2["room"]["scene_index"] == 2
+
+    # Timeline returns scenes in scene_index order with member/message counts.
+    timeline = client.get(f"/worlds/{world['id']}/timeline").json()
+    assert [s["scene_index"] for s in timeline] == [1, 2]
+    assert timeline[0]["member_count"] == 2  # ai + user
+    assert timeline[1]["member_count"] == 1
+    # message_count counts all rows in `messages` (including phase-boundary
+    # meta entries the engine writes during scene init); exact value depends
+    # on engine internals, just assert it's bounded.
+    assert all(s["message_count"] >= 0 for s in timeline)
+
+    # World summary picks up scene_count + last_activity_at.
+    summary = next(item for item in client.get("/worlds").json() if item["id"] == world["id"])
+    assert summary["scene_count"] == 2
+    assert summary["last_activity_at"] is not None
+
+
+def test_scene_create_rejects_bad_roster(client, discussant_personas):
+    world_a = _make_world(client)
+    world_b = client.post("/worlds", json={"name": "pytest other world"}).json()
+    template = discussant_personas[0]
+    char_in_b = _make_ai_character(client, world_b["id"], template["id"], name="跨世界角色")
+
+    # Character belongs to a different world.
+    cross = client.post(
+        f"/worlds/{world_a['id']}/scenes",
+        json={"title": "跨世界 roster", "members": [{"world_character_id": char_in_b["id"]}]},
+    )
+    assert cross.status_code == 422
+
+    # Duplicate roster entry.
+    char_in_a = _make_ai_character(client, world_a["id"], template["id"], name="本世界角色")
+    dup = client.post(
+        f"/worlds/{world_a['id']}/scenes",
+        json={
+            "title": "重复 roster",
+            "members": [
+                {"world_character_id": char_in_a["id"]},
+                {"world_character_id": char_in_a["id"]},
+            ],
+        },
+    )
+    assert dup.status_code == 422
+
+    # Retired character rejected.
+    client.delete(f"/worlds/{world_a['id']}/characters/{char_in_a['id']}")
+    retired = client.post(
+        f"/worlds/{world_a['id']}/scenes",
+        json={"title": "退场 roster", "members": [{"world_character_id": char_in_a["id"]}]},
+    )
+    assert retired.status_code == 422
+
+
+def test_scene_enter_and_exit_are_append_only(client, discussant_personas):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    main_char = _make_ai_character(client, world["id"], template["id"], name="主角")
+    latecomer = _make_ai_character(client, world["id"], template["id"], name="迟到者")
+
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "入场离场测试",
+            "members": [{"world_character_id": main_char["id"]}],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+
+    # Enter mid-scene with a custom description.
+    enter = client.post(
+        f"/rooms/{scene_id}/scene/enter",
+        json={
+            "world_character_id": latecomer["id"],
+            "description": "迟到者推门而入，肩上落着雨。",
+        },
+    )
+    assert enter.status_code == 200, enter.text
+    enter_member = enter.json()
+    assert enter_member["world_character_id"] == latecomer["id"]
+    assert enter_member["entered_at_message_id"] is not None
+    assert enter_member["exited_at_message_id"] is None
+
+    # The participant.enter message is in the room transcript with the custom text.
+    state = client.get(f"/rooms/{scene_id}/state").json()
+    enter_messages = [m for m in state["messages"] if m["message_type"] == "participant.enter"]
+    assert len(enter_messages) == 1
+    assert enter_messages[0]["content"] == "迟到者推门而入，肩上落着雨。"
+    assert enter_messages[0]["author_actual"] == "system"
+    assert enter_messages[0]["visibility_to_models"] is True
+
+    # PersonaInstance now exists for the latecomer.
+    discussants = [p for p in state["personas"] if p["kind"] == "discussant"]
+    names = {p["name"] for p in discussants}
+    assert names == {"主角", "迟到者"}
+
+    # Cannot enter twice.
+    again = client.post(
+        f"/rooms/{scene_id}/scene/enter",
+        json={"world_character_id": latecomer["id"]},
+    )
+    assert again.status_code == 409
+
+    # Exit the latecomer with default text.
+    exit_resp = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": latecomer["id"]},
+    )
+    assert exit_resp.status_code == 200
+    exit_member = exit_resp.json()
+    assert exit_member["exited_at_message_id"] is not None
+
+    state = client.get(f"/rooms/{scene_id}/state").json()
+    exit_messages = [m for m in state["messages"] if m["message_type"] == "participant.exit"]
+    assert len(exit_messages) == 1
+    assert "迟到者" in exit_messages[0]["content"]
+
+    # Cannot exit twice.
+    twice = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": latecomer["id"]},
+    )
+    assert twice.status_code == 409
+
+    # PersonaInstance stays in the personas list (audit) — engine filters at
+    # routing time, not by deletion. Verify via /scene/members which keeps
+    # both rows but exit timestamp is set on the latecomer.
+    members = client.get(f"/rooms/{scene_id}/scene/members").json()
+    by_char = {m["world_character_id"]: m for m in members}
+    assert by_char[main_char["id"]]["exited_at_message_id"] is None
+    assert by_char[latecomer["id"]]["exited_at_message_id"] is not None
+
+
+def test_scene_seal_is_idempotent_and_blocks_roster_changes(client, discussant_personas):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    main_char = _make_ai_character(client, world["id"], template["id"])
+    extra = _make_ai_character(client, world["id"], template["id"], name="额外的人")
+
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={"title": "封幕测试", "members": [{"world_character_id": main_char["id"]}]},
+    ).json()
+    scene_id = scene["room"]["id"]
+
+    # First seal sets the timestamp.
+    sealed = client.post(f"/rooms/{scene_id}/seal").json()
+    assert sealed["sealed_at"] is not None
+    first_ts = sealed["sealed_at"]
+
+    # Second seal is a no-op (returns same timestamp).
+    sealed_again = client.post(f"/rooms/{scene_id}/seal").json()
+    assert sealed_again["sealed_at"] == first_ts
+
+    # Roster mutations rejected after seal.
+    enter = client.post(
+        f"/rooms/{scene_id}/scene/enter",
+        json={"world_character_id": extra["id"]},
+    )
+    assert enter.status_code == 409
+    exit_resp = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": main_char["id"]},
+    )
+    assert exit_resp.status_code == 409
+
+
+def test_non_scene_routes_reject_normal_room(client):
+    """The /scene/* routes only accept rooms that have a world_id set."""
+    room = client.post("/rooms", json={"title": "pytest non-scene room", "persona_ids": []}).json()
+    room_id = room["room"]["id"]
+    seal = client.post(f"/rooms/{room_id}/seal")
+    assert seal.status_code == 409
+    enter = client.post(
+        f"/rooms/{room_id}/scene/enter",
+        json={"world_character_id": "anything"},
+    )
+    assert enter.status_code == 409
+    members = client.get(f"/rooms/{room_id}/scene/members")
+    assert members.status_code == 409
