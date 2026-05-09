@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   ChevronRight,
+  Eye,
   Lock,
   Plus,
   Sparkles,
@@ -16,8 +17,10 @@ import { PersonaIcon } from "../components/PersonaIcon";
 import { PersonaTemplatePicker } from "../components/PersonaTemplatePicker";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "../components/Toaster";
+import { SceneInspectorDialog } from "./world/SceneInspectorDialog";
 import type {
   PersonaTemplate,
+  SceneTimelineEntry,
   WorldCharacter,
   WorldCharacterKind,
   SceneRosterEntry
@@ -63,6 +66,13 @@ export function WorldDetailPage() {
 
   const [addingCharacter, setAddingCharacter] = useState(false);
   const [creatingScene, setCreatingScene] = useState(false);
+  const [inspectingScene, setInspectingScene] = useState<SceneTimelineEntry | null>(null);
+
+  const inspectorMembers = useQuery({
+    queryKey: ["scene-members", inspectingScene?.id],
+    queryFn: () => api.sceneMembers(inspectingScene!.id),
+    enabled: Boolean(inspectingScene)
+  });
 
   if (world.isLoading || !world.data) {
     return (
@@ -167,12 +177,15 @@ export function WorldDetailPage() {
               <li className="py-4 text-center text-xs text-muted">还没有场景。</li>
             )}
             {(timeline.data ?? []).map((scene) => (
-              <li key={scene.id}>
-                <Link
-                  to={`/rooms/${scene.id}`}
-                  className="block rounded-md border border-border p-3 transition hover:border-brand/40 hover:bg-surface"
-                >
-                  <div className="flex items-center justify-between gap-2">
+              <li
+                key={scene.id}
+                className="rounded-md border border-border transition hover:border-brand/40"
+              >
+                <div className="flex items-stretch">
+                  <Link
+                    to={`/rooms/${scene.id}`}
+                    className="flex min-w-0 flex-1 items-center justify-between gap-2 p-3 hover:bg-surface"
+                  >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-muted">
@@ -196,13 +209,40 @@ export function WorldDetailPage() {
                       </div>
                     </div>
                     <ChevronRight size={16} className="text-muted" />
-                  </div>
-                </Link>
+                  </Link>
+                  {scene.sealed_at && (
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 border-l border-border px-3 text-xs text-muted hover:bg-surface hover:text-text"
+                      onClick={() => setInspectingScene(scene)}
+                      title="查看本幕产出的记忆与关系"
+                    >
+                      <Eye size={14} />
+                      产出
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>
         </section>
       </div>
+
+      <SceneInspectorDialog
+        open={inspectingScene !== null}
+        onOpenChange={(open) => {
+          if (!open) setInspectingScene(null);
+        }}
+        worldId={worldId}
+        scene={inspectingScene}
+        rosterCharacters={
+          inspectingScene && inspectorMembers.data
+            ? characters.filter((c) =>
+                inspectorMembers.data!.some((m) => m.world_character_id === c.id)
+              )
+            : []
+        }
+      />
     </div>
   );
 }
