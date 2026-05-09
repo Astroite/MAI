@@ -126,6 +126,9 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     "phase_templates": [
         ("auto_discuss", "boolean DEFAULT false NOT NULL", "BOOLEAN DEFAULT 0 NOT NULL"),
     ],
+    "world_character_memories": [
+        ("last_used_scene_index", "integer", "INTEGER"),
+    ],
 }
 
 

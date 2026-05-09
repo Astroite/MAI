@@ -1277,6 +1277,7 @@ class WorldCharacterMemoryOut(APIModel):
     target_character_id: str | None = None
     content: str
     salience: float = 0.5
+    last_used_scene_index: int | None = None
     created_at: datetime
 
 
@@ -1289,6 +1290,21 @@ class WorldCharacterMemoryCreate(APIModel):
     content: str = Field(min_length=1, max_length=2000)
     salience: float = Field(default=0.5, ge=0.0, le=1.0)
     in_world_time_at_event: str = ""
+    target_character_id: str | None = None
+
+
+class WorldCharacterMemoryUpdate(APIModel):
+    """Partial edit — director's manual touch-up. Source scene linkage and
+    creation timestamp are intentionally read-only (they're audit trail).
+    Setting `kind` is allowed for the rare case where the user wants to
+    reclassify a row (e.g. promote an episode to a vow)."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    kind: Literal["episode", "impression", "vow", "fact", "backstory"] | None = None
+    content: str | None = Field(default=None, min_length=1, max_length=2000)
+    salience: float | None = Field(default=None, ge=0.0, le=1.0)
+    in_world_time_at_event: str | None = None
     target_character_id: str | None = None
 
 
@@ -1353,6 +1369,17 @@ class WorldCharacterRelationUpsert(APIModel):
     label: str = Field(default="", max_length=64)
     sentiment: float = Field(default=0.0, ge=-1.0, le=1.0)
     notes: str = Field(default="", max_length=2000)
+
+
+class WorldCharacterRelationUpdate(APIModel):
+    """Partial edit on an existing relation card. Use when you want to nudge
+    one field (e.g. just sentiment) without touching the others."""
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    label: str | None = Field(default=None, max_length=64)
+    sentiment: float | None = Field(default=None, ge=-1.0, le=1.0)
+    notes: str | None = Field(default=None, max_length=2000)
 
 
 # Resolve the forward reference in MemoryDistillation.

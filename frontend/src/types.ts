@@ -532,12 +532,21 @@ export interface WorldCharacterMemory {
   target_character_id: string | null;
   content: string;
   salience: number;
+  last_used_scene_index: number | null;
   created_at: string;
 }
 
 export interface WorldCharacterMemoryCreateBody {
   kind?: WorldCharacterMemoryKind;
   content: string;
+  salience?: number;
+  in_world_time_at_event?: string;
+  target_character_id?: string | null;
+}
+
+export interface WorldCharacterMemoryUpdateBody {
+  kind?: WorldCharacterMemoryKind;
+  content?: string;
   salience?: number;
   in_world_time_at_event?: string;
   target_character_id?: string | null;
@@ -556,6 +565,12 @@ export interface WorldCharacterRelation {
 }
 
 export interface WorldCharacterRelationUpsertBody {
+  label?: string;
+  sentiment?: number;
+  notes?: string;
+}
+
+export interface WorldCharacterRelationUpdateBody {
   label?: string;
   sentiment?: number;
   notes?: string;
