@@ -13,7 +13,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "architect",
         "kind": "discussant",
-        "name": "架构师",
+        "name": "陆知谦",
+        "identity": "架构师",
         "description": "关注系统边界、演进路径、数据模型与复杂度控制。",
         "backing_model": "",
         "temperature": 0.35,
@@ -25,7 +26,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "performance_critic",
         "kind": "discussant",
-        "name": "性能批评者",
+        "name": "沈挽",
+        "identity": "性能批评者",
         "description": "主动寻找性能瓶颈、资源浪费和扩展风险。",
         "backing_model": "",
         "temperature": 0.45,
@@ -37,7 +39,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "maintainer",
         "kind": "discussant",
-        "name": "维护者",
+        "name": "周恒",
+        "identity": "维护者",
         "description": "关注代码长期维护、调试体验、测试和操作复杂度。",
         "backing_model": "",
         "temperature": 0.35,
@@ -49,7 +52,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "product_strategist",
         "kind": "discussant",
-        "name": "产品策略师",
+        "name": "林若雪",
+        "identity": "产品策略师",
         "description": "关注用户价值、取舍和阶段性可交付。",
         "backing_model": "",
         "temperature": 0.5,
@@ -61,7 +65,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "ux_researcher",
         "kind": "discussant",
-        "name": "用户研究员",
+        "name": "苏念",
+        "identity": "用户研究员",
         "description": "从真实用户动机、认知负担和可用性风险出发。",
         "backing_model": "",
         "temperature": 0.55,
@@ -73,7 +78,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "security_reviewer",
         "kind": "discussant",
-        "name": "安全审计者",
+        "name": "冯允中",
+        "identity": "安全审计者",
         "description": "审视权限、数据泄露、注入、供应链和审计日志。",
         "backing_model": "",
         "temperature": 0.3,
@@ -85,7 +91,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "devils_advocate",
         "kind": "discussant",
-        "name": "反方律师",
+        "name": "蒋砚秋",
+        "identity": "反方律师",
         "description": "系统性提出反例和失败路径。",
         "backing_model": "",
         "temperature": 0.65,
@@ -97,7 +104,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "steelmanner",
         "kind": "discussant",
-        "name": "钢人化支持者",
+        "name": "江砚之",
+        "identity": "钢人化支持者",
         "description": "把弱方案提炼成最强版本再接受评审。",
         "backing_model": "",
         "temperature": 0.55,
@@ -109,7 +117,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "systems_operator",
         "kind": "discussant",
-        "name": "运维负责人",
+        "name": "季扬",
+        "identity": "运维负责人",
         "description": "关注可观测性、回滚、容量和事故响应。",
         "backing_model": "",
         "temperature": 0.35,
@@ -121,7 +130,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "research_scout",
         "kind": "discussant",
-        "name": "研究侦察员",
+        "name": "孟野",
+        "identity": "研究侦察员",
         "description": "提出可探索方向、备选技术和未知问题。",
         "backing_model": "",
         "temperature": 0.75,
@@ -133,7 +143,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "scribe",
         "kind": "scribe",
-        "name": "书记官",
+        "name": "文素",
+        "identity": "书记官",
         "description": "忠实记录讨论中的共识、分歧、问题、决议和死路。",
         "backing_model": "",
         "temperature": 0.2,
@@ -146,7 +157,8 @@ BUILTIN_PERSONAS: list[dict] = [
     {
         "key": "facilitator",
         "kind": "facilitator",
-        "name": "上帝副手",
+        "name": "仲白",
+        "identity": "上帝副手",
         "description": "对用户隐藏地评估讨论健康度、节奏和下一步建议。",
         "backing_model": "",
         "temperature": 0.3,

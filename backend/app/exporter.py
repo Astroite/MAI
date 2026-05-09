@@ -98,7 +98,10 @@ async def render_room_markdown(
             select(PersonaInstance).where(PersonaInstance.room_id == room.id)
         )
     ).all()
-    personas = {p.id: p.name for p in personas_rows}
+    personas = {
+        p.id: (f"{p.name} · {p.identity}" if p.identity else p.name)
+        for p in personas_rows
+    }
 
     phase_rows = (
         await session.scalars(

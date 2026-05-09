@@ -117,6 +117,7 @@ function PersonasView() {
   );
   const [kind, setKind] = useState<PersonaKind>("discussant");
   const [name, setName] = useState(() => t("templates.defaultPersonaName"));
+  const [identity, setIdentity] = useState("");
   const [description, setDescription] = useState(() => t("templates.defaultPersonaDescription"));
   const [apiModelId, setApiModelId] = useState<string>("");
   const [temperature, setTemperature] = useState(0.4);
@@ -146,6 +147,7 @@ function PersonasView() {
   const personaPayload = () => ({
     kind,
     name,
+    identity,
     description,
     ...personaModelPayload(),
     system_prompt: systemPrompt,
@@ -164,6 +166,7 @@ function PersonasView() {
     setEditingPersonaId(persona.id);
     setKind(persona.kind);
     setName(persona.name);
+    setIdentity(persona.identity ?? "");
     setDescription(persona.description);
     setApiModelId(persona.api_model_id ?? "");
     setTemperature(persona.temperature);
@@ -178,6 +181,7 @@ function PersonasView() {
     setEditingPersonaId(null);
     setKind("discussant");
     setName(t("templates.defaultPersonaName"));
+    setIdentity("");
     setDescription(t("templates.defaultPersonaDescription"));
     setApiModelId("");
     setTemperature(0.4);
@@ -205,6 +209,7 @@ function PersonasView() {
       setEditingPersonaId(null);
       setKind(payload.kind === "scribe" || payload.kind === "facilitator" ? payload.kind : "discussant");
       setName(typeof payload.name === "string" ? payload.name : name);
+      setIdentity(typeof payload.identity === "string" ? payload.identity : identity);
       setDescription(typeof payload.description === "string" ? payload.description : description);
       setSystemPrompt(typeof payload.system_prompt === "string" ? payload.system_prompt : systemPrompt);
       setTemperature(typeof payload.temperature === "number" ? payload.temperature : temperature);
@@ -344,7 +349,12 @@ function PersonasView() {
                   <PersonaIcon icon={persona.icon} color={personaColor} size={44} rounded="lg" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
-                      <h2 className="min-w-0 truncate text-sm font-semibold leading-5">{persona.name}</h2>
+                      <h2 className="min-w-0 truncate text-sm font-semibold leading-5">
+                        {persona.name}
+                        {persona.identity && (
+                          <span className="ml-1.5 text-xs font-normal text-muted">· {persona.identity}</span>
+                        )}
+                      </h2>
                       <div className="flex shrink-0 items-center gap-1.5 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100">
                         <button
                           className="btn h-8 w-8 px-0"
@@ -420,7 +430,7 @@ function PersonasView() {
           </p>
         )}
         <div className="mt-4 space-y-3">
-          {/* Identity: avatar + name + kind on one row */}
+          {/* Identity: avatar + name + identity + kind on one row */}
           <div className="flex items-end gap-2">
             <PersonaIcon icon={icon} color={color} size={44} rounded="lg" />
             <label className="block min-w-0 flex-1">
@@ -430,6 +440,16 @@ function PersonasView() {
                 className="input mt-1 w-full"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
+              />
+            </label>
+            <label className="block min-w-0 flex-1">
+              <span className="label">{t("templates.identity")}</span>
+              <input
+                name="persona-identity"
+                className="input mt-1 w-full"
+                placeholder={t("templates.identityPlaceholder")}
+                value={identity}
+                onChange={(event) => setIdentity(event.target.value)}
               />
             </label>
             <label className="block w-28 shrink-0">
@@ -2585,6 +2605,7 @@ function TagFilterBar<T extends { tags?: string[] }>({
 type BuiltinItem = {
   id: string;
   name: string;
+  identity?: string;
   description: string;
   tags?: string[];
 };
@@ -2619,7 +2640,12 @@ function BuiltinLibrary<T extends BuiltinItem>({
           <div key={item.id} className="rounded-md border border-border bg-panel p-3 shadow-card transition hover:border-brand">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <h3 className="truncate text-sm font-medium">{item.name}</h3>
+                <h3 className="truncate text-sm font-medium">
+                  {item.name}
+                  {item.identity && (
+                    <span className="ml-1.5 text-xs font-normal text-muted">· {item.identity}</span>
+                  )}
+                </h3>
                 <p className="mt-1 line-clamp-2 text-xs text-muted">{item.description}</p>
               </div>
               <button

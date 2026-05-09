@@ -488,6 +488,9 @@ export function NewDiscussionPage() {
                         <span className="min-w-0 flex-1">
                           <span className="flex items-center gap-2">
                             <span className="font-medium">{persona.name}</span>
+                            {persona.identity && (
+                              <span className="text-xs text-muted">· {persona.identity}</span>
+                            )}
                             {checked && <CheckCircle2 size={13} className="text-brand" />}
                           </span>
                           <span className="mt-1 line-clamp-2 block text-xs text-muted">{persona.description}</span>
@@ -549,7 +552,7 @@ export function NewDiscussionPage() {
                           <span
                             key={id}
                             className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px]"
-                            title={persona?.name ?? id}
+                            title={persona ? `${persona.name}${persona.identity ? " · " + persona.identity : ""}` : id}
                           >
                             <span
                               aria-hidden
@@ -557,7 +560,12 @@ export function NewDiscussionPage() {
                             >
                               {initial}
                             </span>
-                            <span className="max-w-[7rem] truncate">{persona?.name ?? id}</span>
+                            <span className="max-w-[8rem] truncate">
+                              {persona?.name ?? id}
+                              {persona?.identity && (
+                                <span className="ml-1 text-muted">· {persona.identity}</span>
+                              )}
+                            </span>
                           </span>
                         );
                       })}

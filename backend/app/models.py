@@ -66,6 +66,7 @@ class PersonaTemplate(Base):
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=False)
     kind: Mapped[str] = mapped_column(String(32))
     name: Mapped[str] = mapped_column(String(120))
+    identity: Mapped[str] = mapped_column(String(120), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     backing_model: Mapped[str] = mapped_column(String(160))
     api_provider_id: Mapped[str | None] = mapped_column(
@@ -99,6 +100,7 @@ class PersonaInstance(Base):
     # immutable post-create (enforced by PersonaInstanceUpdate's field whitelist).
     kind: Mapped[str] = mapped_column(String(32))
     name: Mapped[str] = mapped_column(String(120))
+    identity: Mapped[str] = mapped_column(String(120), default="")
     description: Mapped[str] = mapped_column(Text, default="")
     backing_model: Mapped[str] = mapped_column(String(160))
     api_provider_id: Mapped[str | None] = mapped_column(

@@ -204,6 +204,7 @@ class PersonaTemplateOut(APIModel):
     is_builtin: bool
     kind: Literal["discussant", "scribe", "facilitator"]
     name: str
+    identity: str = ""
     description: str
     backing_model: str
     api_provider_id: str | None = None
@@ -222,6 +223,7 @@ class PersonaTemplateOut(APIModel):
 class PersonaTemplateCreate(APIModel):
     kind: Literal["discussant", "scribe", "facilitator"] = "discussant"
     name: str
+    identity: str = ""
     description: str = ""
     backing_model: str = "openai/gpt-4o-mini"
     api_provider_id: str | None = None
@@ -240,6 +242,7 @@ class PersonaTemplateUpdate(APIModel):
     route layer with 403 — duplicate then edit the copy."""
 
     name: str | None = None
+    identity: str | None = None
     description: str | None = None
     backing_model: str | None = None
     api_provider_id: str | None = None
@@ -261,6 +264,7 @@ class PersonaInstanceOut(APIModel):
     position: int
     kind: Literal["discussant", "scribe", "facilitator"]
     name: str
+    identity: str = ""
     description: str
     backing_model: str
     api_provider_id: str | None = None
@@ -278,10 +282,13 @@ class PersonaInstanceOut(APIModel):
 
 class PersonaInstanceUpdate(APIModel):
     """Per-room edits. `name` and `kind` are immutable post-create — sent in
-    the payload they trigger a 422 via `extra='forbid'`."""
+    the payload they trigger a 422 via `extra='forbid'`. `identity` IS
+    mutable: per-room role nuance (e.g. "首席架构师" vs builtin "架构师")
+    is a real user need."""
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
 
+    identity: str | None = None
     description: str | None = None
     backing_model: str | None = None
     api_provider_id: str | None = None
@@ -560,7 +567,12 @@ class PersonaDraftPayload(APIModel):
         ...,
         min_length=2,
         max_length=24,
-        description="人设的中文名称,2-8 字最佳,如 '架构师'、'反方律师'。不要带书名号或括号。",
+        description="人物的真实姓名,2-8 字汉字或拼音,如 '陆知谦'、'Ada Lovelace'。不要带书名号或括号,不要写身份/职业。",
+    )
+    identity: str = Field(
+        "",
+        max_length=24,
+        description="人物的身份/职业/角色定位,2-12 字,如 '架构师'、'精灵公主'、'刑侦专家'。如果是用户没指定的随机人物可以留空。",
     )
     description: str = Field(
         ...,
@@ -780,6 +792,7 @@ class RoomMemberPreview(APIModel):
 
     id: str
     name: str
+    identity: str = ""
     color: str = "#3b82f6"
     icon: str = "Sparkles"
 

@@ -39,7 +39,7 @@ from .engine import (
 )
 from .event_bus import event_bus
 from .exporter import build_content_disposition, render_room_markdown
-from .ids import new_id
+from .ids import builtin_id, new_id
 from .models import (
     ApiProvider,
     ApiModel,
@@ -629,6 +629,7 @@ async def duplicate_persona_template(template_id: str, session: AsyncSession = D
         is_builtin=False,
         kind=source.kind,
         name=_template_copy_name(source),
+        identity=source.identity,
         description=source.description,
         backing_model=source.backing_model,
         api_provider_id=source.api_provider_id,
@@ -1310,6 +1311,7 @@ async def list_rooms(session: AsyncSession = Depends(get_session)):
                 RoomMemberPreview(
                     id=p.id,
                     name=p.name,
+                    identity=p.identity or "",
                     color=p.color or "#3b82f6",
                     icon=p.icon or "Sparkles",
                 )
@@ -2102,6 +2104,7 @@ def _fallback_template_draft(kind: str, prompt: str) -> TemplateDraftOut:
             payload={
                 "kind": "discussant",
                 "name": title,
+                "identity": "",
                 "description": text[:160],
                 "system_prompt": f"你是{title}。请围绕用户目标给出具体、可执行、基于证据的观点。",
                 "temperature": 0.4,
@@ -2159,12 +2162,16 @@ async def _select_recipe(session: AsyncSession, recipe_id: str | None) -> Recipe
 
 
 async def _default_discussant_ids(session: AsyncSession) -> list[str]:
+    # Key on deterministic built-in ids so future name/identity changes
+    # don't silently break the default discussant set.
+    default_keys = ("architect", "performance_critic", "maintainer", "devils_advocate")
+    candidate_ids = [builtin_id("persona", key) for key in default_keys]
     rows = (
         await session.scalars(
             select(PersonaTemplate.id)
             .where(
                 PersonaTemplate.kind == "discussant",
-                PersonaTemplate.name.in_(["架构师", "性能批评者", "维护者", "反方律师"]),
+                PersonaTemplate.id.in_(candidate_ids),
             )
             .order_by(PersonaTemplate.name)
         )
@@ -2214,6 +2221,7 @@ async def _create_persona_instances(
             position=int(next_position),
             kind=template.kind,
             name=template.name,
+            identity=template.identity,
             description=template.description,
             backing_model=template.backing_model,
             api_provider_id=template.api_provider_id,

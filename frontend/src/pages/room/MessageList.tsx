@@ -9,6 +9,7 @@ import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
 import { DEFAULT_PERSONA_COLOR, PersonaIcon } from "../../components/PersonaIcon";
+import { splitActions } from "./splitActions";
 
 type PersonaLike = { id?: string | null; color?: string | null; icon?: string | null };
 
@@ -121,6 +122,46 @@ export function MessageList({
   );
 }
 
+function ActionAwareBody({ text }: { text: string }) {
+  const segments = splitActions(text);
+  if (segments.length === 0) return null;
+  return (
+    <>
+      {segments.map((seg, i) =>
+        seg.kind === "action" ? (
+          <div
+            key={i}
+            className="my-1.5 rounded-md border-l-2 border-muted/40 bg-surface/60 px-3 py-1 text-xs italic text-muted"
+          >
+            {seg.text}
+          </div>
+        ) : (
+          <MarkdownBlock key={i} content={seg.text} />
+        )
+      )}
+    </>
+  );
+}
+
+function AuthorLabel({
+  name,
+  identity,
+  muted = false
+}: {
+  name: string;
+  identity?: string;
+  muted?: boolean;
+}) {
+  return (
+    <>
+      <span className={muted ? "font-medium text-muted" : "font-semibold text-text"}>{name}</span>
+      {identity && (
+        <span className="text-xs text-muted">· {identity}</span>
+      )}
+    </>
+  );
+}
+
 function StreamingRow({
   persona,
   personaId,
@@ -139,10 +180,11 @@ function StreamingRow({
     >
       <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
         <span className="font-semibold text-text">{t("message.streaming", { name: personaName ?? "AI" })}</span>
+        {persona?.identity && <span className="text-xs text-muted">· {persona.identity}</span>}
         <span className="h-1.5 w-1.5 rounded-full bg-brand" style={{ animation: "pulse-ring 1.4s ease-out infinite" }} />
       </div>
       <div className="mt-1 rounded-lg border border-brand/30 bg-panel px-3 py-2 text-sm shadow-card">
-        <MarkdownBlock content={text} />
+        <ActionAwareBody text={text} />
       </div>
     </ChatRow>
   );
@@ -225,6 +267,7 @@ function MessageRow({
       <ChatRow side="left" avatar={ghostAvatar}>
         <div className="flex flex-wrap items-center gap-2 text-xs text-muted/70">
           <span className="font-semibold">{ghostName}</span>
+          {persona?.identity && <span className="text-xs text-muted">· {persona.identity}</span>}
           <StatusPill tone="neutral">{t("message.silence")}</StatusPill>
         </div>
         <div className="mt-1 inline-block rounded-2xl border border-dashed border-border px-3 py-1.5 text-sm text-muted/60">
@@ -292,7 +335,11 @@ function MessageRow({
   return (
     <ChatRow side={side} avatar={avatar}>
       <div className={`flex flex-wrap items-center gap-2 text-xs text-muted ${isUser ? "justify-end" : ""}`}>
-        <span className="font-semibold text-text">{authorName}</span>
+        {!isUser && message.author_actual === "ai" && persona ? (
+          <AuthorLabel name={persona.name} identity={persona.identity} />
+        ) : (
+          <span className="font-semibold text-text">{authorName}</span>
+        )}
         <span>{formatMessageTime(message.created_at, locale)}</span>
         {message.message_type !== "speech" && (
           <StatusPill tone={message.message_type === "facilitator_signal" ? "accent" : "neutral"}>
@@ -320,7 +367,7 @@ function MessageRow({
         </span>
       </div>
       <div className={`mt-1 rounded-lg px-3 py-2 text-sm shadow-card ${bubbleTone}`}>
-        <MarkdownBlock content={message.content} />
+        <ActionAwareBody text={message.content} />
       </div>
     </ChatRow>
   );

@@ -93,12 +93,14 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
         ("talkativeness", "double precision DEFAULT 1.0 NOT NULL", "REAL DEFAULT 1.0 NOT NULL"),
         ("color", "varchar(16) DEFAULT '#3b82f6' NOT NULL", "VARCHAR(16) DEFAULT '#3b82f6' NOT NULL"),
         ("icon", "varchar(48) DEFAULT 'Sparkles' NOT NULL", "VARCHAR(48) DEFAULT 'Sparkles' NOT NULL"),
+        ("identity", "varchar(120) DEFAULT '' NOT NULL", "VARCHAR(120) DEFAULT '' NOT NULL"),
     ],
     "persona_instances": [
         ("api_model_id", "varchar(36)", "VARCHAR(36)"),
         ("talkativeness", "double precision DEFAULT 1.0 NOT NULL", "REAL DEFAULT 1.0 NOT NULL"),
         ("color", "varchar(16) DEFAULT '#3b82f6' NOT NULL", "VARCHAR(16) DEFAULT '#3b82f6' NOT NULL"),
         ("icon", "varchar(48) DEFAULT 'Sparkles' NOT NULL", "VARCHAR(48) DEFAULT 'Sparkles' NOT NULL"),
+        ("identity", "varchar(120) DEFAULT '' NOT NULL", "VARCHAR(120) DEFAULT '' NOT NULL"),
     ],
     "api_providers": [
         ("last_tested_ok", "boolean", "BOOLEAN"),
@@ -139,6 +141,7 @@ async def create_schema() -> None:
     from . import models  # noqa: F401
     from . import migrate_api_models
     from . import migrate_drop_vendor
+    from . import migrate_persona_identity
     from . import migrate_personas
     from . import migrate_seed_story_mode
     from . import migrate_settings
@@ -153,3 +156,4 @@ async def create_schema() -> None:
         await conn.run_sync(migrate_drop_vendor.run)
         await conn.run_sync(migrate_seed_story_mode.run)
         await conn.run_sync(migrate_story_mode_v2.run)
+        await conn.run_sync(migrate_persona_identity.run)

@@ -142,6 +142,10 @@ def test_export_room_filters_internal_messages_and_includes_discussion(
 
     assert "我" in body
     assert speaker["name"] in body
+    # When the persona has both a real name and an identity, the export
+    # author label should compose them with " · ".
+    if speaker.get("identity"):
+        assert f"{speaker['name']} · {speaker['identity']}" in body
 
 
 def test_export_room_unsupported_format_returns_400(client, discussant_personas):

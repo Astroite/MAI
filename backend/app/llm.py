@@ -32,9 +32,10 @@ class LLMAdapter:
         api_provider: ApiProvider | None = None,
         room_background: str = "",
         peer_names: dict[str, str] | None = None,
+        peer_identities: dict[str, str] | None = None,
     ) -> AsyncIterator[StreamChunk]:
         messages = self._build_messages(
-            persona, context, phase, scribe_state, room_background, peer_names
+            persona, context, phase, scribe_state, room_background, peer_names, peer_identities
         )
 
         response = await acompletion(
@@ -66,9 +67,10 @@ class LLMAdapter:
         max_tool_rounds: int = 4,
         room_background: str = "",
         peer_names: dict[str, str] | None = None,
+        peer_identities: dict[str, str] | None = None,
     ) -> ToolCompletion:
         messages = self._build_messages(
-            persona, context, phase, scribe_state, room_background, peer_names
+            persona, context, phase, scribe_state, room_background, peer_names, peer_identities
         )
         tool_call_count = 0
         for _ in range(max_tool_rounds + 1):
@@ -297,6 +299,7 @@ class LLMAdapter:
         scribe_state: dict[str, Any] | None,
         room_background: str = "",
         has_peers: bool = False,
+        peer_roster: list[tuple[str, str]] | None = None,
     ) -> str:
         parts = [persona.system_prompt.strip()]
         if room_background and room_background.strip():
@@ -306,13 +309,20 @@ class LLMAdapter:
             # NOT echo the convention back. Without this, multi-AI rooms blur
             # into a single omniscient narrator voice — every AI sees prior
             # AI turns as its own past output and "continues" them.
+            identity_clause = f"({persona.identity})" if getattr(persona, "identity", "") else ""
             parts.append(
                 f"【发言规则】\n"
-                f"你只是「{persona.name}」一个人。下方对话历史里,以「『某某』:」开头的发言来自其他人,"
+                f"你只是「{persona.name}」{identity_clause}一个人。下方对话历史里,以「『某某』:」开头的发言来自其他人,"
                 f"不是你说的;你只能就你自己的立场、动作、内心做出回应。\n"
                 f"输出时只直接说出「{persona.name}」要说的话或动作,**不要在自己的回复里加「『{persona.name}』:」前缀**,"
                 f"也绝不要替别人写台词或动作。如果想对某人说话,直接说,不需要标注对方名字。"
             )
+            if peer_roster:
+                roster = "、".join(
+                    f"{name}({identity})" if identity else name
+                    for name, identity in peer_roster
+                )
+                parts.append(f"本房间在场的其他人:{roster}。")
         if phase:
             parts.append(f"当前 Phase:{phase.name}。{phase.description}".strip())
             if phase.role_constraints:
@@ -353,6 +363,7 @@ class LLMAdapter:
         scribe_state: dict[str, Any] | None,
         room_background: str = "",
         peer_names: dict[str, str] | None = None,
+        peer_identities: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
         """Route history so each model sees the conversation from its own POV.
 
@@ -368,14 +379,27 @@ class LLMAdapter:
           * Real user / system / judge        -> user, prefixed `「用户」` etc.
         """
         peer_map: dict[str, str] = dict(peer_names or {})
+        identity_map: dict[str, str] = dict(peer_identities or {})
         # Build prompt only after deciding whether peers exist, so the rule
         # block isn't injected for solo rooms (scribe/facilitator cycles etc.).
         has_peers = any(pid != persona.id for pid in peer_map)
+        # Roster of other personas with their identities for the system prompt
+        # (different from the inline `「Name」:` prefix, which stays short).
+        peer_roster: list[tuple[str, str]] = []
+        for pid, pname in peer_map.items():
+            if pid == persona.id:
+                continue
+            peer_roster.append((pname, identity_map.get(pid, "")))
         messages: list[dict[str, Any]] = [
             {
                 "role": "system",
                 "content": self._build_system_prompt(
-                    persona, phase, scribe_state, room_background, has_peers=has_peers
+                    persona,
+                    phase,
+                    scribe_state,
+                    room_background,
+                    has_peers=has_peers,
+                    peer_roster=peer_roster,
                 ),
             }
         ]

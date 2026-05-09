@@ -202,7 +202,16 @@ export function Composer({
                             {persona.name.slice(0, 1)}
                           </span>
                           <span className="min-w-0">
-                            <span className="block truncate font-medium">{persona.name}</span>
+                            <span className="block truncate font-medium">
+                              {persona.name}
+                              {persona.identity && (
+                                <span
+                                  className={`ml-1 text-xs font-normal ${active ? "text-white/85" : "text-muted"}`}
+                                >
+                                  · {persona.identity}
+                                </span>
+                              )}
+                            </span>
                             <span className={`mt-0.5 block truncate text-xs ${active ? "text-white/80" : "text-muted"}`}>{persona.description}</span>
                           </span>
                         </button>

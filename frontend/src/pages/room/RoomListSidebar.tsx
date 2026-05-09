@@ -264,7 +264,7 @@ function RoomEntry({
                   <span
                     key={member.id}
                     className="rounded-full ring-2 ring-panel"
-                    title={member.name}
+                    title={member.identity ? `${member.name} · ${member.identity}` : member.name}
                   >
                     <PersonaIcon
                       icon={member.icon}

@@ -745,6 +745,7 @@ async def _stream_one_message(
         await session.scalars(select(PersonaInstance).where(PersonaInstance.room_id == room.id))
     ).all()
     peer_names = {p.id: p.name for p in peer_personas}
+    peer_identities = {p.id: (p.identity or "") for p in peer_personas}
     tmp_message_id = new_id()
     partial = ""
     chunk_count = 0
@@ -799,6 +800,7 @@ async def _stream_one_message(
                     api_provider=api_provider,
                     room_background=room.background or "",
                     peer_names=peer_names,
+                    peer_identities=peer_identities,
                 ),
                 timeout=max(CHUNK_IDLE_TIMEOUT_SECONDS, 180.0),
             )
@@ -829,6 +831,7 @@ async def _stream_one_message(
                 api_provider=api_provider,
                 room_background=room.background or "",
                 peer_names=peer_names,
+                peer_identities=peer_identities,
             ).__aiter__()
             try:
                 while True:

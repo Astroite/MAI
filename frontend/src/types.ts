@@ -5,6 +5,7 @@ export interface PersonaTemplate {
   version: number;
   kind: PersonaKind;
   name: string;
+  identity: string;
   description: string;
   backing_model: string;
   api_provider_id?: string | null;
@@ -29,6 +30,7 @@ export interface PersonaInstance {
   position: number;
   kind: PersonaKind;
   name: string;
+  identity: string;
   description: string;
   backing_model: string;
   api_provider_id?: string | null;
@@ -147,7 +149,7 @@ export interface Room {
   created_at: string;
   // Populated by `GET /rooms` (room list); RoomState's `room` field omits these.
   member_count?: number;
-  members?: Array<{ id: string; name: string; color: string; icon: string }>;
+  members?: Array<{ id: string; name: string; identity?: string; color: string; icon: string }>;
   message_count?: number;
   last_activity_at?: string | null;
 }

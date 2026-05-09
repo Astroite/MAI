@@ -114,7 +114,7 @@ export function MembersSidebar({
               className={`min-w-0 rounded-lg border px-2 py-2 shadow-card ${
                 activePersonaIds.has(persona.id) ? "border-brand/50 bg-brand/10" : "border-border/80 bg-panel"
               }`}
-              title={persona.name}
+              title={persona.identity ? `${persona.name} · ${persona.identity}` : persona.name}
             >
               <div className="flex min-w-0 items-center gap-2">
                 <PersonaIcon
@@ -125,7 +125,12 @@ export function MembersSidebar({
                   rounded="full"
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="truncate text-xs font-semibold text-text">{persona.name}</div>
+                  <div className="truncate text-xs font-semibold text-text">
+                    {persona.name}
+                    {persona.identity && (
+                      <span className="ml-1 text-[10px] font-normal text-muted">· {persona.identity}</span>
+                    )}
+                  </div>
                   <div className="mt-0.5 truncate text-[11px] text-muted">
                     {personaModelLabel(persona, modelById, providerById, t)}
                   </div>
@@ -247,7 +252,12 @@ function PersonaRow({
           )}
         </div>
         <div className="min-w-0 flex-1">
-          <div className="truncate font-medium">{persona.name}</div>
+          <div className="truncate font-medium">
+            {persona.name}
+            {persona.identity && (
+              <span className="ml-1.5 text-xs font-normal text-muted">· {persona.identity}</span>
+            )}
+          </div>
           <div className="mt-0.5 truncate text-xs text-muted">{personaModelLabel(persona, modelById, providerById, t)}</div>
           <div className="mt-1 flex flex-wrap gap-1">
             {(persona.config?.auto_reply_enabled ?? true) === false && (
