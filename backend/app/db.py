@@ -140,9 +140,11 @@ def _ensure_added_columns(sync_conn: Connection) -> None:
 async def create_schema() -> None:
     from . import models  # noqa: F401
     from . import migrate_api_models
+    from . import migrate_builtin_personas_update
     from . import migrate_drop_vendor
     from . import migrate_persona_identity
     from . import migrate_personas
+    from . import migrate_seed_new_personas
     from . import migrate_seed_story_mode
     from . import migrate_settings
     from . import migrate_story_mode_v2
@@ -157,3 +159,5 @@ async def create_schema() -> None:
         await conn.run_sync(migrate_seed_story_mode.run)
         await conn.run_sync(migrate_story_mode_v2.run)
         await conn.run_sync(migrate_persona_identity.run)
+        await conn.run_sync(migrate_seed_new_personas.run)
+        await conn.run_sync(migrate_builtin_personas_update.run)
