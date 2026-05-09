@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api } from "../api";
 import { PersonaIcon } from "../components/PersonaIcon";
+import { PersonaTemplatePicker } from "../components/PersonaTemplatePicker";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "../components/Toaster";
 import type {
@@ -282,8 +283,30 @@ function AddCharacterForm({
   const [coreIdentity, setCoreIdentity] = useState("");
   const [skillsText, setSkillsText] = useState("");
   const [goalsText, setGoalsText] = useState("");
-  const [templateId, setTemplateId] = useState<string>(templates[0]?.id ?? "");
+  const [templateId, setTemplateId] = useState<string | null>(null);
   const [color, setColor] = useState(PALETTE[9]); // 3b82f6
+  const [icon, setIcon] = useState<string>("Sparkles");
+  const [pickerOpen, setPickerOpen] = useState(false);
+  // Track whether the user has hand-edited each field. Picking a template
+  // auto-fills only the fields that haven't been touched (or that were
+  // last filled BY a previous template selection). This stops switching
+  // templates from clobbering deliberate character names like "苏离".
+  const userEdited = useRef({ name: false, identity: false, brief: false });
+
+  const selectedTemplate = templateId
+    ? templates.find((tpl) => tpl.id === templateId) ?? null
+    : null;
+
+  const applyTemplate = (template: PersonaTemplate) => {
+    setTemplateId(template.id);
+    if (!userEdited.current.name) setName(template.name);
+    if (!userEdited.current.identity) setIdentity(template.identity);
+    if (!userEdited.current.brief) setBrief(template.description);
+    setColor(template.color || color);
+    setIcon(template.icon || icon);
+    setPickerOpen(false);
+  };
+
   const create = useMutation({
     mutationFn: () =>
       api.createWorldCharacter(worldId, {
@@ -295,7 +318,8 @@ function AddCharacterForm({
         core_identity: coreIdentity.trim(),
         skills_text: skillsText.trim(),
         goals_text: goalsText.trim(),
-        color
+        color,
+        icon
       }),
     onSuccess: (character) => {
       void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
@@ -306,12 +330,14 @@ function AddCharacterForm({
       setCoreIdentity("");
       setSkillsText("");
       setGoalsText("");
+      setTemplateId(null);
+      userEdited.current = { name: false, identity: false, brief: false };
       onDone();
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
   const canSubmit =
-    name.trim().length > 0 && (kind === "user" || templateId.length > 0);
+    name.trim().length > 0 && (kind === "user" || templateId !== null);
   return (
     <form
       className="space-y-3 rounded-md border border-dashed border-border p-3"
@@ -337,12 +363,60 @@ function AddCharacterForm({
           User 角色（玩家驱动）
         </button>
       </div>
+
+      {kind === "ai" && (
+        <div>
+          <label className="text-xs font-medium text-muted">
+            绑定 Persona 模板（决定模型 + 基础 prompt）
+          </label>
+          <button
+            type="button"
+            className="mt-1 flex w-full items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-left transition hover:border-brand/40"
+            onClick={() => setPickerOpen(true)}
+          >
+            {selectedTemplate ? (
+              <>
+                <PersonaIcon
+                  icon={selectedTemplate.icon}
+                  color={selectedTemplate.color}
+                  size={28}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{selectedTemplate.name}</div>
+                  {selectedTemplate.identity && (
+                    <div className="truncate text-xs text-muted">{selectedTemplate.identity}</div>
+                  )}
+                </div>
+                <span className="text-xs text-muted">更换</span>
+              </>
+            ) : (
+              <>
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-panel text-muted">
+                  ?
+                </span>
+                <span className="text-sm text-muted">点击选择模板…</span>
+              </>
+            )}
+          </button>
+          <PersonaTemplatePicker
+            open={pickerOpen}
+            onOpenChange={setPickerOpen}
+            templates={templates}
+            selectedId={templateId}
+            onPick={applyTemplate}
+          />
+        </div>
+      )}
+
       <div className="grid gap-2 sm:grid-cols-2">
         <input
           className="input"
           placeholder="角色名（必填）"
           value={name}
-          onChange={(event) => setName(event.target.value)}
+          onChange={(event) => {
+            userEdited.current.name = true;
+            setName(event.target.value);
+          }}
           maxLength={120}
           required
         />
@@ -350,7 +424,10 @@ function AddCharacterForm({
           className="input"
           placeholder="身份/称谓（如：剑客）"
           value={identity}
-          onChange={(event) => setIdentity(event.target.value)}
+          onChange={(event) => {
+            userEdited.current.identity = true;
+            setIdentity(event.target.value);
+          }}
           maxLength={120}
         />
       </div>
@@ -358,25 +435,13 @@ function AddCharacterForm({
         className="input w-full"
         placeholder="简介（一句话，每场都进 prompt）"
         value={brief}
-        onChange={(event) => setBrief(event.target.value)}
+        onChange={(event) => {
+          userEdited.current.brief = true;
+          setBrief(event.target.value);
+        }}
       />
       {kind === "ai" && (
         <>
-          <div>
-            <label className="text-xs font-medium text-muted">绑定 Persona 模板（决定模型 + 基础 prompt）</label>
-            <select
-              className="input mt-1 w-full"
-              value={templateId}
-              onChange={(event) => setTemplateId(event.target.value)}
-            >
-              {templates.map((tpl) => (
-                <option key={tpl.id} value={tpl.id}>
-                  {tpl.name}
-                  {tpl.identity ? ` · ${tpl.identity}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
           <textarea
             className="input w-full"
             rows={2}
