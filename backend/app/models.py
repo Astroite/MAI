@@ -598,6 +598,10 @@ class WorldCharacterMemory(Base):
     target_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     content: Mapped[str] = mapped_column(Text)
     salience: Mapped[float] = mapped_column(default=0.5)
+    # Stamped each time the memory is selected into a fresh scene's prompt.
+    # Drives salience decay (rows whose last use is >N scenes back lose
+    # salience). NULL = never used yet.
+    last_used_scene_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
     __table_args__ = (

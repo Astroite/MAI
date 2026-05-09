@@ -27,6 +27,8 @@ from .engine import (
     after_message_appended,
     append_verdict,
     continue_current_phase,
+    decay_unused_memories,
+    enforce_memory_cap,
     estimate_tokens,
     extend_current_phase,
     freeze_room,
@@ -137,8 +139,10 @@ from .schemas import (
     WorldCharacterCreate,
     WorldCharacterMemoryCreate,
     WorldCharacterMemoryOut,
+    WorldCharacterMemoryUpdate,
     WorldCharacterOut,
     WorldCharacterRelationOut,
+    WorldCharacterRelationUpdate,
     WorldCharacterRelationUpsert,
     WorldCharacterUpdate,
     WorldCreate,
@@ -2330,6 +2334,35 @@ async def create_character_memory(
     return memory
 
 
+@app.patch(
+    "/worlds/{world_id}/characters/{character_id}/memories/{memory_id}",
+    response_model=WorldCharacterMemoryOut,
+)
+async def update_character_memory(
+    world_id: str,
+    character_id: str,
+    memory_id: str,
+    body: WorldCharacterMemoryUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Director's manual edit. source_scene_id and audit timestamps are
+    intentionally not editable through this route."""
+    await _get_character_or_404(session, world_id, character_id)
+    memory = await session.get(WorldCharacterMemory, memory_id)
+    if memory is None or memory.world_character_id != character_id:
+        raise HTTPException(404, "memory not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    if "target_character_id" in changes and changes["target_character_id"] is not None:
+        target = await session.get(WorldCharacter, changes["target_character_id"])
+        if target is None or target.world_id != world_id:
+            raise HTTPException(422, "target_character_id not in this world")
+    for field, value in changes.items():
+        setattr(memory, field, value)
+    await session.commit()
+    await session.refresh(memory)
+    return memory
+
+
 @app.delete(
     "/worlds/{world_id}/characters/{character_id}/memories/{memory_id}"
 )
@@ -2424,6 +2457,36 @@ async def upsert_character_relation(
     return relation
 
 
+@app.patch(
+    "/worlds/{world_id}/characters/{character_id}/relations/{target_character_id}",
+    response_model=WorldCharacterRelationOut,
+)
+async def patch_character_relation(
+    world_id: str,
+    character_id: str,
+    target_character_id: str,
+    body: WorldCharacterRelationUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Partial edit on an existing relation card. Use PUT to upsert / replace
+    wholesale; PATCH only touches the fields you send."""
+    await _get_character_or_404(session, world_id, character_id)
+    relation = await session.scalar(
+        select(WorldCharacterRelation).where(
+            WorldCharacterRelation.from_character_id == character_id,
+            WorldCharacterRelation.to_character_id == target_character_id,
+        )
+    )
+    if relation is None:
+        raise HTTPException(404, "relation not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for field, value in changes.items():
+        setattr(relation, field, value)
+    await session.commit()
+    await session.refresh(relation)
+    return relation
+
+
 @app.delete(
     "/worlds/{world_id}/characters/{character_id}/relations/{target_character_id}"
 )
@@ -2456,10 +2519,25 @@ async def delete_character_relation(
 MEMORY_RETRIEVAL_TOP_K = 6
 
 
+# Memories below this salience are "cold storage" — they still exist (the
+# user can always inspect/edit them) but the auto-retrieval path skips them
+# so they don't crowd out actively-relevant items in the prompt.
+MEMORY_COLD_STORAGE_THRESHOLD = 0.05
+
+
 async def _fetch_top_memories(
-    session: AsyncSession, character_id: str, limit: int = MEMORY_RETRIEVAL_TOP_K
+    session: AsyncSession,
+    character_id: str,
+    limit: int = MEMORY_RETRIEVAL_TOP_K,
+    current_scene_index: int | None = None,
 ) -> list[WorldCharacterMemory]:
     """v1 retrieval: top-K by salience desc, then most recent first.
+
+    Skips cold-storage rows (salience < MEMORY_COLD_STORAGE_THRESHOLD) so
+    decayed memories drop out of the active prompt set. When called during
+    scene creation (current_scene_index is non-None), stamps the selected
+    rows' last_used_scene_index — that timestamp gates salience decay so
+    memories the engine still finds useful never decay.
 
     No BM25 / embedding match — that's a v2 enhancement once we feel the
     pain of irrelevant top-K. This still beats the alternative (everything
@@ -2468,7 +2546,10 @@ async def _fetch_top_memories(
     rows = (
         await session.scalars(
             select(WorldCharacterMemory)
-            .where(WorldCharacterMemory.world_character_id == character_id)
+            .where(
+                WorldCharacterMemory.world_character_id == character_id,
+                WorldCharacterMemory.salience >= MEMORY_COLD_STORAGE_THRESHOLD,
+            )
             .order_by(
                 WorldCharacterMemory.salience.desc(),
                 WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
@@ -2477,6 +2558,9 @@ async def _fetch_top_memories(
             .limit(limit)
         )
     ).all()
+    if current_scene_index is not None:
+        for row in rows:
+            row.last_used_scene_index = current_scene_index
     # Re-order chronologically for prompt readability — the model sees a
     # natural timeline rather than a salience-sorted soup.
     return sorted(
@@ -2638,7 +2722,9 @@ async def _create_scene_persona_instance(
     template = await session.get(PersonaTemplate, character.persona_template_id)
     if template is None:
         raise HTTPException(422, f"persona template {character.persona_template_id} not found")
-    memories = await _fetch_top_memories(session, character.id)
+    memories = await _fetch_top_memories(
+        session, character.id, current_scene_index=scene.scene_index
+    )
     relations = await _fetch_relations_to_peers(session, character.id, peer_characters or [])
     composed_prompt = _compose_scene_persona_prompt(
         world, character, scene, memories, relations, peer_characters or []
@@ -3027,12 +3113,14 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     # Hold the sealed_at write so even if the scribe crashes, the seal sticks.
     await session.flush()
     results = await run_scene_memory_scribe(session, scene)
+    decayed = await decay_unused_memories(session, scene)
+    dropped = await enforce_memory_cap(session, scene)
     await trace_record(
         session,
         scene.id,
         "scene_memory_summary",
         "per-character memory scribe completed",
-        {"results": results},
+        {"results": results, "decayed": decayed, "dropped": dropped},
     )
     await session.commit()
     await session.refresh(scene)

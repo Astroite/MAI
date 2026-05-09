@@ -1358,6 +1358,135 @@ async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[st
     return results
 
 
+# --- Memory decay + cap (PR 5) ------------------------------------------
+
+# Memories whose last_used_scene_index is older than this window decay.
+# Backstory rows (kind=backstory) are sacred — the user wrote them and we
+# never touch their salience automatically.
+MEMORY_DECAY_GRACE_SCENES = 3
+MEMORY_DECAY_FACTOR = 0.95
+# Per-character hard cap. Over this we drop the lowest-salience rows. v1 is
+# a hard drop (oldest-first on tie); LLM-summarisation into a single fact
+# row is a v2 enhancement.
+MEMORY_PER_CHARACTER_CAP = 200
+
+
+async def decay_unused_memories(
+    session: AsyncSession, scene: Room
+) -> dict[str, int]:
+    """Multiply salience of stale memories by MEMORY_DECAY_FACTOR.
+
+    A memory is "stale" if either it has never been used (last_used_scene_index
+    IS NULL) AND it was written more than MEMORY_DECAY_GRACE_SCENES ago, OR it
+    has been used but not within the grace window of the current scene_index.
+    Backstory rows are exempt — they're authored content, not LLM output.
+
+    Runs at scene seal so decay is bounded (one pass per scene, deterministic).
+    Returns {character_id: rows_decayed}.
+    """
+    if scene.world_id is None or scene.scene_index is None:
+        return {}
+    threshold_index = scene.scene_index - MEMORY_DECAY_GRACE_SCENES
+    # Limit to characters in this world (rather than the entire DB).
+    char_ids = list(
+        (
+            await session.scalars(
+                select(WorldCharacter.id).where(WorldCharacter.world_id == scene.world_id)
+            )
+        ).all()
+    )
+    if not char_ids:
+        return {}
+    rows = list(
+        (
+            await session.scalars(
+                select(WorldCharacterMemory).where(
+                    WorldCharacterMemory.world_character_id.in_(char_ids),
+                    WorldCharacterMemory.kind != "backstory",
+                )
+            )
+        ).all()
+    )
+    decayed: dict[str, int] = {}
+    for row in rows:
+        # Was it written before the grace window?
+        wrote_idx = row.scene_index_at_write
+        if wrote_idx is not None and wrote_idx > threshold_index:
+            continue
+        used_idx = row.last_used_scene_index
+        if used_idx is not None and used_idx > threshold_index:
+            continue
+        new_salience = row.salience * MEMORY_DECAY_FACTOR
+        # Don't decay below 0.0 (nor below 1e-3 to avoid tiny noise rows).
+        row.salience = max(0.0, new_salience)
+        decayed[row.world_character_id] = decayed.get(row.world_character_id, 0) + 1
+    if decayed:
+        await session.flush()
+    return decayed
+
+
+async def enforce_memory_cap(
+    session: AsyncSession, scene: Room
+) -> dict[str, int]:
+    """Drop the lowest-salience memories per character above MEMORY_PER_CHARACTER_CAP.
+
+    Tie-broken by oldest scene_index_at_write (then created_at). Backstory rows
+    are protected — they don't count toward the cap and are never dropped.
+    Returns {character_id: rows_dropped}.
+
+    v1 is a hard drop. The design doc envisions LLM-summarising the bottom K
+    into a single `kind=fact` row to preserve semantics; that's v2 because
+    summarisation drift is hard to debug and the cap mostly bounds memory
+    bloat in long-running worlds rather than something users will hit fast.
+    """
+    if scene.world_id is None:
+        return {}
+    char_ids = list(
+        (
+            await session.scalars(
+                select(WorldCharacter.id).where(WorldCharacter.world_id == scene.world_id)
+            )
+        ).all()
+    )
+    dropped: dict[str, int] = {}
+    for character_id in char_ids:
+        # Only count non-backstory rows toward the cap.
+        non_backstory_count = await session.scalar(
+            select(func.count(WorldCharacterMemory.id)).where(
+                WorldCharacterMemory.world_character_id == character_id,
+                WorldCharacterMemory.kind != "backstory",
+            )
+        )
+        non_backstory_count = int(non_backstory_count or 0)
+        if non_backstory_count <= MEMORY_PER_CHARACTER_CAP:
+            continue
+        excess = non_backstory_count - MEMORY_PER_CHARACTER_CAP
+        # Drop the worst `excess` rows (lowest salience, then oldest scene).
+        victims = list(
+            (
+                await session.scalars(
+                    select(WorldCharacterMemory)
+                    .where(
+                        WorldCharacterMemory.world_character_id == character_id,
+                        WorldCharacterMemory.kind != "backstory",
+                    )
+                    .order_by(
+                        WorldCharacterMemory.salience.asc(),
+                        WorldCharacterMemory.scene_index_at_write.asc().nulls_first(),
+                        WorldCharacterMemory.created_at.asc(),
+                    )
+                    .limit(excess)
+                )
+            ).all()
+        )
+        for victim in victims:
+            await session.delete(victim)
+        dropped[character_id] = len(victims)
+    if dropped:
+        await session.flush()
+    return dropped
+
+
 async def run_facilitator_eval(
     session: AsyncSession,
     room_id: str,
