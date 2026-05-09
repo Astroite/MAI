@@ -1,17 +1,22 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AlertTriangle,
   ArrowLeft,
   ChevronRight,
   Eye,
+  Layers,
   Lock,
+  Pencil,
   Plus,
   Sparkles,
   Trash2,
   UserPlus,
-  Users
+  Users,
+  X
 } from "lucide-react";
+import * as Dialog from "@radix-ui/react-dialog";
 import { api } from "../api";
 import { PersonaIcon } from "../components/PersonaIcon";
 import { PersonaTemplatePicker } from "../components/PersonaTemplatePicker";
@@ -65,6 +70,7 @@ export function WorldDetailPage() {
   });
 
   const [addingCharacter, setAddingCharacter] = useState(false);
+  const [batchPickerOpen, setBatchPickerOpen] = useState(false);
   const [creatingScene, setCreatingScene] = useState(false);
   const [inspectingScene, setInspectingScene] = useState<SceneTimelineEntry | null>(null);
 
@@ -72,6 +78,46 @@ export function WorldDetailPage() {
     queryKey: ["scene-members", inspectingScene?.id],
     queryFn: () => api.sceneMembers(inspectingScene!.id),
     enabled: Boolean(inspectingScene)
+  });
+
+  // "World has activity" = any sealed scene OR any timeline entry with messages.
+  // Used to decide whether character edits should show a stronger warning
+  // (since the LLM has already produced memories under the old archetype).
+  const worldHasActivity = useMemo(
+    () =>
+      (timeline.data ?? []).some(
+        (scene) => scene.sealed_at !== null || (scene.message_count ?? 0) > 0
+      ),
+    [timeline.data]
+  );
+
+  const queryClient = useQueryClient();
+  const batchAdd = useMutation({
+    mutationFn: async (templates: PersonaTemplate[]) => {
+      // Sequential rather than Promise.all: a 5-character batch hitting
+      // SQLite at the same time can race against the WAL writer; the cost
+      // of going one-by-one is trivial for a UI flow this size.
+      const created: WorldCharacter[] = [];
+      for (const tpl of templates) {
+        const character = await api.createWorldCharacter(worldId, {
+          kind: "ai",
+          name: tpl.name,
+          identity: tpl.identity,
+          brief: tpl.description,
+          persona_template_id: tpl.id,
+          color: tpl.color,
+          icon: tpl.icon
+        });
+        created.push(character);
+      }
+      return created;
+    },
+    onSuccess: (created) => {
+      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
+      toast.success(`已批量添加 ${created.length} 个角色，可点击编辑细节。`);
+      setBatchPickerOpen(false);
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
 
   if (world.isLoading || !world.data) {
@@ -122,14 +168,26 @@ export function WorldDetailPage() {
               <Users size={16} className="text-muted" />
               角色（{activeCharacters.length}）
             </h2>
-            <button
-              type="button"
-              className="btn h-8 px-3 text-xs"
-              onClick={() => setAddingCharacter((value) => !value)}
-            >
-              <UserPlus size={14} />
-              {addingCharacter ? "收起" : "添加角色"}
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                className="btn h-8 px-3 text-xs"
+                onClick={() => setBatchPickerOpen(true)}
+                disabled={batchAdd.isPending}
+                title="一次从多个 Persona 模板批量添加角色"
+              >
+                <Layers size={14} />
+                批量添加
+              </button>
+              <button
+                type="button"
+                className="btn h-8 px-3 text-xs"
+                onClick={() => setAddingCharacter((value) => !value)}
+              >
+                <UserPlus size={14} />
+                {addingCharacter ? "收起" : "添加角色"}
+              </button>
+            </div>
           </div>
           {addingCharacter && (
             <AddCharacterForm
@@ -143,9 +201,23 @@ export function WorldDetailPage() {
               <li className="py-4 text-center text-xs text-muted">还没有角色。</li>
             )}
             {characters.map((character) => (
-              <CharacterRow key={character.id} worldId={worldId} character={character} />
+              <CharacterRow
+                key={character.id}
+                worldId={worldId}
+                character={character}
+                worldHasActivity={worldHasActivity}
+              />
             ))}
           </ul>
+          <PersonaTemplatePicker
+            mode="multi"
+            open={batchPickerOpen}
+            onOpenChange={setBatchPickerOpen}
+            templates={aiTemplates.data ?? []}
+            title="批量从模板添加角色"
+            description="勾选多个 Persona 模板，每个会创建一个新角色（名字默认 = 模板名，可在角色卡上编辑）。"
+            onPickMany={(picked) => batchAdd.mutate(picked)}
+          />
         </section>
 
         <section className="panel space-y-3 p-4">
@@ -249,13 +321,16 @@ export function WorldDetailPage() {
 
 function CharacterRow({
   worldId,
-  character
+  character,
+  worldHasActivity
 }: {
   worldId: string;
   character: WorldCharacter;
+  worldHasActivity: boolean;
 }) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  const [editing, setEditing] = useState(false);
   const remove = useMutation({
     mutationFn: () => api.deleteWorldCharacter(worldId, character.id),
     onSuccess: () => {
@@ -288,24 +363,41 @@ function CharacterRow({
         )}
       </div>
       {character.status === "active" && (
-        <button
-          type="button"
-          className="btn h-7 w-7 px-0 text-muted hover:text-danger"
-          title="退场（保留历史）"
-          onClick={async () => {
-            const ok = await confirm({
-              title: `让「${character.name}」退场？`,
-              description: "角色被标记为 retired，不再出现在新场景的可选名册里，但已存在的记忆和关系卡完整保留。",
-              confirmLabel: "退场",
-              danger: true
-            });
-            if (ok) remove.mutate();
-          }}
-          disabled={remove.isPending}
-        >
-          <Trash2 size={14} />
-        </button>
+        <>
+          <button
+            type="button"
+            className="btn h-7 w-7 px-0 text-muted hover:text-brand"
+            title="编辑角色档案"
+            onClick={() => setEditing(true)}
+          >
+            <Pencil size={13} />
+          </button>
+          <button
+            type="button"
+            className="btn h-7 w-7 px-0 text-muted hover:text-danger"
+            title="退场（保留历史）"
+            onClick={async () => {
+              const ok = await confirm({
+                title: `让「${character.name}」退场？`,
+                description: "角色被标记为 retired，不再出现在新场景的可选名册里，但已存在的记忆和关系卡完整保留。",
+                confirmLabel: "退场",
+                danger: true
+              });
+              if (ok) remove.mutate();
+            }}
+            disabled={remove.isPending}
+          >
+            <Trash2 size={14} />
+          </button>
+        </>
       )}
+      <EditCharacterDialog
+        worldId={worldId}
+        character={character}
+        open={editing}
+        onOpenChange={setEditing}
+        worldHasActivity={worldHasActivity}
+      />
     </li>
   );
 }
@@ -384,38 +476,44 @@ function AddCharacterForm({
     name.trim().length > 0 && (kind === "user" || templateId !== null);
   return (
     <form
-      className="space-y-3 rounded-md border border-dashed border-border p-3"
+      className="space-y-5 rounded-md border border-dashed border-border p-4"
       onSubmit={(event) => {
         event.preventDefault();
         if (!canSubmit) return;
         create.mutate();
       }}
     >
-      <div className="flex gap-1.5 text-xs">
-        <button
-          type="button"
-          className={`rounded px-2 py-1 ${kind === "ai" ? "bg-brand/10 text-brand" : "text-muted"}`}
-          onClick={() => setKind("ai")}
-        >
-          AI 角色
-        </button>
-        <button
-          type="button"
-          className={`rounded px-2 py-1 ${kind === "user" ? "bg-accent/10 text-accent" : "text-muted"}`}
-          onClick={() => setKind("user")}
-        >
-          User 角色（玩家驱动）
-        </button>
-      </div>
-
-      {kind === "ai" && (
-        <div>
-          <label className="text-xs font-medium text-muted">
-            绑定 Persona 模板（决定模型 + 基础 prompt）
-          </label>
+      <FormSection label="角色类型">
+        <div className="flex gap-1.5 text-xs">
           <button
             type="button"
-            className="mt-1 flex w-full items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-left transition hover:border-brand/40"
+            className={`rounded px-3 py-1.5 ${
+              kind === "ai" ? "bg-brand/10 text-brand" : "border border-border text-muted hover:bg-surface"
+            }`}
+            onClick={() => setKind("ai")}
+          >
+            AI 角色
+          </button>
+          <button
+            type="button"
+            className={`rounded px-3 py-1.5 ${
+              kind === "user" ? "bg-accent/10 text-accent" : "border border-border text-muted hover:bg-surface"
+            }`}
+            onClick={() => setKind("user")}
+          >
+            User 角色（玩家驱动）
+          </button>
+        </div>
+      </FormSection>
+
+      {kind === "ai" && (
+        <FormSection
+          label="绑定 Persona 模板"
+          hint="模板决定模型 + 基础 prompt；点击下方卡片可换模板。"
+        >
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-left transition hover:border-brand/40"
             onClick={() => setPickerOpen(true)}
           >
             {selectedTemplate ? (
@@ -423,7 +521,7 @@ function AddCharacterForm({
                 <PersonaIcon
                   icon={selectedTemplate.icon}
                   color={selectedTemplate.color}
-                  size={28}
+                  size={32}
                 />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-medium">{selectedTemplate.name}</div>
@@ -435,7 +533,7 @@ function AddCharacterForm({
               </>
             ) : (
               <>
-                <span className="grid h-7 w-7 place-items-center rounded-full bg-panel text-muted">
+                <span className="grid h-8 w-8 place-items-center rounded-full bg-panel text-muted">
                   ?
                 </span>
                 <span className="text-sm text-muted">点击选择模板…</span>
@@ -449,74 +547,92 @@ function AddCharacterForm({
             selectedId={templateId}
             onPick={applyTemplate}
           />
-        </div>
+        </FormSection>
       )}
 
-      <div className="grid gap-2 sm:grid-cols-2">
-        <input
-          className="input"
-          placeholder="角色名（必填）"
-          value={name}
-          onChange={(event) => {
-            userEdited.current.name = true;
-            setName(event.target.value);
-          }}
-          maxLength={120}
-          required
-        />
-        <input
-          className="input"
-          placeholder="身份/称谓（如：剑客）"
-          value={identity}
-          onChange={(event) => {
-            userEdited.current.identity = true;
-            setIdentity(event.target.value);
-          }}
-          maxLength={120}
-        />
-      </div>
-      <input
-        className="input w-full"
-        placeholder="简介（一句话，每场都进 prompt）"
-        value={brief}
-        onChange={(event) => {
-          userEdited.current.brief = true;
-          setBrief(event.target.value);
-        }}
-      />
+      <FormSection label="基础信息">
+        <div className="space-y-2.5">
+          <LabeledField label="角色名" required>
+            <input
+              className="input w-full"
+              placeholder="例：苏离"
+              value={name}
+              onChange={(event) => {
+                userEdited.current.name = true;
+                setName(event.target.value);
+              }}
+              maxLength={120}
+              required
+            />
+          </LabeledField>
+          <LabeledField label="身份 / 称谓">
+            <input
+              className="input w-full"
+              placeholder="例：剑客 / 客栈老板 / 玄苍门掌门"
+              value={identity}
+              onChange={(event) => {
+                userEdited.current.identity = true;
+                setIdentity(event.target.value);
+              }}
+              maxLength={120}
+            />
+          </LabeledField>
+          <LabeledField label="简介" hint="一句话描述，每场都会进 prompt。">
+            <input
+              className="input w-full"
+              placeholder="例：常年游走江湖，言语不多，剑下少有活口"
+              value={brief}
+              onChange={(event) => {
+                userEdited.current.brief = true;
+                setBrief(event.target.value);
+              }}
+            />
+          </LabeledField>
+        </div>
+      </FormSection>
+
       {kind === "ai" && (
-        <>
-          <textarea
-            className="input w-full"
-            rows={2}
-            placeholder="Core identity（性格、底色，每场都进 prompt）"
-            value={coreIdentity}
-            onChange={(event) => setCoreIdentity(event.target.value)}
-          />
-          <div className="grid gap-2 sm:grid-cols-2">
-            <input
-              className="input"
-              placeholder="技能（自由文本）"
-              value={skillsText}
-              onChange={(event) => setSkillsText(event.target.value)}
-            />
-            <input
-              className="input"
-              placeholder="当前目标"
-              value={goalsText}
-              onChange={(event) => setGoalsText(event.target.value)}
-            />
+        <FormSection
+          label="内核档案"
+          hint="只对 AI 角色生效，每场都进 prompt 引导发言风格。"
+        >
+          <div className="space-y-2.5">
+            <LabeledField label="Core identity" hint="角色的底色与性格。">
+              <textarea
+                className="input w-full"
+                rows={3}
+                placeholder="例：沉默寡言，对承诺极重；少年时曾被门派遗弃，至今不愿提起。"
+                value={coreIdentity}
+                onChange={(event) => setCoreIdentity(event.target.value)}
+              />
+            </LabeledField>
+            <LabeledField label="技能">
+              <input
+                className="input w-full"
+                placeholder="例：一手「断风式」，可以一击两丈"
+                value={skillsText}
+                onChange={(event) => setSkillsText(event.target.value)}
+              />
+            </LabeledField>
+            <LabeledField label="当前目标">
+              <input
+                className="input w-full"
+                placeholder="例：寻找当年仇家，但不愿牵连客栈众人"
+                value={goalsText}
+                onChange={(event) => setGoalsText(event.target.value)}
+              />
+            </LabeledField>
           </div>
-        </>
+        </FormSection>
       )}
-      <div>
-        <label className="text-xs font-medium text-muted">颜色</label>
-        <div className="mt-1 flex flex-wrap gap-1.5">
+
+      <FormSection label="外观色">
+        <div className="flex flex-wrap gap-1.5">
           {PALETTE.map((value) => (
             <button
               key={value}
               type="button"
-              className={`h-6 w-6 rounded-full border-2 transition ${
+              className={`h-7 w-7 rounded-full border-2 transition ${
                 color === value ? "border-text scale-110" : "border-border hover:scale-105"
               }`}
               style={{ background: value }}
@@ -525,20 +641,278 @@ function AddCharacterForm({
             />
           ))}
         </div>
-      </div>
-      <div className="flex justify-end gap-2">
-        <button type="button" className="btn h-8 text-xs" onClick={onDone}>
+      </FormSection>
+
+      <div className="flex justify-end gap-2 border-t border-border pt-3">
+        <button type="button" className="btn" onClick={onDone}>
           取消
         </button>
         <button
           type="submit"
-          className="btn btn-primary h-8 text-xs"
+          className="btn btn-primary"
           disabled={!canSubmit || create.isPending}
         >
-          {create.isPending ? "添加中..." : "添加"}
+          {create.isPending ? "添加中..." : "添加角色"}
         </button>
       </div>
     </form>
+  );
+}
+
+function FormSection({
+  label,
+  hint,
+  children
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-2">
+      <header>
+        <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
+        {hint && <p className="mt-0.5 text-[11px] text-muted">{hint}</p>}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function LabeledField({
+  label,
+  hint,
+  required,
+  children
+}: {
+  label: string;
+  hint?: string;
+  required?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="block text-sm">
+      <span className="text-xs text-muted">
+        {label}
+        {required && <span className="ml-0.5 text-rose-500">*</span>}
+      </span>
+      <div className="mt-1">{children}</div>
+      {hint && <span className="mt-1 block text-[11px] text-muted">{hint}</span>}
+    </label>
+  );
+}
+
+function EditCharacterDialog({
+  worldId,
+  character,
+  open,
+  onOpenChange,
+  worldHasActivity
+}: {
+  worldId: string;
+  character: WorldCharacter;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  worldHasActivity: boolean;
+}) {
+  const queryClient = useQueryClient();
+  const [name, setName] = useState(character.name);
+  const [identity, setIdentity] = useState(character.identity);
+  const [brief, setBrief] = useState(character.brief);
+  const [coreIdentity, setCoreIdentity] = useState(character.core_identity);
+  const [skillsText, setSkillsText] = useState(character.skills_text);
+  const [goalsText, setGoalsText] = useState(character.goals_text);
+  const [color, setColor] = useState(character.color);
+
+  // Reset local state when dialog opens for a different character.
+  useEffect(() => {
+    if (open) {
+      setName(character.name);
+      setIdentity(character.identity);
+      setBrief(character.brief);
+      setCoreIdentity(character.core_identity);
+      setSkillsText(character.skills_text);
+      setGoalsText(character.goals_text);
+      setColor(character.color);
+    }
+  }, [open, character]);
+
+  const update = useMutation({
+    mutationFn: () =>
+      api.updateWorldCharacter(worldId, character.id, {
+        name: name.trim(),
+        identity: identity.trim(),
+        brief: brief.trim(),
+        core_identity: coreIdentity.trim(),
+        skills_text: skillsText.trim(),
+        goals_text: goalsText.trim(),
+        color
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
+      toast.success(`已更新角色「${name.trim() || character.name}」。`);
+      onOpenChange(false);
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
+  });
+
+  const isAi = character.kind === "ai";
+  const canSubmit = name.trim().length > 0;
+
+  return (
+    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-[85vh] w-[92vw] max-w-2xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-panel shadow-soft">
+          <div className="flex items-start justify-between gap-2 border-b border-border px-5 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <PersonaIcon icon={character.icon} color={color} size={36} />
+              <div className="min-w-0">
+                <Dialog.Title className="truncate text-base font-semibold text-text">
+                  编辑角色档案
+                </Dialog.Title>
+                <Dialog.Description className="truncate text-xs text-muted">
+                  {character.name}
+                  {character.identity && `（${character.identity}）`}
+                </Dialog.Description>
+              </div>
+            </div>
+            <Dialog.Close asChild>
+              <button
+                type="button"
+                className="grid h-8 w-8 place-items-center rounded text-muted hover:bg-surface hover:text-text"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </Dialog.Close>
+          </div>
+
+          <form
+            className="mai-scrollbar flex-1 space-y-5 overflow-auto px-5 py-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canSubmit) return;
+              update.mutate();
+            }}
+          >
+            {/* Risk banner — always shown when editing, stronger copy when the
+                world already has sealed scenes or scene messages. */}
+            <div
+              className={`flex gap-2 rounded-md border px-3 py-2 text-xs ${
+                worldHasActivity
+                  ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  : "border-border bg-surface text-muted"
+              }`}
+            >
+              <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <div className="font-medium">
+                  {worldHasActivity ? "本世界已有活跃 / 封幕场景，请慎重" : "修改后立即生效"}
+                </div>
+                <div className="mt-0.5 leading-relaxed">
+                  改动只影响**下一幕**的 prompt，不会回写已经写入的 episodic / 关系卡。已封幕的场景里，AI 留下的记忆是基于旧的角色档案产出的——大幅修改 core identity 可能让前后剧情变得不连贯。
+                </div>
+              </div>
+            </div>
+
+            <FormSection label="基础信息">
+              <div className="space-y-2.5">
+                <LabeledField label="角色名" required>
+                  <input
+                    className="input w-full"
+                    value={name}
+                    onChange={(event) => setName(event.target.value)}
+                    maxLength={120}
+                    required
+                  />
+                </LabeledField>
+                <LabeledField label="身份 / 称谓">
+                  <input
+                    className="input w-full"
+                    value={identity}
+                    onChange={(event) => setIdentity(event.target.value)}
+                    maxLength={120}
+                  />
+                </LabeledField>
+                <LabeledField label="简介" hint="一句话描述，每场都会进 prompt。">
+                  <input
+                    className="input w-full"
+                    value={brief}
+                    onChange={(event) => setBrief(event.target.value)}
+                  />
+                </LabeledField>
+              </div>
+            </FormSection>
+
+            {isAi && (
+              <FormSection
+                label="内核档案"
+                hint="改动 core identity 是影响最大的字段——AI 后续发言风格会以新版本为准。"
+              >
+                <div className="space-y-2.5">
+                  <LabeledField label="Core identity">
+                    <textarea
+                      className="input w-full"
+                      rows={4}
+                      value={coreIdentity}
+                      onChange={(event) => setCoreIdentity(event.target.value)}
+                    />
+                  </LabeledField>
+                  <LabeledField label="技能">
+                    <input
+                      className="input w-full"
+                      value={skillsText}
+                      onChange={(event) => setSkillsText(event.target.value)}
+                    />
+                  </LabeledField>
+                  <LabeledField label="当前目标">
+                    <input
+                      className="input w-full"
+                      value={goalsText}
+                      onChange={(event) => setGoalsText(event.target.value)}
+                    />
+                  </LabeledField>
+                </div>
+              </FormSection>
+            )}
+
+            <FormSection label="外观色">
+              <div className="flex flex-wrap gap-1.5">
+                {PALETTE.map((value) => (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`h-7 w-7 rounded-full border-2 transition ${
+                      color === value ? "border-text scale-110" : "border-border hover:scale-105"
+                    }`}
+                    style={{ background: value }}
+                    onClick={() => setColor(value)}
+                    aria-label={value}
+                  />
+                ))}
+              </div>
+            </FormSection>
+          </form>
+
+          <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+            <Dialog.Close asChild>
+              <button type="button" className="btn">
+                取消
+              </button>
+            </Dialog.Close>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!canSubmit || update.isPending}
+              onClick={() => update.mutate()}
+            >
+              {update.isPending ? "保存中..." : "保存"}
+            </button>
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 

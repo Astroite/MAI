@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { Globe, MessagesSquare, Moon, PanelsTopLeft, Settings, Sun, Workflow, Wrench } from "lucide-react";
+import { Globe, Home, MessagesSquare, Moon, PanelsTopLeft, Settings, Sun, Workflow, Wrench } from "lucide-react";
 import { useUIStore } from "../store";
 import { LanguageToggle, useI18n } from "../i18n";
 
@@ -19,10 +19,16 @@ export function AppRail() {
 
   const entries: RailEntry[] = [
     {
+      to: "/",
+      label: t("nav.rail.home"),
+      icon: <Home size={18} />,
+      matchPrefixes: ["/"]
+    },
+    {
       to: "/dashboard",
       label: t("nav.rail.rooms"),
       icon: <MessagesSquare size={18} />,
-      matchPrefixes: ["/dashboard", "/rooms/", "/"]
+      matchPrefixes: ["/dashboard", "/rooms/"]
     },
     {
       to: "/worlds",
@@ -57,7 +63,7 @@ export function AppRail() {
     >
       <div className="flex h-14 items-center justify-center border-b border-border/80">
         <NavLink
-          to="/dashboard"
+          to="/"
           className="grid h-10 w-10 place-items-center rounded-md bg-brand text-sm font-bold text-white shadow-card max-md:h-8 max-md:w-8"
           title="MAI"
           aria-label="MAI"

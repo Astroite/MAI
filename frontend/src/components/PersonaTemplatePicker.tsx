@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Search, X } from "lucide-react";
+import { Check, Search, X } from "lucide-react";
 import { PersonaIcon } from "./PersonaIcon";
 import type { PersonaTemplate } from "../types";
 
@@ -14,26 +14,55 @@ import type { PersonaTemplate } from "../types";
  * scan identity or read the system prompt before committing. The detail
  * pane lets the user verify "this archetype is what I want" before binding
  * to a World character.
+ *
+ * Two modes:
+ *   - mode="single" (default): single-pick, returns the chosen template via
+ *     `onPick`. Used by the World character editor when binding a single
+ *     persona template.
+ *   - mode="multi": checkbox-driven multi-select. Returns the selection set
+ *     via `onPickMany`. Used to bulk-add World characters from N templates
+ *     in one shot.
  */
-export function PersonaTemplatePicker({
-  open,
-  onOpenChange,
-  templates,
-  selectedId,
-  onPick,
-  title = "选择 Persona 模板",
-  description = "模板决定模型 + 基础人设；选定后可以再编辑角色细节。"
-}: {
+type PickerMode = "single" | "multi";
+
+type PickerProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   templates: PersonaTemplate[];
-  selectedId: string | null;
-  onPick: (template: PersonaTemplate) => void;
   title?: string;
   description?: string;
-}) {
+} & (
+  | {
+      mode?: "single";
+      selectedId: string | null;
+      onPick: (template: PersonaTemplate) => void;
+      onPickMany?: undefined;
+    }
+  | {
+      mode: "multi";
+      selectedId?: undefined;
+      onPick?: undefined;
+      onPickMany: (templates: PersonaTemplate[]) => void;
+    }
+);
+
+export function PersonaTemplatePicker(props: PickerProps) {
+  const {
+    open,
+    onOpenChange,
+    templates,
+    title = "选择 Persona 模板",
+    description = "模板决定模型 + 基础人设；选定后可以再编辑角色细节。"
+  } = props;
+  const mode: PickerMode = props.mode ?? "single";
+  const selectedId: string | null = mode === "single" ? props.selectedId ?? null : null;
+  // Pull the callbacks out so TS doesn't lose narrowing inside JSX handlers.
+  const onPickSingle = mode === "single" ? props.onPick : undefined;
+  const onPickMany = mode === "multi" ? props.onPickMany : undefined;
+
   const [query, setQuery] = useState("");
   const [highlightId, setHighlightId] = useState<string | null>(selectedId);
+  const [multiSelected, setMultiSelected] = useState<Set<string>>(() => new Set());
   const searchRef = useRef<HTMLInputElement>(null);
 
   // Reset preview when opening, and follow externally-changed selection.
@@ -41,11 +70,13 @@ export function PersonaTemplatePicker({
     if (open) {
       setHighlightId(selectedId ?? templates[0]?.id ?? null);
       setQuery("");
+      if (mode === "multi") setMultiSelected(new Set());
       // Slight delay so the dialog is mounted before we steal focus.
       const timer = setTimeout(() => searchRef.current?.focus(), 50);
       return () => clearTimeout(timer);
     }
-  }, [open, selectedId, templates]);
+    return undefined;
+  }, [open, selectedId, templates, mode]);
 
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -119,6 +150,16 @@ export function PersonaTemplatePicker({
                 {filtered.map((tpl) => {
                   const isHighlighted = tpl.id === highlightId;
                   const isSelected = tpl.id === selectedId;
+                  const isChecked = mode === "multi" && multiSelected.has(tpl.id);
+                  const handleRowClick = () => {
+                    setHighlightId(tpl.id);
+                    if (mode === "multi") {
+                      const next = new Set(multiSelected);
+                      if (next.has(tpl.id)) next.delete(tpl.id);
+                      else next.add(tpl.id);
+                      setMultiSelected(next);
+                    }
+                  };
                   return (
                     <li key={tpl.id}>
                       <button
@@ -126,9 +167,19 @@ export function PersonaTemplatePicker({
                         className={`flex w-full items-center gap-2 px-3 py-2 text-left transition ${
                           isHighlighted ? "bg-brand/10" : "hover:bg-surface"
                         }`}
-                        onClick={() => setHighlightId(tpl.id)}
-                        onDoubleClick={() => onPick(tpl)}
+                        onClick={handleRowClick}
+                        onDoubleClick={() => onPickSingle?.(tpl)}
                       >
+                        {mode === "multi" && (
+                          <span
+                            className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${
+                              isChecked ? "border-brand bg-brand text-white" : "border-border"
+                            }`}
+                            aria-hidden
+                          >
+                            {isChecked && <Check size={12} />}
+                          </span>
+                        )}
                         <PersonaIcon icon={tpl.icon} color={tpl.color} size={28} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1">
@@ -225,20 +276,43 @@ export function PersonaTemplatePicker({
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
-            <Dialog.Close asChild>
-              <button type="button" className="btn">
-                取消
-              </button>
-            </Dialog.Close>
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!highlighted}
-              onClick={() => highlighted && onPick(highlighted)}
-            >
-              选中此模板
-            </button>
+          <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
+            {mode === "multi" ? (
+              <span className="text-xs text-muted">
+                已勾选 {multiSelected.size} 个
+              </span>
+            ) : (
+              <span />
+            )}
+            <div className="flex gap-2">
+              <Dialog.Close asChild>
+                <button type="button" className="btn">
+                  取消
+                </button>
+              </Dialog.Close>
+              {mode === "multi" ? (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={multiSelected.size === 0}
+                  onClick={() => {
+                    const picked = templates.filter((tpl) => multiSelected.has(tpl.id));
+                    onPickMany?.(picked);
+                  }}
+                >
+                  添加 {multiSelected.size > 0 ? multiSelected.size : ""} 个角色
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!highlighted}
+                  onClick={() => highlighted && onPickSingle?.(highlighted)}
+                >
+                  选中此模板
+                </button>
+              )}
+            </div>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

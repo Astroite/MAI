@@ -6,6 +6,7 @@ import { api } from "./api";
 import { useUIStore } from "./store";
 import { AppRail } from "./components/AppRail";
 import { DashboardPage } from "./pages/DashboardPage";
+import { HomePage } from "./pages/HomePage";
 import { NewDiscussionPage } from "./pages/NewDiscussionPage";
 import { RoomPage } from "./pages/RoomPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
@@ -40,7 +41,7 @@ export function App() {
           <main className="mai-scrollbar flex-1 overflow-auto">
             <div className="mx-auto w-full max-w-[1500px] px-4 py-5">
               <Routes>
-                <Route path="/" element={<DashboardPage />} />
+                <Route path="/" element={<HomePage />} />
                 <Route path="/dashboard" element={<DashboardPage />} />
                 <Route path="/dashboard/new" element={<NewDiscussionPage />} />
                 <Route path="/templates/:kind" element={<TemplatesPage />} />

@@ -72,14 +72,25 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
     }
   };
 
-  // Top-level rooms (not subrooms) sorted by created_at desc.
-  const topLevel = useMemo(
-    () =>
-      [...(rooms.data ?? [])]
-        .filter((room) => !room.parent_room_id)
-        .sort((a, b) => (a.created_at < b.created_at ? 1 : -1)),
-    [rooms.data]
-  );
+  // Detect whether the active room is a Story World scene. If so, the sidebar
+  // shows the same world's scenes ordered by scene_index (so the user can flip
+  // between acts without leaving the chat shell). Otherwise it shows ordinary
+  // discussion rooms only — Scene rooms have their own home in /worlds/:id.
+  const activeRoom = (rooms.data ?? []).find((r) => r.id === activeRoomId);
+  const activeWorldId = activeRoom?.world_id ?? null;
+
+  // Top-level rooms (not subrooms), filtered by Scene-vs-discussion context.
+  const topLevel = useMemo(() => {
+    const all = (rooms.data ?? []).filter((room) => !room.parent_room_id);
+    if (activeWorldId) {
+      return all
+        .filter((room) => room.world_id === activeWorldId)
+        .sort((a, b) => (a.scene_index ?? 0) - (b.scene_index ?? 0));
+    }
+    return all
+      .filter((room) => !room.world_id)
+      .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+  }, [rooms.data, activeWorldId]);
   const childrenByParent = useMemo(() => {
     const map = new Map<string, Room[]>();
     for (const room of rooms.data ?? []) {
@@ -121,15 +132,29 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
             placeholder={t("room.searchRooms")}
           />
         </div>
-        <button
-          type="button"
-          className="btn btn-primary h-9 w-full justify-between px-3"
-          title={t("dashboard.newRoom")}
-          onClick={() => setCreating((value) => !value)}
-        >
-          <span>{t("dashboard.newRoom")}</span>
-          <Plus size={16} />
-        </button>
+        {activeWorldId ? (
+          // In a Scene we don't offer "new discussion room" — scene creation
+          // is the world page's job, and mixing the two is what made users
+          // confused in the first place.
+          <NavLink
+            to={`/worlds/${activeWorldId}`}
+            className="btn h-9 w-full justify-between px-3"
+            title="返回世界"
+          >
+            <span>返回世界</span>
+            <CornerDownRight size={14} />
+          </NavLink>
+        ) : (
+          <button
+            type="button"
+            className="btn btn-primary h-9 w-full justify-between px-3"
+            title={t("dashboard.newRoom")}
+            onClick={() => setCreating((value) => !value)}
+          >
+            <span>{t("dashboard.newRoom")}</span>
+            <Plus size={16} />
+          </button>
+        )}
       </div>
       {creating && (
         <div className="space-y-2 border-b border-border/80 bg-surface p-3">
@@ -157,12 +182,16 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       )}
       <div className="mai-scrollbar min-h-0 flex-1 overflow-auto p-3">
         <div className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-muted">
-          <span>{t("room.allRooms")}</span>
+          <span>{activeWorldId ? "本世界场景" : t("room.allRooms")}</span>
           <span>{visibleTopLevel.length}</span>
         </div>
         {visibleTopLevel.length === 0 && (
           <div className="px-2 py-6 text-center text-sm text-muted">
-            {t("dashboard.emptyRooms")} <Plus size={12} className="inline" /> {t("common.create")}
+            {activeWorldId ? (
+              <>本世界尚无场景。回到世界页面创建第一幕。</>
+            ) : (
+              <>{t("dashboard.emptyRooms")} <Plus size={12} className="inline" /> {t("common.create")}</>
+            )}
           </div>
         )}
         {visibleTopLevel.map((room) => {

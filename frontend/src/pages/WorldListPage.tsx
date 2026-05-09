@@ -64,22 +64,23 @@ export function WorldListPage() {
 
         {creating && <CreateWorldForm onDone={() => setCreating(false)} />}
 
-        <div className="panel divide-y divide-border">
-          {(worlds.data ?? []).map((world) => (
-            <WorldRow key={world.id} world={world} />
-          ))}
-          {worlds.data && worlds.data.length === 0 && !creating && (
-            <div className="px-6 py-10 text-center text-sm text-muted">
-              <p>还没有世界。点击右上角「新建世界」开始。</p>
-            </div>
-          )}
-        </div>
+        {worlds.data && worlds.data.length === 0 && !creating ? (
+          <div className="panel px-6 py-10 text-center text-sm text-muted">
+            <p>还没有世界。点击右上角「新建世界」开始。</p>
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {(worlds.data ?? []).map((world) => (
+              <WorldCard key={world.id} world={world} />
+            ))}
+          </div>
+        )}
       </section>
     </div>
   );
 }
 
-function WorldRow({ world }: { world: WorldSummary }) {
+function WorldCard({ world }: { world: WorldSummary }) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const remove = useMutation({
@@ -96,32 +97,41 @@ function WorldRow({ world }: { world: WorldSummary }) {
     : "尚无场景";
 
   return (
-    <div className="flex items-center justify-between gap-4 px-4 py-3 transition hover:bg-surface">
-      <Link to={`/worlds/${world.id}`} className="flex min-w-0 flex-1 items-center gap-3">
-        <span
-          aria-hidden
-          className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-lg text-white"
-          style={{ background: world.cover_color }}
-        >
-          <Sparkles size={18} />
-        </span>
-        <div className="min-w-0">
-          <div className="truncate font-medium">{world.name}</div>
-          <div className="mt-1 truncate text-xs text-muted">
-            {world.synopsis || "（暂无简介）"}
+    <div className="group relative overflow-hidden rounded-lg border border-border bg-panel shadow-card transition hover:border-brand/60 hover:shadow-soft">
+      <span
+        aria-hidden
+        className="absolute inset-y-0 left-0 w-1"
+        style={{ backgroundColor: world.cover_color }}
+      />
+      <Link to={`/worlds/${world.id}`} className="block px-4 py-3 pl-5">
+        <div className="flex items-start gap-3">
+          <span
+            aria-hidden
+            className="grid h-10 w-10 flex-shrink-0 place-items-center rounded-lg text-white"
+            style={{ background: world.cover_color }}
+          >
+            <Sparkles size={18} />
+          </span>
+          <div className="min-w-0 flex-1">
+            <h3 className="line-clamp-1 text-sm font-semibold leading-snug">{world.name}</h3>
+            <p className="mt-1 line-clamp-2 text-xs text-muted">
+              {world.synopsis || "（暂无简介）"}
+            </p>
           </div>
-          <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
-            <span>角色 {world.character_count}</span>
-            <span>场景 {world.scene_count}</span>
-            <span>最近活动 {last}</span>
-          </div>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+          <span>角色 {world.character_count}</span>
+          <span>场景 {world.scene_count}</span>
+          <span className="ml-auto truncate">{last}</span>
         </div>
       </Link>
       <button
-        className="btn h-8 w-8 px-0 text-muted hover:text-danger"
+        className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500"
         type="button"
         title="删除世界"
-        onClick={async () => {
+        onClick={async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
           const ok = await confirm({
             title: `删除世界「${world.name}」？`,
             description: "会级联删除所有角色和场景，包括所有积累的记忆和关系卡。此操作不可逆。",
@@ -131,8 +141,9 @@ function WorldRow({ world }: { world: WorldSummary }) {
           if (ok) remove.mutate();
         }}
         disabled={remove.isPending}
+        aria-label={`删除世界 ${world.name}`}
       >
-        <Trash2 size={16} />
+        <Trash2 size={14} />
       </button>
     </div>
   );

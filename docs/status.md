@@ -295,3 +295,4 @@ pnpm build
 - 做一次完整桌面安装包 smoke test。
 - 如果要公开分发，再补隐私说明和 API key 本地存储说明。
 - 接入真实 MCP server 做端到端兼容性测试，优先覆盖 streamable_http。
+- **Story World 关系图（TODO）**：基于 `world_character_relations`（A→B 单向卡片）+ 角色档案，做一个直观的关系网络视图。形态待定——可能是侧栏弹出的力导向图，也可能是 World 页内的一栏；要能按 sentiment 着色、按 label 过滤、点节点跳到角色档案。等用户对 PR 4 的关系卡片用熟之后再开工。
