@@ -6,6 +6,22 @@ from app.engine import ACTIVE_CALLS, pick_next_speaker
 from app.models import Message, PersonaInstance, Room, RoomRuntimeState
 
 
+def _wait_for_ai_message(client, room_id, *, after_count: int, timeout: float = 30.0) -> list:
+    """Poll /state until at least one new ai-authored message appears."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        messages = client.get(f"/rooms/{room_id}/state").json()["messages"]
+        ai_messages = [m for m in messages if m["author_actual"] == "ai"]
+        if len(ai_messages) > after_count:
+            return ai_messages
+        time.sleep(0.1)
+    return [
+        m
+        for m in client.get(f"/rooms/{room_id}/state").json()["messages"]
+        if m["author_actual"] == "ai"
+    ]
+
+
 def _instance_ids_by_template(client, room_id: str) -> dict[str, str]:
     return {
         p["template_id"]: p["id"]
@@ -129,6 +145,110 @@ def test_freeze_cancels_active_turn(client, review_format, architect_persona):
 
     state = client.get(f"/rooms/{room_id}/state").json()
     assert state["room"]["status"] == "frozen"
+
+
+def test_autodrive_user_message_triggers_persona_reply(
+    client, roundtable_format, discussant_personas
+):
+    speakers = discussant_personas[:2]
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive happy",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [p["id"] for p in speakers],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_ids = {
+        instance["id"]
+        for instance in room["personas"]
+        if instance["template_id"] in {p["id"] for p in speakers}
+    }
+
+    before = len([m for m in room["messages"] if m["author_actual"] == "ai"])
+    post = client.post(f"/rooms/{room_id}/messages", json={"content": "请大家自我介绍一下当前关注点。"})
+    assert post.status_code == 200
+
+    ai_messages = _wait_for_ai_message(client, room_id, after_count=before)
+    assert len(ai_messages) > before, "autodrive should produce at least one persona reply"
+    assert ai_messages[-1]["author_persona_id"] in speaker_instance_ids
+
+
+def test_autodrive_does_not_recurse_on_persona_reply(
+    client, roundtable_format, discussant_personas
+):
+    """A single user message must produce at most one autodrive round, never N or infinite."""
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive non-recurse",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [p["id"] for p in discussant_personas[:3]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+
+    before = len([m for m in room["messages"] if m["author_actual"] == "ai"])
+    assert client.post(
+        f"/rooms/{room_id}/messages",
+        json={"content": "开始第一轮发言。"},
+    ).status_code == 200
+
+    ai_messages = _wait_for_ai_message(client, room_id, after_count=before, timeout=30.0)
+    assert len(ai_messages) == before + 1, (
+        f"expected exactly 1 autodrive reply, got {len(ai_messages) - before}"
+    )
+
+    # Real LLM is slow enough that any ghost follow-up would land within a few
+    # seconds. Wait long enough that a rogue chain would complete.
+    time.sleep(8.0)
+    ai_messages_after = [
+        m for m in client.get(f"/rooms/{room_id}/state").json()["messages"]
+        if m["author_actual"] == "ai"
+    ]
+    assert len(ai_messages_after) == before + 1, "autodrive must not chain on its own reply"
+
+
+def test_autodrive_mention_driven_fallback(client, discussant_personas):
+    """Default `open` phase uses mention_driven; without @, fall back to round-robin."""
+    speakers = discussant_personas[:2]
+    # No format_id => default `open` phase => mention_driven ordering.
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest mention fallback",
+            "persona_ids": [p["id"] for p in speakers],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    instance_map = {p["template_id"]: p["id"] for p in room["personas"]}
+
+    before = len([m for m in room["messages"] if m["author_actual"] == "ai"])
+    # No @-mention: should still produce a reply via round-robin fallback.
+    assert client.post(
+        f"/rooms/{room_id}/messages",
+        json={"content": "请你们开始讨论。"},
+    ).status_code == 200
+    ai_messages = _wait_for_ai_message(client, room_id, after_count=before)
+    assert len(ai_messages) > before, "mention_driven should fall back to round-robin"
+
+    # Wait for the autodrive lock to release before the next post.
+    time.sleep(1.0)
+
+    # @-mentioned: the named persona must be the next speaker.
+    target = speakers[1]
+    target_instance_id = instance_map[target["id"]]
+    before2 = len(ai_messages)
+    assert client.post(
+        f"/rooms/{room_id}/messages",
+        json={"content": f"@{target['name']} 你怎么看？"},
+    ).status_code == 200
+    ai_messages2 = _wait_for_ai_message(client, room_id, after_count=before2)
+    assert len(ai_messages2) > before2
+    assert ai_messages2[-1]["author_persona_id"] == target_instance_id, (
+        f"expected @{target['name']} to speak, got persona {ai_messages2[-1]['author_persona_id']}"
+    )
 
 
 def test_autodrive_short_circuits_when_frozen(
