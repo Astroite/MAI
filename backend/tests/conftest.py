@@ -110,7 +110,9 @@ def discussant_personas(client):
 
 @pytest.fixture
 def architect_persona(discussant_personas):
-    return next(item for item in discussant_personas if item["name"] == "架构师")
+    # `name` is the persona's person-name (e.g. "陆知谦") since the
+    # name/identity split; `identity` is the role label tests want to find.
+    return next(item for item in discussant_personas if item["identity"] == "架构师")
 
 
 def room_instance_id_for_template(client, room_id: str, template_id: str) -> str:
