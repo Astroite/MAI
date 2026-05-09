@@ -3,6 +3,8 @@
 > 这份文档记录系统当前自带的 AI 人设，并提出一个面向「人间百面」的两级分类，用来引导后续人设库扩充的方向。
 >
 > 内置人设来源：`backend/app/seed.py::BUILTIN_PERSONAS`（共 12 项 = 10 个 discussant + 1 个 scribe + 1 个 facilitator）。
+>
+> 每个人设都带 `color`（十六进制主题色）和 `icon`（lucide 图标名）。前端 `frontend/src/components/PersonaIcon.tsx` 维护可用图标的白名单，新增图标时必须同步 `backend/app/schemas.py::PERSONA_ICON_NAMES` —— `PersonaDraftEnvelope` 用这个枚举校验 AI 起草输出的 icon 字段。
 
 ## 1. 分类原则
 
@@ -266,16 +268,17 @@
 
 新增内置人设按下面几条走：
 
-1. **在 `backend/app/seed.py::BUILTIN_PERSONAS` 追加条目**。`key` 一旦发布就不可改（用 UUIDv5 派生 id）；想替换内容只能换 key。
-2. **温度梯度**遵循当前现有的：
+1. **在 `backend/app/seed.py::BUILTIN_PERSONAS` 追加条目**。`key` 一旦发布就不可改（用 UUIDv5 派生 id）；想替换内容只能换 key 或写一次性数据迁移（参考 `migrate_seed_story_mode.py`）。
+2. **必须配 `color` + `icon`**。`color` 用十六进制（如 `#22c55e`），从现有调色板里挑；`icon` 必须是 `schemas.PERSONA_ICON_NAMES` / `PersonaIcon.tsx` 白名单里的 lucide 名。新图标先扩枚举再用，否则前端显示 fallback。
+3. **温度梯度**遵循当前现有的：
    - 收敛 / 审计型：0.30–0.40
    - 平衡 / 综合型：0.45–0.55
    - 发散 / 探索型：0.65–0.80
-3. **system_prompt 要写出能在讨论里产生交锋的姿态**，不要只是"你是 X，请回答用户问题"。参考现有的"你是反方律师。你要强制寻找反例、隐藏假设和失败路径，但必须给出证据或可验证判断。"
-4. **标签**第一项必须是 `builtin`，第二项是一级分类的英文 slug（`workplace` / `civic` / `daily` / `learning` / `creative` / `playful` / `meta`），后面再放细分标签。
-5. **参数化模板**（`*_template` 后缀）是个新机制：复制后让用户填一个学科 / 流派 / 类型变量。需要在 PersonaTemplate 上新增一个 `parameter_slots: list[VariableDeclaration]` 字段。这是结构性改动，要单独评估。
-6. **避开真实人物角色扮演**。原型、流派、虚构身份可以，"扮演鲁迅 / 巴菲特"不行——这条直接写进新增人设的 review 标准。
-7. **日常 / 健康类**人设的 system prompt 必须包含"在涉及健康 / 法律 / 财务的关键决策时建议咨询专业人士"的兜底。
+4. **system_prompt 要写出能在讨论里产生交锋的姿态**，不要只是"你是 X，请回答用户问题"。参考现有的"你是反方律师。你要强制寻找反例、隐藏假设和失败路径，但必须给出证据或可验证判断。"
+5. **标签**第一项必须是 `builtin`，第二项是一级分类的英文 slug（`workplace` / `civic` / `daily` / `learning` / `creative` / `playful` / `meta`），后面再放细分标签。
+6. **参数化模板**（`*_template` 后缀）是个新机制：复制后让用户填一个学科 / 流派 / 类型变量。需要在 PersonaTemplate 上新增一个 `parameter_slots: list[VariableDeclaration]` 字段。这是结构性改动，要单独评估。
+7. **避开真实人物角色扮演**。原型、流派、虚构身份可以，"扮演鲁迅 / 巴菲特"不行——这条直接写进新增人设的 review 标准。
+8. **日常 / 健康类**人设的 system prompt 必须包含"在涉及健康 / 法律 / 财务的关键决策时建议咨询专业人士"的兜底。
 
 ---
 

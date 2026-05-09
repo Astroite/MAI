@@ -4,12 +4,14 @@ MAI 是一个本地优先的多模型协作讨论工具：用户创建讨论室�
 
 当前形态已经从早期原型收敛为：
 
-- FastAPI 单进程后端，默认 SQLite，本地文件即可运行；PostgreSQL 仍可通过 `DATABASE_URL` 启用。
+- FastAPI 单进程后端，默认 SQLite（已开启 WAL + 长 busy_timeout），本地文件即可运行；PostgreSQL 仍可通过 `DATABASE_URL` 启用。
 - Vite + React + TypeScript 前端，支持中英文切换、暗色模式、Markdown/KaTeX/Shiki 渲染。
 - Tauri v2 桌面壳，使用 PyInstaller sidecar 自动启动后端。
-- LiteLLM 统一模型调用。API 配置两层：Provider（LiteLLM 路由 + 凭据）和 Model（具体可选模型）。
-- 模板系统已稳定：内置模板只读；用户点击“添加”时从内置库复制一份可编辑实例；人设、阶段、赛制、配方页里的卡片都按可编辑实例管理。
-- 新增能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、场景化一键开房、模板 AI 起草。
+- LiteLLM 统一模型调用。API 配置两层：Provider（LiteLLM 路由 + 凭据）和 Model（具体可选模型）。`complete_tool` 三档降级覆盖 `deepseek-reasoner` 一类不支持强制 `tool_choice` 的模型，并自动还原 MiMo / OpenRouter 部分通道双重编码的 tool 参数。
+- 模板系统已稳定：内置模板只读；用户点击"添加"时从内置库复制一份可编辑实例；人设、阶段、赛制、配方页里的卡片都按可编辑实例管理。每个人设携带主题色 + 图标，贯穿卡片、消息气泡和状态条。
+- 多 AI peer 路由：在多角色房间里，每个 AI 只把自己的过去发言看作 `assistant`，其他人的发言改写为 `user` + `「Name」: ` 前缀，避免出现"全知叙述者"退化。
+- 故事模式：单 phase 持续接力的内置 phase + format，AI 一直按角色演下去直到用户喊停；房间消息列表上方的发言状态条实时显示 frozen / speaking / scheduling / idle 4 态。
+- 新增能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、场景化一键开房、模板 AI 起草（`PersonaDraftEnvelope` 严格 schema）。
 
 ## 快速开始
 

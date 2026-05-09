@@ -78,6 +78,9 @@ AI 不是 free-running。`pick_next_speaker` 根据当前阶段的 `ordering_rul
 | `migrate_personas.py` | legacy persona 表拆分到 template/instance |
 | `migrate_settings.py` | 默认 API 设置迁移 |
 | `migrate_api_models.py` | legacy provider/model 数据迁移到 `api_models` |
+| `migrate_drop_vendor.py` | 移除 `ApiProvider.vendor` 旧字段 |
+| `migrate_seed_story_mode.py` | 老 dev DB 补建故事模式 phase + format（按 builtin_id 幂等插入） |
+| `migrate_story_mode_v2.py` | 同步 builtin 故事模式 phase 的 role_constraints / prompt_template |
 | `llm.py` | LiteLLM stream 与 tool-call 包装 |
 | `tools.py` | 内置工具、MCP server 同步、工具调用记录与事件发布 |
 | `event_bus.py` | 进程内 SSE pub/sub |
@@ -182,6 +185,10 @@ persona_instance.api_model_id
 - account daily/monthly budget
 - phase exit suggestion 状态
 - consecutive AI turn 计数
+- `autodrive_active`：autodrive 链是否正在跑（由 `is_autodrive_active(room_id)` 实时填充，不持久化）
+- `current_speakers`：当前 in-flight 调用的 persona id 列表（包括 LLM 已调用但还没产出第一个 chunk 的瞬间）
+
+`PersonaTemplate` / `PersonaInstance` 上额外携带 `color`（`#rrggbb`）和 `icon`（lucide 图标名，必须从 `schemas.PERSONA_ICON_NAMES` 枚举里挑），用于前端 `PersonaIcon` 组件渲染头像和状态条着色。
 
 ### 4.4 工具与 MCP
 
@@ -248,6 +255,15 @@ SQLite 使用 JSON，PostgreSQL 使用 JSONB。
 - `migrate_personas`
 - `migrate_settings`
 - `migrate_api_models`
+- `migrate_drop_vendor`
+- `migrate_seed_story_mode`
+- `migrate_story_mode_v2`
+
+SQLite 连接初始化（`db.py` 内 listener）会执行：
+
+- `PRAGMA journal_mode=WAL`
+- `PRAGMA synchronous=NORMAL`（WAL 推荐级别，crash-safe 不变；写性能比默认 FULL 快 5–10×）
+- `PRAGMA busy_timeout=15000`（autodrive 取消信号要等 LLM 流读完当前 chunk，5 秒不够）
 
 新增已存在表的列时，需要：
 
@@ -266,7 +282,19 @@ SQLite 使用 JSON，PostgreSQL 使用 JSONB。
 3. 触发 autodrive。
 4. 发布 SSE / invalidate 所需事件。
 
-用户消息、问题、回答、文档、群友发言等会触发 autodrive。AI 消息不会递归触发下一轮。
+用户消息、问题、回答、文档、群友发言等会触发 autodrive。AI 消息不会递归触发下一轮。autodrive 进入 `_autodrive_runner` 后通过 `_should_auto_discuss` 决定是否再来一轮：
+
+- `frozen` / `auto_discuss=False` / 已达 `max_consecutive_ai_turns` / phase 退出 → 停。
+- `casual` ordering 默认按 `0.9 × 0.85^n` 几何衰减，链长期望 2–3 轮。
+- **phase tags 含 `story` 时跳过几何衰减**：故事模式持续接力，由 `consecutive_ai_turns` 上限、token 预算或用户冻结收尾。
+
+用户也能通过 `POST /rooms/{id}/autodrive/resume` 在不发消息的情况下手动启动一次 autodrive 链（背后调 `engine.schedule_autodrive`）。
+
+### 6.1.1 多 AI peer 路由
+
+`llm.py::_build_messages` 在历史消息送进 LLM 前做角色重写：当前发言人自己的过去发言保留 `assistant`，其他 AI/用户的发言重写为 `user` 并加 `「Name」: ` 前缀。多人房间下系统提示里追加一段「你只是『X』一个人」的硬约束。引擎从 `PersonaInstance` 拉名字组成 `peer_names: dict[id, name]` 传给 `stream` / `complete_with_tools`。这个改动是为了避免多 AI 房间所有发言都被当事 AI 当成"自己之前的输出"，从而退化成一个全知叙述者声音。
+
+casual ordering 自带的 `<silent/>` 逃生口也按 phase tag 分支：`casual_chat` 保留「没话说就 `<silent/>`」默认；`story` 标签下改为「即便没大新闻，也用一句台词或动作维持存在感，只有真无可演时才 silent」。
 
 ### 6.2 阶段生命周期
 
@@ -321,7 +349,7 @@ SQLite 使用 JSON，PostgreSQL 使用 JSONB。
 
 chunk 空闲超时默认 30 秒，记录为 `truncated_reason="timeout"`。
 
-### 6.5 Freeze
+### 6.5 Freeze 与删除
 
 冻结流程：
 
@@ -330,6 +358,18 @@ chunk 空闲超时默认 30 秒，记录为 `truncated_reason="timeout"`。
 3. partial 保存为 truncated message。
 4. 写 room snapshot。
 5. 发布 `room.frozen`。
+
+`InFlightCall.cancel()` 只是 fire-and-forget 给 task 发 `CancelledError`；信号要等 task 走到下一个 await（通常是 LLM 流的下一个 chunk）才生效。所以 `delete_room` 在调用 cancel 之后会 `asyncio.gather(*tasks, return_exceptions=True)` 等所有被取消的 task 真正退出，再开始 DELETE，避免和后台任务的写事务抢 SQLite 写锁。
+
+### 6.6 LLM 调用兼容性
+
+`LLMAdapter.complete_tool` 三档降级：
+
+1. 首选 `tool_choice={"type":"function", "function":{"name":...}}`。
+2. 命中"tool_choice 不支持"类 400（如 `deepseek-reasoner`）时，重试 `tool_choice="auto"` 并在 user message 加强「只调用一次此函数」的指令。
+3. 如果模型仍未发出 tool call，丢弃 tools 改用纯 JSON 模式，把 schema 拼进 system prompt。
+
+`_parse_tool_arguments` 会剥 ```` ```json ```` 围栏、切到首个 `{`/末个 `}`；`_unstring_nested` 递归还原嵌套 JSON 字符串字段（MiMo 和部分 OpenRouter 中转会双重编码 tool 参数里的对象/数组）。
 
 ## 7. 系统角色
 
@@ -384,15 +424,19 @@ chunk 空闲超时默认 30 秒，记录为 `truncated_reason="timeout"`。
 
 `frontend/src/pages/room/RoomShell.tsx` 组合三栏：
 
-- `RoomListSidebar`
-- `MessageList` + `Composer`
-- `MembersSidebar`
+- `RoomListSidebar`：房间卡片列表（不再是窄长条）。每张卡片显示主题色条、最多 4 个 `PersonaIcon` 成员头像 + `+N` chip、消息计数、相对时间。数据来自 `/rooms` 返回的 `RoomSummaryOut`，4 条 SQL 聚合无 N+1。
+- `MessageList` + `Composer` + `SpeakerStateBar`（消息列表上方，4 态状态条 frozen / speaking / scheduling / idle，跟随当前发言人主题色着色，并在 idle 态提供「让 AI 继续」按钮调 `/autodrive/resume`）。
+- `RightPanel`：成员摘要 + 多 panel 抽屉。
 
 设置抽屉和右栏 panel 位于：
 
 ```text
 frontend/src/pages/room/panels/
 ```
+
+API 配置页（`/templates/api`）：每张 provider 卡片可点击就地展开，左半栏 API 配置 / 右半栏挂载在该 provider 下的模型列表 + 模型编辑器；不再有右侧固定 380 px 编辑面板。`+ 新建` 在列表顶部插入一张 draft 卡。
+
+Dashboard 首次使用引导是三个水平节点（API → 人设 → 房间），之间有 progress 连接线，done / next / upcoming 三态着色。
 
 新增房间侧功能时，优先扩展这些 panel，而不是把逻辑塞进 `RoomPage.tsx`。
 
@@ -403,6 +447,8 @@ frontend/src/pages/room/panels/
 - `message.streaming`：直接更新 Zustand streaming buffer。
 - `message.appended` / room / phase / scribe / facilitator 事件：invalidate 对应 TanStack Query。
 - `message.cancelled`：清理 streaming buffer 并刷新房间。
+
+invalidate 走 250 ms 去抖（`scheduleInvalidate`）：autodrive 链一次能在几秒内 burst 多个事件，去抖后多次合并成 1 次 `/state` refetch，避免后台被淹。
 
 断线后，`GET /rooms/{id}/state` 会返回 `in_flight_partial`，前端用 `message_id` 和 `chunk_index` 去重恢复。
 
@@ -455,13 +501,20 @@ UI 文案和内部枚举显示应使用 i18n；用户内容和模板数据本身
 场景与模板助手：
 
 - `GET /scenarios`
-- `POST /assistants/template-draft`
+- `POST /assistants/template-draft`（persona 类型走严格 `PersonaDraftEnvelope` schema：name 2-24 / description 8-140 / system_prompt 30-600 / temperature 0-1.2 / talkativeness 0-3 / color hex / icon 枚举 / tags ≤ 5；非 persona 类型保留宽松 dict 结构）
 
-房间状态新增：
+房间运行时与发言状态：
 
+- `POST /rooms/{room_id}/autodrive/resume`：手动启动 autodrive 链（已在跑或有 in-flight 调用时 no-op）
+- `RoomRuntimeOut.autodrive_active` / `current_speakers`
 - `RoomCreate.initial_message`
 - `MessageOut.tool_invocation`
 - `RoomState.tool_invocations`
+
+房间列表：
+
+- `GET /rooms` 返回 `RoomSummaryOut[]`（继承 `RoomOut`，多出 `members[]` / `member_count` / `message_count` / `last_activity_at`，全部 4 条 SQL 聚合，no N+1）
+- `RoomMemberPreview { id, name, color, icon }`：sidebar 卡片头像渲染需要的最小字段集
 
 ## 10. 内置数据
 

@@ -1,6 +1,6 @@
 # 项目进度与状态快照
 
-> 最近更新：2026-05-08
+> 最近更新：2026-05-09
 > 基线文档：`product_design.md` / `technical_design.md`
 
 ## 1. 总览
@@ -10,7 +10,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 创建房间。
 - 选择配方、赛制和人设。
 - 配置 API provider 与模型。
-- 多 persona 按 phase 规则发言。
+- 多 persona 按 phase 规则发言（含多 AI peer 路由，避免叙述者声音串味）。
 - 书记官折叠状态。
 - 主持信号提示节奏。
 - 裁决、撤销、死路标记。
@@ -20,7 +20,11 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 模板编辑与内置模板复制。
 - 工具与 MCP server 注册、同步、调用审计。
 - 场景化开房和初始问题预填。
-- 人设模板 AI 起草。
+- 人设模板 AI 起草（`PersonaDraftEnvelope` 严格 schema + provider 兼容降级）。
+- 故事模式：单 phase 持续接力，可一键让 AI 自动演剧情。
+- 房间发言状态条：实时显示 frozen / speaking / scheduling / idle，含「让 AI 继续」按钮。
+- 人设主题色 + 图标系统（贯穿卡片、状态条、消息气泡）。
+- 房间侧边栏卡片化，一眼看见成员头像和活跃度。
 - 中英文界面切换。
 - Tauri 桌面壳打包。
 
@@ -108,6 +112,45 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 工具调用可视化：`tool_invocation` 消息进入消息流，并在右侧工具面板显示最近调用。
 - 场景化开房：首页场景卡片预填标题、初始问题、赛制或配方。
 - 模板起草助手：人设编辑器可用自然语言填入可编辑草稿。
+
+### 3.5 故事模式与多 AI 协演
+
+- 新增内置 phase `story_mode` + format `story_format`，casual ordering、`auto_discuss=True`、仅 `user_manual` 退出。
+- `story` 标签的 phase 跳过 casual 几何衰减：`_should_auto_discuss` 让 AI 持续接力，由 `max_consecutive_ai_turns`、token 预算或冻结收尾。
+- 同标签 phase 改写 silent 提示：原 casual_chat 的"没话就 silent"换成"用一句台词或动作维持存在感"，避免一房间全部 `<silent/>`。
+- `llm.py::_build_messages` 加入多 AI peer 路由：当前发言人之外的角色历史发言改写成 `user` + `「Name」: ` 前缀，并向 system prompt 注入"你只是 X 一个人"硬约束，根治"剑客代写刀客台词"那种全知叙述者退化。
+- `engine.py` 新增 `is_autodrive_active` / `schedule_autodrive`；`POST /rooms/{id}/autodrive/resume` 端点让用户不发消息也能让 AI 接力。
+- `RoomRuntimeOut` 暴露 `autodrive_active` 和 `current_speakers`，前端 `SpeakerStateBar` 据此显示 4 态。
+
+### 3.6 人设主题色与视觉一致性
+
+- `PersonaTemplate` / `PersonaInstance` 新增 `color`（hex）/ `icon`（lucide 名）字段，自愈列 `_ADDED_COLUMNS` 覆盖老库。
+- 12 个内置人设全部配上独特主题色（架构师=蓝、性能=橙、安全=红、反方=深红、研究=紫……）。
+- `frontend/src/components/PersonaIcon.tsx`：24 图标 + 15 色板的统一渲染，与后端 `schemas.PERSONA_ICON_NAMES` 严格对齐。
+- 人设卡片 / 头像 / 房间状态条 / 消息气泡都跟随同一主题色脉络。
+
+### 3.7 LLM 调用兼容性
+
+- `complete_tool` 三档降级：forced → auto + nudge → no-tools JSON 模式，覆盖 `deepseek-reasoner` 类不支持强制 tool_choice 的 provider。
+- `_unstring_nested` 递归还原嵌套 JSON 字符串字段，处理 MiMo / 部分 OpenRouter 中转的双重编码。
+- `PersonaDraftEnvelope` 给人设起草加严格 schema：name 长度、prompt 长度、color hex 正则、icon 枚举、温度范围全约束；错误不再吞，502 直接显示给 UI。
+
+### 3.8 SQLite 与运行时稳定性
+
+- `synchronous=NORMAL` + `busy_timeout=15000` 替换默认。
+- `delete_room` / `freeze_room` 取消 in-flight 调用后会 `asyncio.gather` 等任务真正退出，再开始 DELETE，根治"database is locked"。
+- 前端 SSE invalidate 加 250 ms 去抖，autodrive burst 不会刷爆 `/state`。
+
+### 3.9 视觉与交互整理
+
+- 房间卡片化侧边栏：`/rooms` 返回 `RoomSummaryOut`（成员预览 + 计数 + 最近活跃），sidebar 显示主题色条 + 4 头像叠加 + 消息数 + 相对时间。
+- Dashboard 三步水平节点引导：done / next / upcoming 三态，连接线变绿表示推进。
+- API 配置卡片就地展开：去掉右侧 380 px aside，每张 provider 卡片点击展开后左 API 配置 / 右模型管理。
+- 模板页人设卡片重组：左侧主题色条 + 图标头像 + hover-only 操作；编辑表单常用字段直显，外观/AI 起稿/高级设置折叠。
+
+### 3.10 配置项
+
+- 后端 dev 端口由 `8000` 改为 `47821`（高位、不撞常见 dev 服务、避开 Windows 临时端口池）。同步更新 vite proxy / dev script / 全部文档。
 
 ## 4. 后端完成点
 
