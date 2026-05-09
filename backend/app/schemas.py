@@ -1012,6 +1012,7 @@ class FacilitatorSignalOut(APIModel):
 
 class UploadOut(APIModel):
     id: str
+    room_id: str | None = None
     filename: str
     content_type: str
     extracted_text: str

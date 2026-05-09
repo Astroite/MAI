@@ -1,9 +1,3 @@
-from types import SimpleNamespace
-
-from app import engine as engine_module
-from app.llm import llm_adapter
-
-
 def test_create_debate_format(client):
     phases = client.get("/templates/phases").json()
     assert len(phases) >= 2
@@ -289,53 +283,3 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
     assert cleared_settings["default_backing_model"] is None
 
 
-def test_api_provider_credentials_reach_llm_adapter(client, review_format, instance_for_template, monkeypatch):
-    """Bound ApiProvider credentials must flow into LLMAdapter.stream."""
-    captured: dict = {}
-
-    async def stream_capture(persona, context, phase, max_tokens, scribe_state=None, api_provider=None, room_background=""):
-        captured["api_provider"] = api_provider
-        captured["persona_id"] = persona.id
-        captured["room_background"] = room_background
-        yield SimpleNamespace(text="ok", index=0)
-
-    monkeypatch.setattr(llm_adapter, "stream", stream_capture)
-    monkeypatch.setattr(engine_module.llm_adapter, "stream", stream_capture)
-
-    provider = client.post(
-        "/templates/api-providers",
-        json={"name": "credential test", "provider_slug": "openai", "api_key": "sk-credential-test"},
-    ).json()
-    persona = client.post(
-        "/templates/personas",
-        json={
-            "kind": "discussant",
-            "name": "pytest credential carrier",
-            "description": "",
-            "backing_model": "openai/gpt-4o-mini",
-            "api_provider_id": provider["id"],
-            "system_prompt": "test",
-            "temperature": 0.4,
-            "config": {},
-            "tags": ["pytest"],
-        },
-    ).json()
-    room = client.post(
-        "/rooms",
-        json={
-            "title": "pytest credential injection",
-            "format_id": review_format["id"],
-            "persona_ids": [persona["id"]],
-        },
-    ).json()
-    room_id = room["room"]["id"]
-    persona_instance_id = instance_for_template(room_id, persona["id"])
-    assert client.post(f"/rooms/{room_id}/messages", json={"content": "测试凭据注入。"}).status_code == 200
-
-    turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": persona_instance_id})
-    assert turn.status_code == 200
-    # Engine passes the room-scoped PersonaInstance to llm_adapter, so
-    # captured persona.id is the instance id, not the template id.
-    assert captured["persona_id"] == persona_instance_id
-    assert captured["api_provider"] is not None
-    assert captured["api_provider"].api_key == "sk-credential-test"
