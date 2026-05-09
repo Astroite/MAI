@@ -65,6 +65,7 @@ from .models import (
     World,
     WorldCharacter,
     WorldCharacterMemory,
+    WorldCharacterRelation,
     WorldSceneMember,
 )
 from .schemas import (
@@ -137,6 +138,8 @@ from .schemas import (
     WorldCharacterMemoryCreate,
     WorldCharacterMemoryOut,
     WorldCharacterOut,
+    WorldCharacterRelationOut,
+    WorldCharacterRelationUpsert,
     WorldCharacterUpdate,
     WorldCreate,
     WorldDetailOut,
@@ -2345,6 +2348,105 @@ async def delete_character_memory(
     return {"status": "deleted"}
 
 
+# --- Relationship cards -------------------------------------------------
+
+
+@app.get(
+    "/worlds/{world_id}/characters/{character_id}/relations",
+    response_model=list[WorldCharacterRelationOut],
+)
+async def list_character_relations(
+    world_id: str,
+    character_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """All outgoing relation cards owned by `character_id` (this character's
+    view of others). Sentiment is the running scribe-driven scalar; notes is
+    accumulated free text."""
+    await _get_character_or_404(session, world_id, character_id)
+    rows = (
+        await session.scalars(
+            select(WorldCharacterRelation)
+            .where(WorldCharacterRelation.from_character_id == character_id)
+            .order_by(WorldCharacterRelation.updated_at.desc())
+        )
+    ).all()
+    return rows
+
+
+@app.put(
+    "/worlds/{world_id}/characters/{character_id}/relations/{target_character_id}",
+    response_model=WorldCharacterRelationOut,
+)
+async def upsert_character_relation(
+    world_id: str,
+    character_id: str,
+    target_character_id: str,
+    body: WorldCharacterRelationUpsert,
+    session: AsyncSession = Depends(get_session),
+):
+    """Manual director write — replace the user-editable fields wholesale.
+
+    The LLM scribe goes through the engine helper instead so it can
+    incrementally accumulate sentiment/notes across scenes.
+    """
+    if character_id == target_character_id:
+        raise HTTPException(422, "a character cannot have a relation to themselves")
+    from_char = await _get_character_or_404(session, world_id, character_id)
+    target = await session.get(WorldCharacter, target_character_id)
+    if target is None or target.world_id != world_id:
+        raise HTTPException(422, "target character not in this world")
+    if from_char.kind != "ai":
+        # User characters don't own outgoing rows; the human user IS their memory.
+        raise HTTPException(409, "only ai characters maintain outgoing relations")
+    relation = await session.scalar(
+        select(WorldCharacterRelation).where(
+            WorldCharacterRelation.from_character_id == character_id,
+            WorldCharacterRelation.to_character_id == target_character_id,
+        )
+    )
+    if relation is None:
+        relation = WorldCharacterRelation(
+            id=new_id(),
+            from_character_id=character_id,
+            to_character_id=target_character_id,
+            label=body.label,
+            sentiment=body.sentiment,
+            notes=body.notes,
+        )
+        session.add(relation)
+    else:
+        relation.label = body.label
+        relation.sentiment = body.sentiment
+        relation.notes = body.notes
+    await session.commit()
+    await session.refresh(relation)
+    return relation
+
+
+@app.delete(
+    "/worlds/{world_id}/characters/{character_id}/relations/{target_character_id}"
+)
+async def delete_character_relation(
+    world_id: str,
+    character_id: str,
+    target_character_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    await _get_character_or_404(session, world_id, character_id)
+    relation = await session.scalar(
+        select(WorldCharacterRelation).where(
+            WorldCharacterRelation.from_character_id == character_id,
+            WorldCharacterRelation.to_character_id == target_character_id,
+        )
+    )
+    if relation is None:
+        raise HTTPException(404, "relation not found")
+    await session.delete(relation)
+    await session.commit()
+    return {"status": "deleted"}
+
+
 # --- Scenes (Rooms within a World) --------------------------------------
 
 
@@ -2405,11 +2507,57 @@ def _format_memory_line(memory: WorldCharacterMemory) -> str:
     return f"- [{kind_label}]{prefix} {memory.content.strip()}"
 
 
+async def _fetch_relations_to_peers(
+    session: AsyncSession,
+    character_id: str,
+    peers: list[WorldCharacter],
+) -> dict[str, WorldCharacterRelation]:
+    """Pull relation cards FROM `character_id` TO each peer in `peers`.
+    Returns {peer_id: relation}. Peers without a card are simply absent."""
+    peer_ids = [p.id for p in peers if p.id != character_id]
+    if not peer_ids:
+        return {}
+    rows = (
+        await session.scalars(
+            select(WorldCharacterRelation).where(
+                WorldCharacterRelation.from_character_id == character_id,
+                WorldCharacterRelation.to_character_id.in_(peer_ids),
+            )
+        )
+    ).all()
+    return {row.to_character_id: row for row in rows}
+
+
+def _format_relation_line(peer: WorldCharacter, relation: WorldCharacterRelation) -> str:
+    """One bullet under '## 你和在场角色的关系'."""
+    label = relation.label.strip() or "（未命名关系）"
+    sentiment = relation.sentiment
+    # Crude sentiment glyph so the model has an at-a-glance signal alongside
+    # the textual notes. -1 hostile … +1 close.
+    if sentiment >= 0.5:
+        marker = "❤"
+    elif sentiment >= 0.1:
+        marker = "+"
+    elif sentiment <= -0.5:
+        marker = "✕"
+    elif sentiment <= -0.1:
+        marker = "-"
+    else:
+        marker = "·"
+    notes = relation.notes.strip()
+    head = f"- 对「{peer.name}」: {label} [{marker} {sentiment:+.2f}]"
+    if notes:
+        return f"{head}\n  {notes}"
+    return head
+
+
 def _compose_scene_persona_prompt(
     world: World,
     character: WorldCharacter,
     scene: Room,
     memories: list[WorldCharacterMemory] | None = None,
+    relations: dict[str, WorldCharacterRelation] | None = None,
+    peers: list[WorldCharacter] | None = None,
 ) -> str:
     """Bake World + character context into the persona's system_prompt at
     PersonaInstance creation time.
@@ -2449,6 +2597,16 @@ def _compose_scene_persona_prompt(
     if memories:
         memory_lines = [_format_memory_line(m) for m in memories]
         parts.append("## 你记得的事\n" + "\n".join(memory_lines))
+    # Relationships block — only for peers actually on stage in this scene.
+    relation_map = relations or {}
+    if peers and relation_map:
+        relation_lines = [
+            _format_relation_line(peer, relation_map[peer.id])
+            for peer in peers
+            if peer.id != character.id and peer.id in relation_map
+        ]
+        if relation_lines:
+            parts.append("## 你和在场角色的关系\n" + "\n".join(relation_lines))
     # Scene block (time + background hints)
     scene_lines: list[str] = []
     if scene.in_world_time_start.strip():
@@ -2468,6 +2626,7 @@ async def _create_scene_persona_instance(
     world: World,
     character: WorldCharacter,
     next_position: int,
+    peer_characters: list[WorldCharacter] | None = None,
 ) -> PersonaInstance:
     """Snapshot a WorldCharacter (kind=ai) into a PersonaInstance for the scene.
     Mirrors `_create_persona_instances` but pulls from the bound PersonaTemplate
@@ -2480,7 +2639,10 @@ async def _create_scene_persona_instance(
     if template is None:
         raise HTTPException(422, f"persona template {character.persona_template_id} not found")
     memories = await _fetch_top_memories(session, character.id)
-    composed_prompt = _compose_scene_persona_prompt(world, character, scene, memories)
+    relations = await _fetch_relations_to_peers(session, character.id, peer_characters or [])
+    composed_prompt = _compose_scene_persona_prompt(
+        world, character, scene, memories, relations, peer_characters or []
+    )
     full_prompt = template.system_prompt
     if composed_prompt:
         full_prompt = f"{template.system_prompt}\n\n{composed_prompt}"
@@ -2605,10 +2767,12 @@ async def create_scene(
             )
         )
     ) or 0
+    all_roster_chars = [character for _, character in resolved_members]
     for entry, character in resolved_members:
         if character.kind == "ai":
             await _create_scene_persona_instance(
-                session, scene, world, character, int(next_position)
+                session, scene, world, character, int(next_position),
+                peer_characters=all_roster_chars,
             )
             next_position = int(next_position) + 1
         # Roster row for both kinds — entered_at_message_id NULL = on stage from open.
@@ -2752,8 +2916,22 @@ async def scene_enter(
                 )
             )
         ) or 0
+        # Gather currently on-stage peers so the late-joiner's prompt sees the
+        # right relationship cards.
+        peer_chars = (
+            await session.scalars(
+                select(WorldCharacter)
+                .join(WorldSceneMember, WorldSceneMember.world_character_id == WorldCharacter.id)
+                .where(
+                    WorldSceneMember.scene_id == scene.id,
+                    WorldSceneMember.exited_at_message_id.is_(None),
+                    WorldCharacter.id != character.id,
+                )
+            )
+        ).all()
         await _create_scene_persona_instance(
-            session, scene, world, character, int(next_position)
+            session, scene, world, character, int(next_position),
+            peer_characters=list(peer_chars),
         )
     member = WorldSceneMember(
         scene_id=scene.id,

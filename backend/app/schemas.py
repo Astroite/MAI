@@ -1306,9 +1306,54 @@ class MemoryEntryDraft(APIModel):
 class MemoryDistillation(APIModel):
     """Tool-call output for run_scene_memory_scribe.
 
-    v1 only writes new episodes/vows. Impressions become relationship-card
-    updates in PR 4 (different table). skill_changes is a v2 placeholder.
+    Episodes/vows go into world_character_memories. Impressions become updates
+    on the per-pair WorldCharacterRelation card (PR 4); the engine merges
+    sentiment_delta into the existing card and appends notes_append. Each
+    impression must target a peer who was on stage with this character.
     """
 
     new_episodes: list[MemoryEntryDraft] = Field(default_factory=list)
+    impressions: list["RelationImpression"] = Field(default_factory=list)
     reasoning: str = Field(default="", max_length=400)
+
+
+class RelationImpression(APIModel):
+    """One relationship-card update the LLM proposes during scene seal."""
+
+    about_character_id: str
+    sentiment_delta: float = Field(default=0.0, ge=-1.0, le=1.0)
+    label: str | None = Field(default=None, max_length=64)
+    notes_append: str = Field(default="", max_length=400)
+
+
+# --- Relationship card CRUD ---------------------------------------------
+
+
+class WorldCharacterRelationOut(APIModel):
+    id: str
+    from_character_id: str
+    to_character_id: str
+    label: str = ""
+    sentiment: float = 0.0
+    notes: str = ""
+    last_updated_scene_id: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorldCharacterRelationUpsert(APIModel):
+    """Create-or-replace a relation card (manual director path).
+
+    The LLM scribe doesn't go through this — it modifies cards directly via
+    the engine helper so it can apply incremental sentiment_delta and notes
+    accumulation. The manual route always replaces the row's user-editable
+    fields wholesale.
+    """
+
+    label: str = Field(default="", max_length=64)
+    sentiment: float = Field(default=0.0, ge=-1.0, le=1.0)
+    notes: str = Field(default="", max_length=2000)
+
+
+# Resolve the forward reference in MemoryDistillation.
+MemoryDistillation.model_rebuild()

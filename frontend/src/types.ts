@@ -542,3 +542,21 @@ export interface WorldCharacterMemoryCreateBody {
   in_world_time_at_event?: string;
   target_character_id?: string | null;
 }
+
+export interface WorldCharacterRelation {
+  id: string;
+  from_character_id: string;
+  to_character_id: string;
+  label: string;
+  sentiment: number;
+  notes: string;
+  last_updated_scene_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorldCharacterRelationUpsertBody {
+  label?: string;
+  sentiment?: number;
+  notes?: string;
+}
