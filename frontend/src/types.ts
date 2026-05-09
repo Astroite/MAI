@@ -351,3 +351,106 @@ export interface StreamingEvent {
   chunk_text?: string;
   chunk_index?: number;
 }
+
+// --- Story World ---------------------------------------------------------
+
+export type WorldCharacterKind = "ai" | "user";
+export type WorldCharacterStatus = "active" | "retired";
+export type WorldStatus = "active" | "archived";
+
+export interface WorldCharacter {
+  id: string;
+  world_id: string;
+  kind: WorldCharacterKind;
+  name: string;
+  identity: string;
+  brief: string;
+  persona_template_id: string | null;
+  persona_template_version: number | null;
+  backing_overrides: Record<string, unknown>;
+  color: string;
+  icon: string;
+  core_identity: string;
+  skills_text: string;
+  goals_text: string;
+  status: WorldCharacterStatus;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface World {
+  id: string;
+  owner_user_id: string | null;
+  name: string;
+  synopsis: string;
+  setting: string;
+  calendar_hint: string;
+  cover_color: string;
+  cover_icon: string;
+  status: WorldStatus;
+  config: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorldDetail extends World {
+  characters: WorldCharacter[];
+}
+
+export interface WorldSummary extends World {
+  character_count: number;
+  scene_count: number;
+  last_activity_at: string | null;
+}
+
+export interface WorldCreateBody {
+  name: string;
+  synopsis?: string;
+  setting?: string;
+  calendar_hint?: string;
+  cover_color?: string;
+  cover_icon?: string;
+  config?: Record<string, unknown>;
+}
+
+export interface WorldUpdateBody {
+  name?: string;
+  synopsis?: string;
+  setting?: string;
+  calendar_hint?: string;
+  cover_color?: string;
+  cover_icon?: string;
+  status?: WorldStatus;
+  config?: Record<string, unknown>;
+}
+
+export interface WorldCharacterCreateBody {
+  kind: WorldCharacterKind;
+  name: string;
+  identity?: string;
+  brief?: string;
+  persona_template_id?: string | null;
+  backing_overrides?: Record<string, unknown>;
+  color?: string;
+  icon?: string;
+  core_identity?: string;
+  skills_text?: string;
+  goals_text?: string;
+  config?: Record<string, unknown>;
+}
+
+export interface WorldCharacterUpdateBody {
+  name?: string;
+  identity?: string;
+  brief?: string;
+  persona_template_id?: string | null;
+  backing_overrides?: Record<string, unknown>;
+  color?: string;
+  icon?: string;
+  core_identity?: string;
+  skills_text?: string;
+  goals_text?: string;
+  status?: WorldCharacterStatus;
+  config?: Record<string, unknown>;
+}
