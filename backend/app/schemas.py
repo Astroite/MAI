@@ -826,6 +826,7 @@ class RoomRuntimeOut(APIModel):
     phase_exit_suppressed_after_message_id: str | None = None
     consecutive_ai_turns: int = 0
     max_consecutive_ai_turns: int = 10
+    phase_extra_rounds: int = 0
     # True while the autodrive task loop is actively scheduling turns.
     # Surfaced to the UI so the speaker-status strip can distinguish
     # "AI is taking next turn" from "waiting for user".
