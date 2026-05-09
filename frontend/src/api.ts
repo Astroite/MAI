@@ -14,10 +14,29 @@ import type {
   Room,
   RoomState,
   Scenario,
+  SceneCreateBody,
+  SceneEnterBody,
+  SceneExitBody,
+  SceneTimelineEntry,
   TemplateDraft,
   ToolInvocation,
   ToolSchema,
-  ToolServer
+  ToolServer,
+  World,
+  WorldCharacter,
+  WorldCharacterCreateBody,
+  WorldCharacterMemory,
+  WorldCharacterMemoryCreateBody,
+  WorldCharacterMemoryUpdateBody,
+  WorldCharacterRelation,
+  WorldCharacterRelationUpdateBody,
+  WorldCharacterRelationUpsertBody,
+  WorldCharacterUpdateBody,
+  WorldCreateBody,
+  WorldDetail,
+  WorldSceneMember,
+  WorldSummary,
+  WorldUpdateBody
 } from "./types";
 
 declare global {
@@ -319,7 +338,113 @@ export const api = {
       unresolved?: string[];
       artifacts_ref?: Record<string, unknown>;
     }
-  ) => request<{ status: string; merge_back_id: string }>(`/rooms/${roomId}/merge_back`, { method: "POST", body: JSON.stringify(body) })
+  ) => request<{ status: string; merge_back_id: string }>(`/rooms/${roomId}/merge_back`, { method: "POST", body: JSON.stringify(body) }),
+
+  // --- Story World ---------------------------------------------------------
+  worlds: () => request<WorldSummary[]>("/worlds"),
+  world: (worldId: string) => request<WorldDetail>(`/worlds/${worldId}`),
+  createWorld: (body: WorldCreateBody) =>
+    request<WorldDetail>("/worlds", { method: "POST", body: JSON.stringify(body) }),
+  updateWorld: (worldId: string, body: WorldUpdateBody) =>
+    request<WorldDetail>(`/worlds/${worldId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteWorld: (worldId: string) =>
+    request<{ status: string }>(`/worlds/${worldId}`, { method: "DELETE" }),
+
+  worldCharacter: (worldId: string, characterId: string) =>
+    request<WorldCharacter>(`/worlds/${worldId}/characters/${characterId}`),
+  createWorldCharacter: (worldId: string, body: WorldCharacterCreateBody) =>
+    request<WorldCharacter>(`/worlds/${worldId}/characters`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  updateWorldCharacter: (worldId: string, characterId: string, body: WorldCharacterUpdateBody) =>
+    request<WorldCharacter>(`/worlds/${worldId}/characters/${characterId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  deleteWorldCharacter: (worldId: string, characterId: string) =>
+    request<WorldCharacter>(`/worlds/${worldId}/characters/${characterId}`, { method: "DELETE" }),
+
+  characterMemories: (worldId: string, characterId: string) =>
+    request<WorldCharacterMemory[]>(
+      `/worlds/${worldId}/characters/${characterId}/memories`
+    ),
+  createCharacterMemory: (
+    worldId: string,
+    characterId: string,
+    body: WorldCharacterMemoryCreateBody
+  ) =>
+    request<WorldCharacterMemory>(
+      `/worlds/${worldId}/characters/${characterId}/memories`,
+      { method: "POST", body: JSON.stringify(body) }
+    ),
+  updateCharacterMemory: (
+    worldId: string,
+    characterId: string,
+    memoryId: string,
+    body: WorldCharacterMemoryUpdateBody
+  ) =>
+    request<WorldCharacterMemory>(
+      `/worlds/${worldId}/characters/${characterId}/memories/${memoryId}`,
+      { method: "PATCH", body: JSON.stringify(body) }
+    ),
+  deleteCharacterMemory: (worldId: string, characterId: string, memoryId: string) =>
+    request<{ status: string }>(
+      `/worlds/${worldId}/characters/${characterId}/memories/${memoryId}`,
+      { method: "DELETE" }
+    ),
+
+  characterRelations: (worldId: string, characterId: string) =>
+    request<WorldCharacterRelation[]>(
+      `/worlds/${worldId}/characters/${characterId}/relations`
+    ),
+  upsertCharacterRelation: (
+    worldId: string,
+    characterId: string,
+    targetCharacterId: string,
+    body: WorldCharacterRelationUpsertBody
+  ) =>
+    request<WorldCharacterRelation>(
+      `/worlds/${worldId}/characters/${characterId}/relations/${targetCharacterId}`,
+      { method: "PUT", body: JSON.stringify(body) }
+    ),
+  patchCharacterRelation: (
+    worldId: string,
+    characterId: string,
+    targetCharacterId: string,
+    body: WorldCharacterRelationUpdateBody
+  ) =>
+    request<WorldCharacterRelation>(
+      `/worlds/${worldId}/characters/${characterId}/relations/${targetCharacterId}`,
+      { method: "PATCH", body: JSON.stringify(body) }
+    ),
+  deleteCharacterRelation: (worldId: string, characterId: string, targetCharacterId: string) =>
+    request<{ status: string }>(
+      `/worlds/${worldId}/characters/${characterId}/relations/${targetCharacterId}`,
+      { method: "DELETE" }
+    ),
+
+  worldTimeline: (worldId: string) =>
+    request<SceneTimelineEntry[]>(`/worlds/${worldId}/timeline`),
+  createScene: (worldId: string, body: SceneCreateBody) =>
+    request<RoomState>(`/worlds/${worldId}/scenes`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  sealScene: (roomId: string) =>
+    request<Room>(`/rooms/${roomId}/seal`, { method: "POST" }),
+  sceneMembers: (roomId: string) =>
+    request<WorldSceneMember[]>(`/rooms/${roomId}/scene/members`),
+  sceneEnter: (roomId: string, body: SceneEnterBody) =>
+    request<WorldSceneMember>(`/rooms/${roomId}/scene/enter`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  sceneExit: (roomId: string, body: SceneExitBody) =>
+    request<WorldSceneMember>(`/rooms/${roomId}/scene/exit`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    })
 };
 
 export { API_BASE };

@@ -11,6 +11,8 @@ import { RoomPage } from "./pages/RoomPage";
 import { TemplatesPage } from "./pages/TemplatesPage";
 import { ToolsPage } from "./pages/ToolsPage";
 import { SettingsPage } from "./pages/SettingsPage";
+import { WorldListPage } from "./pages/WorldListPage";
+import { WorldDetailPage } from "./pages/WorldDetailPage";
 import { useI18n } from "./i18n";
 
 export function App() {
@@ -44,6 +46,8 @@ export function App() {
                 <Route path="/templates/:kind" element={<TemplatesPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/tools" element={<ToolsPage />} />
+                <Route path="/worlds" element={<WorldListPage />} />
+                <Route path="/worlds/:worldId" element={<WorldDetailPage />} />
               </Routes>
             </div>
           </main>

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { NavLink, useLocation } from "react-router-dom";
-import { MessagesSquare, Moon, PanelsTopLeft, Settings, Sun, Workflow, Wrench } from "lucide-react";
+import { Globe, MessagesSquare, Moon, PanelsTopLeft, Settings, Sun, Workflow, Wrench } from "lucide-react";
 import { useUIStore } from "../store";
 import { LanguageToggle, useI18n } from "../i18n";
 
@@ -23,6 +23,12 @@ export function AppRail() {
       label: t("nav.rail.rooms"),
       icon: <MessagesSquare size={18} />,
       matchPrefixes: ["/dashboard", "/rooms/", "/"]
+    },
+    {
+      to: "/worlds",
+      label: t("nav.rail.worlds"),
+      icon: <Globe size={18} />,
+      matchPrefixes: ["/worlds"]
     },
     {
       to: "/templates/personas",
