@@ -586,80 +586,110 @@ RECIPE_DEFS: list[dict] = [
 ]
 
 
+async def _existing_builtin_ids(session: AsyncSession, model, ids: list[str]) -> set[str]:
+    if not ids:
+        return set()
+    rows = (await session.scalars(select(model.id).where(model.id.in_(ids)))).all()
+    return set(rows)
+
+
 async def seed_builtins(session: AsyncSession) -> None:
-    existing_persona = await session.scalar(select(PersonaTemplate.id).limit(1))
-    if existing_persona is None:
-        for data in BUILTIN_PERSONAS:
-            item = data.copy()
-            key = item.pop("key")
-            version = item.pop("version", 1)
-            session.add(
-                PersonaTemplate(
-                    id=builtin_id("persona", key),
-                    version=version,
-                    schema_version=1,
-                    status="published",
-                    is_builtin=True,
-                    config=item.pop("config", {}),
-                    **item,
-                )
-            )
+    """Insert built-in templates that aren't already present.
 
-    existing_phase = await session.scalar(select(PhaseTemplate.id).limit(1))
-    if existing_phase is None:
-        for key, data in PHASES.items():
-            session.add(
-                PhaseTemplate(
-                    id=builtin_id("phase", key),
-                    version=1,
-                    schema_version=1,
-                    status="published",
-                    is_builtin=True,
-                    **data,
-                )
-            )
+    Per-row idempotent (keyed by deterministic builtin_id), not table-level.
+    The earlier "table empty" gate broke once any migration pre-inserted a
+    single built-in row inside `create_schema` — `seed_builtins` would then
+    skip every other built-in. Per-row checks make seeding compose cleanly
+    with one-shot migrations like `migrate_seed_story_mode`.
+    """
 
-    existing_format = await session.scalar(select(DebateFormat.id).limit(1))
-    if existing_format is None:
-        for data in FORMAT_DEFS:
-            phase_sequence = [
-                {
-                    "phase_template_id": builtin_id("phase", phase_key),
-                    "phase_template_version": 1,
-                    "transitions": _transition(),
-                }
-                for phase_key in data["phases"]
-            ]
-            session.add(
-                DebateFormat(
-                    id=builtin_id("format", data["key"]),
-                    version=1,
-                    schema_version=1,
-                    status="published",
-                    is_builtin=True,
-                    name=data["name"],
-                    description=data["description"],
-                    phase_sequence=phase_sequence,
-                    tags=data["tags"],
-                )
+    persona_ids = [builtin_id("persona", item["key"]) for item in BUILTIN_PERSONAS]
+    have_personas = await _existing_builtin_ids(session, PersonaTemplate, persona_ids)
+    for data in BUILTIN_PERSONAS:
+        item = data.copy()
+        key = item.pop("key")
+        pid = builtin_id("persona", key)
+        if pid in have_personas:
+            continue
+        version = item.pop("version", 1)
+        session.add(
+            PersonaTemplate(
+                id=pid,
+                version=version,
+                schema_version=1,
+                status="published",
+                is_builtin=True,
+                config=item.pop("config", {}),
+                **item,
             )
-    existing_recipe = await session.scalar(select(Recipe.id).limit(1))
-    if existing_recipe is None:
-        for data in RECIPE_DEFS:
-            session.add(
-                Recipe(
-                    id=builtin_id("recipe", data["key"]),
-                    version=1,
-                    schema_version=1,
-                    status="published",
-                    is_builtin=True,
-                    name=data["name"],
-                    description=data["description"],
-                    persona_ids=[builtin_id("persona", key) for key in data["personas"]],
-                    format_id=builtin_id("format", data["format"]),
-                    format_version=1,
-                    initial_settings=data["initial_settings"],
-                    tags=data["tags"],
-                )
+        )
+
+    phase_ids = [builtin_id("phase", key) for key in PHASES]
+    have_phases = await _existing_builtin_ids(session, PhaseTemplate, phase_ids)
+    for key, data in PHASES.items():
+        pid = builtin_id("phase", key)
+        if pid in have_phases:
+            continue
+        session.add(
+            PhaseTemplate(
+                id=pid,
+                version=1,
+                schema_version=1,
+                status="published",
+                is_builtin=True,
+                **data,
             )
+        )
+
+    format_ids = [builtin_id("format", item["key"]) for item in FORMAT_DEFS]
+    have_formats = await _existing_builtin_ids(session, DebateFormat, format_ids)
+    for data in FORMAT_DEFS:
+        fid = builtin_id("format", data["key"])
+        if fid in have_formats:
+            continue
+        phase_sequence = [
+            {
+                "phase_template_id": builtin_id("phase", phase_key),
+                "phase_template_version": 1,
+                "transitions": _transition(),
+            }
+            for phase_key in data["phases"]
+        ]
+        session.add(
+            DebateFormat(
+                id=fid,
+                version=1,
+                schema_version=1,
+                status="published",
+                is_builtin=True,
+                name=data["name"],
+                description=data["description"],
+                phase_sequence=phase_sequence,
+                tags=data["tags"],
+            )
+        )
+
+    recipe_ids = [builtin_id("recipe", item["key"]) for item in RECIPE_DEFS]
+    have_recipes = await _existing_builtin_ids(session, Recipe, recipe_ids)
+    for data in RECIPE_DEFS:
+        rid = builtin_id("recipe", data["key"])
+        if rid in have_recipes:
+            continue
+        session.add(
+            Recipe(
+                id=rid,
+                version=1,
+                schema_version=1,
+                status="published",
+                is_builtin=True,
+                name=data["name"],
+                description=data["description"],
+                persona_ids=[builtin_id("persona", key) for key in data["personas"]],
+                format_id=builtin_id("format", data["format"]),
+                format_version=1,
+                initial_settings=data["initial_settings"],
+                tags=data["tags"],
+            )
+        )
+
     await session.commit()
