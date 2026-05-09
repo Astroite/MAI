@@ -1,6 +1,6 @@
 # MAI 使用、配置与打包指南
 
-本文面向本地开发、日常使用、交付打包和安装排障。产品与架构背景见 `product_design.md` 与 `technical_design.md`。
+本文面向本地开发、日常使用、交付打包和安装排障。产品与架构背景见 [`../product/product_design.md`](../product/product_design.md) 与 [`../architecture/technical_design.md`](../architecture/technical_design.md)。
 
 ## 1. 运行要求
 
@@ -16,7 +16,7 @@
 - Microsoft C++ Build Tools
 - Microsoft Edge WebView2 Runtime
 
-完整桌面打包清单见 `desktop_tauri.md`。
+完整桌面打包清单见 [`desktop_tauri.md`](desktop_tauri.md)。
 
 默认数据库是 SQLite，不需要 PostgreSQL：
 
@@ -196,6 +196,22 @@ GEMINI_API_KEY=...
 - AI 持续接力到 `max_consecutive_ai_turns`（默认 10，可在右侧「限额」面板拉到 30–100）、token 上限或冻结。
 - 每个角色只演自己一个，不替别人写台词。多 AI 房间下后端会自动重写历史角色消息为 `user + 「Name」: `，避免一个 AI 把整段故事都讲完。
 - 想让某角色更主动开口，调高他人设的「健谈度」滑块。
+
+### 5.2 Story World
+
+Story World 在 Room 之上多一层「世界」容器，让一组角色在多幕戏之间保留记忆。详细设计见 [`../product/story_world.md`](../product/story_world.md)。常用流程：
+
+1. 左 rail 进入 **World 列表**，新建一个世界，填 synopsis / setting / calendar_hint。
+2. 在 World 详情页添加角色：`kind=ai` 绑定 PersonaTemplate（带 core_identity / skills / goals），`kind=user` 是用户驱动的轻档案。
+3. 创建第一幕（**Scene**）：勾选本幕在场角色，可以为某个 user 角色开启 `speak_as_user`。
+4. 进入 Scene 后，在 Composer 切换：
+   - **正常**：以当前 user 角色身份发言（多个 user 角色用 `as_character_id` 选择）。
+   - **旁白**：用户作为「导演」描写场景或角色动作，落库为 system 消息。
+   - **扮演**：以指定 user 角色身份发言（与 1 等价，仅 UI 入口不同）。
+5. 角色中途加入或离开：调 `POST /rooms/{rid}/scene/enter` / `/exit`，会追加 `participant.enter` / `.exit` 系统消息。
+6. 一幕戏想要保留为持久记忆 → 点 **封幕**（`POST /rooms/{rid}/seal`）。封幕会跑 per-character memory scribe，把本幕折叠成 episodic / impressions / vows 写回角色档案。**封幕不可逆**，所以不会自动触发——freeze 后系统只会弹「是否封幕」。
+7. 封幕完成后，**Scene-end inspector** 对话框可逐角色查看产出的记忆，必要时重跑某个角色。
+8. 下一幕 (`scene_index = 上一幕 + 1`) 创建时，已有角色会自动带回 retrieved top-K episodic 与同场关系卡片入 prompt。
 
 ## 6. 工具与 MCP
 

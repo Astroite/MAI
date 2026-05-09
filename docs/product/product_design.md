@@ -1,6 +1,6 @@
 # MAI 产品设计文档
 
-> 当前状态：稳定实现版，配套技术文档见 `technical_design.md`。
+> 当前状态：稳定实现版。配套技术文档见 [`../architecture/technical_design.md`](../architecture/technical_design.md)；Story World 子产品见 [`story_world.md`](story_world.md)；内置人设清单见 [`personas.md`](personas.md)。
 
 ## 1. 产品定位
 
@@ -36,6 +36,10 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 | ApiProvider / ApiModel | API 凭据与模型清单 | 全局设置 |
 | Tool Server / Tool Invocation | MCP server 注册、工具清单和每次工具调用审计 | 全局 / 房间内 |
 | Scenario 场景 | 预置标题、初始问题、赛制或配方的一键开房入口 | 全局内置 |
+| World 世界 | 跨房间的世界观容器（synopsis、setting、calendar_hint），承载若干角色与场景 | 全局，跨房间 |
+| World Character 世界角色 | World 自带的角色档案：core_identity、skills、goals、外观；`kind=ai` 绑定 PersonaTemplate，`kind=user` 由用户驱动 | World 内 |
+| Scene 场景 | 一幕戏 = 一个带 `world_id` + `scene_index` 的 Room；通过 `WorldSceneMember` 名册控制在场角色 | World 内 |
+| Character Memory 角色记忆 | 跨场景的三层记忆：core_identity（手写）/ relationships（关系卡片）/ episodic（封幕 scribe 写入） | World 内 |
 
 ## 4. API 与模型配置
 
@@ -128,6 +132,17 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 - 多 AI 房间下，每个 AI 看到的历史对白会重写：自己的过去发言保留为 `assistant`，其他人的发言改成 `user` 并加 `「名字」: ` 前缀，从根上避免出现"全知叙述者"现象（一个 AI 把所有人的对白都写出来）。
 
 适合：剧本演练、虚构对话、群聊推演、人物原型互动。
+
+### 6.2 Story World
+
+Story World 在 Room + Persona 之上加一层 **World** 容器，把单次房间重新定义为该世界中的一幕 **Scene**，并给世界中的角色一条跨场景的记忆线。完整设计见 [`story_world.md`](story_world.md)。要点：
+
+- 普通讨论房 (`world_id IS NULL`) 行为完全不变，Story World 是纯增量层。
+- 同一 World 内 Scene 严格线性 (`scene_index` 单调递增，无分支)。
+- 角色档案分两种 kind：`ai`（绑定 PersonaTemplate，跑记忆管线）、`user`（用户驱动的轻档案，无 episodic）。
+- Composer 增加两种模式：**旁白**（用户作为导演描写场景 / 动作，落库为 system 消息）和**扮演**（用户挑选 `kind=user` 角色以其身份发言）。
+- 每幕显式封幕（`POST /rooms/{rid}/seal`）才会跑 per-character memory scribe，把本幕折叠成 episodic / impressions / vows 写回角色档案——不可逆，所以不自动触发。
+- 封幕后弹出 **Scene-end inspector**，逐角色查看本幕产出的记忆，必要时重跑。
 
 ## 7. 工具、MCP 与能力权限
 

@@ -162,7 +162,7 @@ pytest -q
 .\scripts\package-tauri.ps1
 ```
 
-桌面打包需要 Rust/Cargo、Microsoft C++ Build Tools 和 WebView2 Runtime，详见 `docs/desktop_tauri.md`。
+桌面打包需要 Rust/Cargo、Microsoft C++ Build Tools 和 WebView2 Runtime，详见 [`docs/ops/desktop_tauri.md`](docs/ops/desktop_tauri.md)。
 
 ## 运行时数据
 
@@ -180,8 +180,11 @@ pytest -q
 
 ## 文档
 
-- `docs/usage.md`：本地运行、模型配置、打包、安装与常见问题。
-- `docs/product_design.md`：稳定后的产品概念和边界。
-- `docs/technical_design.md`：当前架构、数据模型和前后端契约。
-- `docs/progress.md`：当前实现状态快照。
-- `docs/desktop_tauri.md`：桌面壳依赖与打包清单。
+- [`docs/ops/usage.md`](docs/ops/usage.md)：本地运行、模型配置、打包、安装与常见问题。
+- [`docs/product/product_design.md`](docs/product/product_design.md)：稳定后的产品概念和边界。
+- [`docs/product/story_world.md`](docs/product/story_world.md)：跨房间「世界」+ 角色记忆子产品（World / Scene / Character / Memory）。
+- [`docs/product/personas.md`](docs/product/personas.md)：内置人设清单与扩充路线。
+- [`docs/architecture/technical_design.md`](docs/architecture/technical_design.md)：当前架构、数据模型和前后端契约。
+- [`docs/status.md`](docs/status.md)：当前实现状态快照。
+- [`docs/ops/desktop_tauri.md`](docs/ops/desktop_tauri.md)：桌面壳依赖与打包清单。
+- [`docs/design/ui_brief.md`](docs/design/ui_brief.md)：UI 视觉方向参考。

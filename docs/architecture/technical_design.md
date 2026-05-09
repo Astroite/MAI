@@ -1,6 +1,6 @@
 # MAI 技术设计文档
 
-> 当前状态：稳定实现版，配套产品文档见 `product_design.md`。
+> 当前状态：稳定实现版。配套产品文档见 [`../product/product_design.md`](../product/product_design.md)；Story World 子产品的数据模型与 engine 改动见 [`../product/story_world.md`](../product/story_world.md)。
 
 ## 1. 架构总览
 
@@ -81,6 +81,9 @@ AI 不是 free-running。`pick_next_speaker` 根据当前阶段的 `ordering_rul
 | `migrate_drop_vendor.py` | 移除 `ApiProvider.vendor` 旧字段 |
 | `migrate_seed_story_mode.py` | 老 dev DB 补建故事模式 phase + format（按 builtin_id 幂等插入） |
 | `migrate_story_mode_v2.py` | 同步 builtin 故事模式 phase 的 role_constraints / prompt_template |
+| `migrate_persona_identity.py` | 给 PersonaTemplate / PersonaInstance 拆出 `identity` 列（角色头衔与人名分离） |
+| `migrate_seed_new_personas.py` | 老 dev DB 补建后续追加的 13 个内置人设 |
+| `migrate_builtin_personas_update.py` | **每次启动都跑**的幂等同步：把 `seed.py` 里 `is_builtin=True` 的人设字段刷回 DB（其他一次性迁移按 `_migrations` sentinel 只跑一次） |
 | `llm.py` | LiteLLM stream 与 tool-call 包装 |
 | `tools.py` | 内置工具、MCP server 同步、工具调用记录与事件发布 |
 | `event_bus.py` | 进程内 SSE pub/sub |
@@ -232,7 +235,32 @@ tool_invocations
 1. server 或工具本身标记为写入能力。
 2. 房间成员实例 `config.tools_allow_write=true`，或手动执行接口显式传入 `allow_write=true`。
 
-### 4.5 JSON 跨方言
+### 4.5 Story World
+
+Story World 在不破坏旧路径的前提下追加 5 张表 + Room 加列；详细字段、记忆三层结构与封幕 pipeline 见 [`../product/story_world.md`](../product/story_world.md)。
+
+新增表：
+
+```text
+worlds                   世界设定 (synopsis / setting / calendar_hint / cover_*)
+world_characters         角色档案 (kind=ai|user, identity, brief, core_identity, skills_text, goals_text, persona_template_id?)
+world_scene_members      Scene 名册 PK=(scene_id, world_character_id) + entered_at_message_id / exited_at_message_id + speak_as_user
+world_character_memories episodic 条目 (kind=episode|impression|vow|fact|backstory, salience, last_used_scene_index)
+world_character_relations 关系卡片 (单向, A 视角看 B, sentiment∈[-1,+1], notes 累积)
+```
+
+`Room` 表加列（写进 `_ADDED_COLUMNS`）：`world_id` / `scene_index` / `in_world_time_start` / `in_world_time_end` / `in_world_duration_hint` / `sealed_at`。`PersonaInstance` 加列 `world_character_id`，让 engine 能反查回 character。
+
+`world_id IS NULL` 的房间路径不变；`world_id IS NOT NULL` 的房间是 Scene，触发：
+
+- `pick_next_speaker` 从 `world_scene_members`「在场区间」过滤候选集（`exited_at_message_id IS NULL` 且 `entered_at_message_id` 已发生）。
+- `_build_messages` 在 system prompt 头部 prepend World synopsis + character 档案 + retrieved episodic + 同场关系卡片。
+- `run_scribe_update`（房间级共识 / 分歧）早退；character memory scribe 是唯一折叠路径。
+- `engine.run_scene_memory_scribe` / `decay_unused_memories` / `enforce_memory_cap` 在封幕 (`POST /rooms/{rid}/seal`) 时跑，输出 episodic + relations 写回 character。
+
+`autodrive` / `facilitator` / `freeze` 路径不变。
+
+### 4.6 JSON 跨方言
 
 `models.JSONType` 定义为：
 
@@ -252,12 +280,20 @@ SQLite 使用 JSON，PostgreSQL 使用 JSONB。
 
 当前一次性迁移：
 
+一次性（`_migrations` 表记录完成 sentinel，只跑一次）：
+
 - `migrate_personas`
 - `migrate_settings`
 - `migrate_api_models`
 - `migrate_drop_vendor`
 - `migrate_seed_story_mode`
 - `migrate_story_mode_v2`
+- `migrate_persona_identity`
+- `migrate_seed_new_personas`
+
+常驻幂等（每次 `create_schema` 都跑）：
+
+- `migrate_builtin_personas_update` —— 把 `seed.py` 中 `is_builtin=True` 的人设字段刷回 DB，方便迭代内置人设内容
 
 SQLite 连接初始化（`db.py` 内 listener）会执行：
 
@@ -516,6 +552,15 @@ UI 文案和内部枚举显示应使用 i18n；用户内容和模板数据本身
 - `GET /rooms` 返回 `RoomSummaryOut[]`（继承 `RoomOut`，多出 `members[]` / `member_count` / `message_count` / `last_activity_at`，全部 4 条 SQL 聚合，no N+1）
 - `RoomMemberPreview { id, name, color, icon }`：sidebar 卡片头像渲染需要的最小字段集
 
+Story World（详细见 [`../product/story_world.md`](../product/story_world.md) §6）：
+
+- `GET|POST /worlds`、`GET|PATCH|DELETE /worlds/{wid}`
+- `POST /worlds/{wid}/characters`、`GET|PATCH|DELETE /worlds/{wid}/characters/{cid}`
+- `GET|PUT /worlds/{wid}/characters/{cid}/memories`、`PATCH|DELETE /worlds/{wid}/characters/{cid}/memories/{mid}`
+- `POST /worlds/{wid}/scenes`、`GET /worlds/{wid}/timeline`
+- `POST /rooms/{rid}/scene/enter`、`POST /rooms/{rid}/scene/exit`、`GET /rooms/{rid}/scene/members`、`POST /rooms/{rid}/seal`
+- `POST /rooms/{rid}/messages` 多一个可选字段 `as_character_id`，让用户在多个 `kind=user` 角色之间挑身份发言
+
 ## 10. 内置数据
 
 `seed.py` 使用 deterministic UUIDv5：
@@ -592,4 +637,4 @@ pytest -q
 - Streaming 续写。
 - 超时自动重试。
 
-如需引入这些能力，应先更新 `product_design.md`，再调整 schema 和引擎不变量。
+如需引入这些能力，应先更新 [`../product/product_design.md`](../product/product_design.md)，再调整 schema 和引擎不变量。

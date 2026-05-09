@@ -1,7 +1,7 @@
 # 项目进度与状态快照
 
-> 最近更新：2026-05-09
-> 基线文档：`product_design.md` / `technical_design.md`
+> 最近更新：2026-05-10
+> 基线文档：[`product/product_design.md`](product/product_design.md) / [`architecture/technical_design.md`](architecture/technical_design.md)。Story World 子产品见 [`product/story_world.md`](product/story_world.md)。
 
 ## 1. 总览
 
@@ -27,6 +27,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 房间侧边栏卡片化，一眼看见成员头像和活跃度。
 - 中英文界面切换。
 - Tauri 桌面壳打包。
+- **Story World**：跨房间世界 + 角色档案 + 三层记忆（core / relationships / episodic）+ 封幕 scribe + 旁白 / 扮演 composer 模式。
 
 ## 2. 模块状态
 
@@ -48,6 +49,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 | 国际化 | 完成 | 中文/英文切换；内部枚举友好显示 |
 | 桌面壳 | 完成 | Tauri v2 + PyInstaller sidecar + NSIS 打包 |
 | Trace | 写入完成 | 查询与重放 UI 不做 |
+| Story World | PR 1–6 全部合入 | World / Character / Scene / Memory / Relations 五张表 + 路由 + 封幕 scribe + UI；详见 [`product/story_world.md`](product/story_world.md) |
 
 ## 3. 最近稳定化改动
 
@@ -152,6 +154,25 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 
 - 后端 dev 端口由 `8000` 改为 `47821`（高位、不撞常见 dev 服务、避开 Windows 临时端口池）。同步更新 vite proxy / dev script / 全部文档。
 
+### 3.11 Story World（PR 1–6）
+
+跨房间「世界」+ 角色记忆。详细设计见 [`product/story_world.md`](product/story_world.md)，下面只列阶段成果：
+
+- **PR 1**：`World` / `WorldCharacter` 数据模型 + CRUD 路由（`/worlds`、`/worlds/{wid}/characters`）。
+- **PR 2**：`Scene = Room + world_id + scene_index` + `WorldSceneMember` 名册 + 入场 / 离场 (`participant.enter` / `participant.exit` 系统消息) + engine prompt 拼接。`world_id IS NULL` 路径完全保留。
+- **PR 3**：封幕 `POST /rooms/{rid}/seal` + `engine.run_scene_memory_scribe` + episodic 写入 + 检索入 prompt。
+- **PR 4**：关系卡片单向维护 (`world_character_relations`) + 同场角色互相进 prompt。
+- **PR 5**：记忆衰减 (`decay_unused_memories`) + 上限折叠 (`enforce_memory_cap`) + 记忆手动编辑 UI。
+- **PR 6**：Composer 双模式——**旁白**（导演视角描写动作 / 场景，落库为 system 消息）、**扮演**（用户挑 `kind=user` 角色以其身份发言）。
+
+最近补强（PR 6 之后）：
+
+- 内置模板在新建 Scene 时按 World 名册隐藏，避免误把通用 persona 混进剧本场景。
+- Scene 创建后**不再自动跳房**，用户先在 World 视图确认在场名册。
+- 修复 Scene 内残留的 Room scribe 渗透（`run_scribe_update` 在 `world_id IS NOT NULL` 时早退）。
+- 人设模板选择从原 `<select>` 换成可搜索 picker，自动回填字段。
+- **Scene-end inspector** 对话框：封幕后逐角色查看本幕产出的 episodic / impressions / vows，必要时重跑。
+
 ## 4. 后端完成点
 
 - `ACTIVE_CALLS` 按 room + message 跟踪。
@@ -205,6 +226,12 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - `test_llm_adapter.py`
 - `test_migrate_personas.py`
 - `test_persona_instances_api.py`
+- `test_room_export.py`
+- `test_worlds.py` —— Story World CRUD
+- `test_scenes.py` —— Scene 创建、enter / exit、seal
+- `test_memory.py` —— 封幕 scribe 写入 episodic / impressions
+- `test_memory_decay.py` —— `last_used_scene_index` 衰减 + episodic cap 折叠
+- `test_relations.py` —— 关系卡片单向维护
 
 测试需要真实 LLM 凭据：
 
