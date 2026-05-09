@@ -29,6 +29,7 @@ from .models import (
     World,
     WorldCharacter,
     WorldCharacterMemory,
+    WorldCharacterRelation,
     WorldSceneMember,
     now_utc,
 )
@@ -1057,11 +1058,17 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
 
 
 SCENE_MEMORY_TOOL_DESCRIPTION = (
-    "Distill what THIS character experienced in this scene into 0–6 short, "
-    "first-person memory entries. Each entry is one sentence the character "
-    "would actually remember (specific event, vow they made, or sharp impression). "
-    "Skip generic recap. Reuse none of the existing-memories the payload lists — "
-    "those are already saved. Salience: 0.3 trivial, 0.6 notable, 0.9 turning-point."
+    "Distill what THIS character experienced in this scene. Output two streams:\n"
+    "1) `new_episodes`: 0–6 short, first-person memory entries (specific event, "
+    "vow they made, or sharp impression). Skip generic recap. Don't repeat "
+    "anything the existing-memories list already has. Salience: 0.3 trivial, "
+    "0.6 notable, 0.9 turning-point.\n"
+    "2) `impressions`: 0–N per-peer relationship updates. about_character_id "
+    "must be a peer that was on stage with this character (see peers_on_stage). "
+    "sentiment_delta is the *change* this scene caused, clamped [-1, +1]. label "
+    "names the relationship in 2-4 chars (e.g. 盟友/宿敌/暗恋). notes_append is a "
+    "short fact/quote you want to remember about them — it gets appended (not "
+    "replacing) the existing notes."
 )
 
 
@@ -1150,6 +1157,15 @@ async def _scribe_memory_for_character(
     ).all()
     scribe = await get_room_system_persona(session, scene.id, "scribe")
     scribe, scribe_provider = await resolve_persona_runtime(session, scribe)
+    peer_ids = [pid for pid in peer_names if pid != character.id]
+    existing_relations = (
+        await session.scalars(
+            select(WorldCharacterRelation).where(
+                WorldCharacterRelation.from_character_id == character.id,
+                WorldCharacterRelation.to_character_id.in_(peer_ids),
+            )
+        )
+    ).all() if peer_ids else []
     payload = {
         "scene": {
             "id": scene.id,
@@ -1171,6 +1187,15 @@ async def _scribe_memory_for_character(
         ],
         "existing_memories": [
             {"kind": m.kind, "content": m.content, "salience": m.salience} for m in existing
+        ],
+        "existing_relations": [
+            {
+                "about_character_id": r.to_character_id,
+                "label": r.label,
+                "sentiment": r.sentiment,
+                "notes": r.notes,
+            }
+            for r in existing_relations
         ],
         "witnessed_messages": [message_to_tool_payload(m) for m in witnessed],
     }
@@ -1211,6 +1236,10 @@ async def _scribe_memory_for_character(
         )
         session.add(memory)
         written += 1
+    impressions = result.get("impressions") or []
+    relations_touched = await _apply_impressions(
+        session, scene, character, impressions, peer_names
+    )
     await trace_record(
         session,
         scene.id,
@@ -1219,10 +1248,70 @@ async def _scribe_memory_for_character(
         {
             "character_id": character.id,
             "written": written,
+            "relations_touched": relations_touched,
             "reasoning": result.get("reasoning"),
         },
     )
     return written
+
+
+async def _apply_impressions(
+    session: AsyncSession,
+    scene: Room,
+    character: WorldCharacter,
+    impressions: list[dict[str, Any]],
+    peer_names: dict[str, str],
+) -> int:
+    """Merge LLM-proposed impressions into per-pair WorldCharacterRelation rows.
+
+    Sentiment_delta is added (clamped [-1, +1]). notes_append is appended with
+    a scene marker so the running notes stay readable. Cards targeting a
+    character not present on stage are dropped — the model occasionally
+    references off-stage characters and we don't want stray rows."""
+    if not impressions:
+        return 0
+    touched = 0
+    for entry in impressions:
+        target_id = entry.get("about_character_id")
+        if not target_id or target_id == character.id:
+            continue
+        if target_id not in peer_names:
+            # Off-stage reference — skip rather than create a stale row.
+            continue
+        delta = float(entry.get("sentiment_delta") or 0.0)
+        new_label = entry.get("label")
+        notes_append = (entry.get("notes_append") or "").strip()
+        relation = await session.scalar(
+            select(WorldCharacterRelation).where(
+                WorldCharacterRelation.from_character_id == character.id,
+                WorldCharacterRelation.to_character_id == target_id,
+            )
+        )
+        if relation is None:
+            relation = WorldCharacterRelation(
+                id=new_id(),
+                from_character_id=character.id,
+                to_character_id=target_id,
+                label=(new_label or "").strip(),
+                sentiment=max(-1.0, min(1.0, delta)),
+                notes="",
+                last_updated_scene_id=scene.id,
+            )
+            session.add(relation)
+        else:
+            relation.sentiment = max(-1.0, min(1.0, relation.sentiment + delta))
+            if new_label:
+                relation.label = new_label.strip()
+            relation.last_updated_scene_id = scene.id
+        if notes_append:
+            scene_tag = (
+                f"第{scene.scene_index}幕" if scene.scene_index is not None else "本幕"
+            )
+            existing = (relation.notes or "").rstrip()
+            new_block = f"[{scene_tag}] {notes_append}"
+            relation.notes = f"{existing}\n{new_block}".lstrip("\n")
+        touched += 1
+    return touched
 
 
 async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[str, int]:

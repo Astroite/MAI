@@ -607,3 +607,42 @@ class WorldCharacterMemory(Base):
             "scene_index_at_write",
         ),
     )
+
+
+class WorldCharacterRelation(Base):
+    """A's view of B — a single-direction relationship card.
+
+    AI characters maintain their own outgoing relations via the scene-end
+    scribe; user characters can be the target (B) of an AI's card but never
+    own outgoing rows themselves (the human user IS their memory). The
+    designer can also write/edit any row manually.
+
+    `(from_character_id, to_character_id)` is unique — there's at most one
+    card per ordered pair. Sentiment is clamped to [-1, +1]; notes is a
+    free-text accumulator the scribe appends to (never replaces).
+    """
+
+    __tablename__ = "world_character_relations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    from_character_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("world_characters.id", ondelete="CASCADE"), index=True
+    )
+    to_character_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("world_characters.id", ondelete="CASCADE"), index=True
+    )
+    label: Mapped[str] = mapped_column(String(64), default="")
+    sentiment: Mapped[float] = mapped_column(default=0.0)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    last_updated_scene_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        Index(
+            "uq_world_character_relations_pair",
+            "from_character_id",
+            "to_character_id",
+            unique=True,
+        ),
+    )
