@@ -30,8 +30,10 @@ from .engine import (
     estimate_tokens,
     extend_current_phase,
     freeze_room,
+    is_autodrive_active,
     run_manual_facilitator_eval,
     run_room_turn,
+    schedule_autodrive,
     transition_to_next_phase,
     unfreeze_room,
 )
@@ -99,7 +101,9 @@ from .schemas import (
     RecipeUpdate,
     RoomBackgroundUpdate,
     RoomCreate,
+    RoomMemberPreview,
     RoomOut,
+    RoomSummaryOut,
     RoomPhaseInstanceOut,
     RoomPhasePlanOut,
     RoomRuntimeOut,
@@ -1272,9 +1276,72 @@ async def delete_recipe(recipe_id: str, session: AsyncSession = Depends(get_sess
     return {"status": "deleted"}
 
 
-@app.get("/rooms", response_model=list[RoomOut])
+@app.get("/rooms", response_model=list[RoomSummaryOut])
 async def list_rooms(session: AsyncSession = Depends(get_session)):
-    return (await session.scalars(select(Room).order_by(Room.created_at.desc()))).all()
+    """Room list with member previews + activity counters baked in.
+
+    All aggregates are computed in-process from a small number of bulk
+    queries (one for rooms, one for personas, two for message stats) so the
+    sidebar can render rich cards without N+1 hits per room.
+    """
+    rooms = (await session.scalars(select(Room).order_by(Room.created_at.desc()))).all()
+    if not rooms:
+        return []
+    room_ids = [room.id for room in rooms]
+
+    persona_rows = (
+        await session.scalars(
+            select(PersonaInstance)
+            .where(
+                PersonaInstance.room_id.in_(room_ids),
+                PersonaInstance.kind == "discussant",
+            )
+            .order_by(PersonaInstance.position, PersonaInstance.name)
+        )
+    ).all()
+    members_by_room: dict[str, list[RoomMemberPreview]] = {}
+    counts_by_room: dict[str, int] = {}
+    for p in persona_rows:
+        bucket = members_by_room.setdefault(p.room_id, [])
+        # Cap previews at 6 to keep the wire response small; counts are exact.
+        if len(bucket) < 6:
+            bucket.append(
+                RoomMemberPreview(
+                    id=p.id,
+                    name=p.name,
+                    color=p.color or "#3b82f6",
+                    icon=p.icon or "Sparkles",
+                )
+            )
+        counts_by_room[p.room_id] = counts_by_room.get(p.room_id, 0) + 1
+
+    # Visible-to-user message counts + freshness timestamp per room.
+    msg_count_rows = (
+        await session.execute(
+            select(Message.room_id, func.count(Message.id), func.max(Message.created_at))
+            .where(
+                Message.room_id.in_(room_ids),
+                Message.visibility_to_user.is_(True),
+            )
+            .group_by(Message.room_id)
+        )
+    ).all()
+    msg_count_by_room: dict[str, int] = {row[0]: int(row[1] or 0) for row in msg_count_rows}
+    last_activity_by_room: dict[str, datetime] = {row[0]: row[2] for row in msg_count_rows if row[2] is not None}
+
+    summaries: list[RoomSummaryOut] = []
+    for room in rooms:
+        base = RoomOut.model_validate(room).model_dump()
+        summaries.append(
+            RoomSummaryOut(
+                **base,
+                member_count=counts_by_room.get(room.id, 0),
+                members=members_by_room.get(room.id, []),
+                message_count=msg_count_by_room.get(room.id, 0),
+                last_activity_at=last_activity_by_room.get(room.id),
+            )
+        )
+    return summaries
 
 
 @app.post("/rooms", response_model=RoomState)
@@ -1631,6 +1698,19 @@ async def run_turn(room_id: str, body: TurnRequest, session: AsyncSession = Depe
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return messages
+
+
+@app.post("/rooms/{room_id}/autodrive/resume")
+async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Manually kick the autodrive chain.
+
+    Lets the user "let the AI keep talking" without typing anything. No-op if
+    the chain is already running or any persona stream is in flight.
+    """
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    started = schedule_autodrive(room_id)
+    return {"status": "started" if started else "skipped", "active": is_autodrive_active(room_id)}
 
 
 @app.post("/rooms/{room_id}/phase/next", response_model=RoomState)
@@ -2198,9 +2278,12 @@ async def _room_state(session: AsyncSession, room_id: str) -> RoomState:
         if message.id in tool_by_message_id:
             output.tool_invocation = tool_by_message_id[message.id]
         message_outputs.append(output)
+    runtime_out = RoomRuntimeOut.model_validate(runtime)
+    runtime_out.autodrive_active = is_autodrive_active(room_id)
+    runtime_out.current_speakers = [call.persona_id for call in active_calls_for_room(room_id)]
     return RoomState(
         room=RoomOut.model_validate(room),
-        runtime=RoomRuntimeOut.model_validate(runtime),
+        runtime=runtime_out,
         personas=[PersonaInstanceOut.model_validate(p) for p in personas],
         phase_plan=[RoomPhasePlanOut.model_validate(p) for p in phase_plan],
         current_phase=RoomPhaseInstanceOut.model_validate(current_phase) if current_phase else None,

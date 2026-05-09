@@ -775,6 +775,25 @@ class RoomOut(APIModel):
     created_at: datetime
 
 
+class RoomMemberPreview(APIModel):
+    """Minimal persona info for rendering avatars in the room-card list."""
+
+    id: str
+    name: str
+    color: str = "#3b82f6"
+    icon: str = "Sparkles"
+
+
+class RoomSummaryOut(RoomOut):
+    """Room list response — adds member previews and activity counters so the
+    sidebar can render rich cards without N+1 calls to /state."""
+
+    member_count: int = 0
+    members: list[RoomMemberPreview] = Field(default_factory=list)
+    message_count: int = 0
+    last_activity_at: datetime | None = None
+
+
 class RoomRuntimeOut(APIModel):
     room_id: str
     current_phase_instance_id: str | None = None
@@ -794,6 +813,14 @@ class RoomRuntimeOut(APIModel):
     phase_exit_suppressed_after_message_id: str | None = None
     consecutive_ai_turns: int = 0
     max_consecutive_ai_turns: int = 10
+    # True while the autodrive task loop is actively scheduling turns.
+    # Surfaced to the UI so the speaker-status strip can distinguish
+    # "AI is taking next turn" from "waiting for user".
+    autodrive_active: bool = False
+    # Persona ids of any LLM call currently in flight for this room. Includes
+    # calls that have started but not yet produced their first chunk, which
+    # `in_flight_partial` (text-bearing only) cannot represent.
+    current_speakers: list[str] = Field(default_factory=list)
     updated_at: datetime
 
 

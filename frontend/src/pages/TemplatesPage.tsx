@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useParams } from "react-router-dom";
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Cog,
   Download,
   Eye,
@@ -1654,6 +1656,10 @@ function RecipesView() {
   );
 }
 
+// Sentinel id for the "new provider" draft state. Lets us reuse the
+// expand/collapse logic without a parallel `creating` flag.
+const DRAFT_PROVIDER_ID = "__new__";
+
 export function ApiProvidersView() {
   const queryClient = useQueryClient();
   const { t, formatRelativeTime } = useI18n();
@@ -1700,6 +1706,26 @@ export function ApiProvidersView() {
     setPendingError(null);
     resetModelForm("openai");
   };
+  // Open an inline draft card at the top of the list. Uses a sentinel id so
+  // the same expand/collapse machinery works without a separate "creating"
+  // boolean. The save mutation already treats falsy/sentinel ids as create.
+  const startNewProvider = () => {
+    setEditingId(DRAFT_PROVIDER_ID);
+    setName("");
+    setProviderSlug("openai");
+    setApiKey("");
+    setApiBase("");
+    setShowKey(false);
+    setPendingError(null);
+    resetModelForm("openai");
+  };
+  const togglePane = async (providerId: string) => {
+    if (editingId === providerId) {
+      resetForm();
+      return;
+    }
+    await loadProvider(providerId);
+  };
   const loadProvider = async (id: string) => {
     setEditingId(id);
     setPendingError(null);
@@ -1729,8 +1755,9 @@ export function ApiProvidersView() {
         provider_slug: providerSlug.trim(),
         api_base: apiBase.trim() ? apiBase.trim() : null
       };
-      return editingId
-        ? api.updateApiProvider(editingId, apiKey ? { ...body, api_key: apiKey } : body)
+      const isExisting = editingId && editingId !== DRAFT_PROVIDER_ID;
+      return isExisting
+        ? api.updateApiProvider(editingId!, apiKey ? { ...body, api_key: apiKey } : body)
         : api.createApiProvider({ ...body, api_key: apiKey });
     },
     onSuccess: (saved) => {
@@ -1830,361 +1857,579 @@ export function ApiProvidersView() {
       removeModel.mutate(model.id);
     }
   };
+  const isDraft = editingId === DRAFT_PROVIDER_ID;
+  const hasRealSelection = Boolean(editingId) && !isDraft;
   return (
-    <section className="grid grid-cols-[minmax(0,1fr)_380px] gap-4 max-xl:grid-cols-1">
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-semibold">{t("api.title")}</h1>
-            <p className="mt-1 text-sm text-muted">{t("api.subtitle")}</p>
-          </div>
-          <button className="btn" type="button" onClick={resetForm}>
-            <Plus size={16} />
-            {t("common.new")}
-          </button>
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-xl font-semibold">{t("api.title")}</h1>
+          <p className="mt-1 text-sm text-muted">{t("api.subtitle")}</p>
         </div>
-        <div className="space-y-3">
-          {(providers.data ?? []).map((provider) => {
-            const tone =
-              provider.last_tested_ok === true
-                ? "bg-emerald-500"
-                : provider.last_tested_ok === false
-                  ? "bg-rose-500"
-                  : "bg-zinc-400";
-            const tip =
-              provider.last_tested_ok === true
-                ? t("api.statusOk", { time: provider.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
-                : provider.last_tested_ok === false
-                  ? t("api.statusFailed", { error: provider.last_tested_error ?? t("common.unknown") })
-                  : t("api.statusUntested");
-            return (
-              <div
-                key={provider.id}
-                className={`panel p-4 ${editingId === provider.id ? "ring-1 ring-brand" : ""}`}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${tone}`}
-                        title={tip}
-                        aria-label={tip}
-                      />
-                      <h2 className="truncate font-semibold">{provider.name}</h2>
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
-                      <StatusPill tone="brand">{providerKindLabel(provider.provider_slug, t)}</StatusPill>
-                      <span>{(models.data ?? []).filter((model) => model.api_provider_id === provider.id).length} {t("api.models")}</span>
-                      <span className="font-mono">{provider.api_key_preview || `(${t("api.keyMissing")})`}</span>
-                      {provider.api_base && <span>· {provider.api_base}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="btn h-8 px-2 text-xs"
-                      type="button"
-                      onClick={() => test.mutate(provider.id)}
-                      disabled={test.isPending && test.variables === provider.id}
-                      title={t("api.testProviderTitle")}
-                    >
-                      {test.isPending && test.variables === provider.id ? (
-                        <Wifi size={14} className="animate-pulse" />
-                      ) : provider.last_tested_ok === true ? (
-                        <CheckCircle2 size={14} className="text-emerald-500" />
-                      ) : provider.last_tested_ok === false ? (
-                        <XCircle size={14} className="text-rose-500" />
-                      ) : (
-                        <Wifi size={14} />
-                      )}
-                      {t("common.test")}
-                    </button>
-                    <button className="btn h-8 px-2 text-xs" type="button" onClick={() => void loadProvider(provider.id)}>
-                      <Pencil size={14} />
-                      {t("common.edit")}
-                    </button>
-                    <button
-                      className="btn h-8 px-2 text-xs text-danger"
-                      type="button"
-                      onClick={() => handleDelete(provider.id)}
-                      disabled={remove.isPending && remove.variables === provider.id}
-                    >
-                      <Trash2 size={14} />
-                      {t("common.delete")}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-          {(providers.data ?? []).length === 0 && (
-            <div className="panel p-6 text-sm text-muted">{t("api.emptyProviders")}</div>
-          )}
-        </div>
+        <button
+          className="btn btn-primary"
+          type="button"
+          onClick={startNewProvider}
+          disabled={isDraft}
+        >
+          <Plus size={16} />
+          {t("common.new")}
+        </button>
       </div>
-      <aside className="panel p-4">
-        <div className="flex items-center justify-between gap-2">
-          <h2 className="font-semibold">{editingId ? t("api.editProvider") : t("api.newProvider")}</h2>
-          {editingId && (
-            <button className="btn h-8 px-2 text-xs" type="button" onClick={resetForm}>
-              <Plus size={14} />
-              {t("common.new")}
-            </button>
-          )}
-        </div>
-        <div className="mt-4 space-y-3">
-          <label className="block">
-            <span className="label">{t("common.name")}</span>
-            <input
-              name="api-provider-name"
-              className="input mt-1 w-full"
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              placeholder={t("api.providerNamePlaceholder")}
+      <div className="space-y-3">
+        {isDraft && (
+          <ExpandedProviderCard
+            isDraft
+            expandedHeader={
+              <div className="flex items-center justify-between gap-2 px-4 py-3">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Plus size={15} className="text-brand" />
+                  {t("api.newProvider")}
+                </div>
+                <button className="btn h-8 px-2 text-xs" type="button" onClick={resetForm}>
+                  {t("common.cancel")}
+                </button>
+              </div>
+            }
+          >
+            <ProviderConfigForm
+              t={t}
+              isDraft={isDraft}
+              editing={editing}
+              name={name}
+              setName={setName}
+              providerSlug={providerSlug}
+              setProviderSlug={setProviderSlug}
+              apiKey={apiKey}
+              setApiKey={setApiKey}
+              apiBase={apiBase}
+              setApiBase={setApiBase}
+              showKey={showKey}
+              setShowKey={setShowKey}
+              pendingError={pendingError}
+              save={save}
+              editingModelId={editingModelId}
+              setModelName={setModelName}
+              modelName={modelName}
             />
-          </label>
-          <label className="block">
-            <span className="label">{t("api.provider")}</span>
-            <select
-              name="api-provider-slug"
-              className="input mt-1 w-full"
-              value={providerSlug}
-              onChange={(event) => {
-                setProviderSlug(event.target.value);
-                if (!editingModelId && (!modelName.trim() || modelName.endsWith("/"))) {
-                  setModelName(`${event.target.value}/`);
-                }
-              }}
+            <div className="grid place-items-center text-center text-xs text-muted">
+              {t("api.saveProviderFirst")}
+            </div>
+          </ExpandedProviderCard>
+        )}
+
+        {(providers.data ?? []).map((provider) => {
+          const tone =
+            provider.last_tested_ok === true
+              ? "bg-emerald-500"
+              : provider.last_tested_ok === false
+                ? "bg-rose-500"
+                : "bg-zinc-400";
+          const tip =
+            provider.last_tested_ok === true
+              ? t("api.statusOk", { time: provider.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
+              : provider.last_tested_ok === false
+                ? t("api.statusFailed", { error: provider.last_tested_error ?? t("common.unknown") })
+                : t("api.statusUntested");
+          const expanded = editingId === provider.id;
+          const providerModelCount = (models.data ?? []).filter(
+            (model) => model.api_provider_id === provider.id
+          ).length;
+          return (
+            <div
+              key={provider.id}
+              className={`overflow-hidden rounded-lg border bg-panel transition ${
+                expanded ? "border-brand shadow-card" : "border-border hover:border-brand/60"
+              }`}
             >
-              {PROVIDER_KINDS.map((slug) => (
-                <option key={slug} value={slug}>{providerKindLabel(slug, t)}</option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-muted">
-              {t("api.providerHelp")}
-            </p>
-          </label>
-          <label className="block">
-            <span className="label">{t("api.apiKey")}</span>
-            <div className="mt-1 flex items-stretch gap-2">
-              <input
-                name="api-provider-key"
-                className="input flex-1"
-                type={showKey ? "text" : "password"}
-                value={apiKey}
-                onChange={(event) => setApiKey(event.target.value)}
-                placeholder="sk-..."
-              />
+              {/* Header is the click target. Test/Delete inside use stopPropagation
+                  so they don't accidentally toggle the pane. */}
               <button
                 type="button"
-                className="btn px-2"
-                onClick={() => setShowKey((value) => !value)}
-                aria-label={showKey ? t("api.hide") : t("api.show")}
+                onClick={() => void togglePane(provider.id)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+                aria-expanded={expanded}
               >
-                {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className={`inline-block h-2.5 w-2.5 shrink-0 rounded-full ${tone}`}
+                      title={tip}
+                      aria-label={tip}
+                    />
+                    <h2 className="truncate font-semibold">{provider.name}</h2>
+                  </div>
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted">
+                    <StatusPill tone="brand">{providerKindLabel(provider.provider_slug, t)}</StatusPill>
+                    <span>{providerModelCount} {t("api.models")}</span>
+                    <span className="font-mono">{provider.api_key_preview || `(${t("api.keyMissing")})`}</span>
+                    {provider.api_base && <span className="truncate">· {provider.api_base}</span>}
+                  </div>
+                </div>
+                <div
+                  className="flex items-center gap-2"
+                  onClick={(event) => event.stopPropagation()}
+                >
+                  <button
+                    className="btn h-8 px-2 text-xs"
+                    type="button"
+                    onClick={() => test.mutate(provider.id)}
+                    disabled={test.isPending && test.variables === provider.id}
+                    title={t("api.testProviderTitle")}
+                  >
+                    {test.isPending && test.variables === provider.id ? (
+                      <Wifi size={14} className="animate-pulse" />
+                    ) : provider.last_tested_ok === true ? (
+                      <CheckCircle2 size={14} className="text-emerald-500" />
+                    ) : provider.last_tested_ok === false ? (
+                      <XCircle size={14} className="text-rose-500" />
+                    ) : (
+                      <Wifi size={14} />
+                    )}
+                    {t("common.test")}
+                  </button>
+                  <button
+                    className="btn h-8 px-2 text-xs text-danger"
+                    type="button"
+                    onClick={() => handleDelete(provider.id)}
+                    disabled={remove.isPending && remove.variables === provider.id}
+                  >
+                    <Trash2 size={14} />
+                    {t("common.delete")}
+                  </button>
+                  <span className="grid h-8 w-8 place-items-center text-muted">
+                    {expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                  </span>
+                </div>
               </button>
-            </div>
-            {editing && !apiKey && (
-              <p className="mt-1 text-xs text-muted">{t("api.currentKey", { preview: editing.api_key_preview })}</p>
-            )}
-          </label>
-          <label className="block">
-            <span className="label">{t("api.apiBase")}</span>
-            <input
-              name="api-provider-base"
-              className="input mt-1 w-full"
-              value={apiBase}
-              onChange={(event) => setApiBase(event.target.value)}
-              placeholder="https://api.example.com/v1"
-            />
-            <p className="mt-1 text-xs text-muted">
-              {t("api.apiBaseHelp")}
-            </p>
-          </label>
-          {pendingError && <div className="text-xs text-danger">{pendingError}</div>}
-          <button
-            className="btn btn-primary w-full"
-            onClick={() => save.mutate()}
-            disabled={!name.trim() || !providerSlug.trim() || save.isPending}
-          >
-            <Save size={16} />
-            {editingId ? t("common.saveChanges") : t("api.saveProvider")}
-          </button>
-          <div className="border-t border-border pt-4">
-            <div className="flex items-center justify-between gap-2">
-              <div>
-                <h3 className="text-sm font-semibold">{t("api.models")}</h3>
-                <p className="mt-1 text-xs text-muted">{t("api.modelsHelp")}</p>
-              </div>
-              {editingId && (
-                <button className="btn h-8 px-2 text-xs" type="button" onClick={() => resetModelForm()}>
-                  <Plus size={14} />
-                  {t("common.new")}
-                </button>
+
+              {expanded && (
+                <div className="grid grid-cols-2 gap-4 border-t border-border bg-surface/40 p-4 max-lg:grid-cols-1">
+                  {/* Left column: API config */}
+                  <ProviderConfigForm
+                    t={t}
+                    isDraft={false}
+                    editing={editing}
+                    name={name}
+                    setName={setName}
+                    providerSlug={providerSlug}
+                    setProviderSlug={setProviderSlug}
+                    apiKey={apiKey}
+                    setApiKey={setApiKey}
+                    apiBase={apiBase}
+                    setApiBase={setApiBase}
+                    showKey={showKey}
+                    setShowKey={setShowKey}
+                    pendingError={pendingError}
+                    save={save}
+                    editingModelId={editingModelId}
+                    setModelName={setModelName}
+                    modelName={modelName}
+                  />
+
+                  {/* Right column: models for this provider */}
+                  <ProviderModelsPanel
+                    t={t}
+                    formatRelativeTime={formatRelativeTime}
+                    selectedProviderModels={selectedProviderModels}
+                    editingModelId={editingModelId}
+                    loadModel={loadModel}
+                    handleDeleteModel={handleDeleteModel}
+                    testModel={testModel}
+                    removeModel={removeModel}
+                    resetModelForm={resetModelForm}
+                    modelDisplayName={modelDisplayName}
+                    setModelDisplayName={setModelDisplayName}
+                    modelName={modelName}
+                    setModelName={setModelName}
+                    modelEnabled={modelEnabled}
+                    setModelEnabled={setModelEnabled}
+                    modelIsDefault={modelIsDefault}
+                    setModelIsDefault={setModelIsDefault}
+                    contextWindow={contextWindow}
+                    setContextWindow={setContextWindow}
+                    modelTags={modelTags}
+                    setModelTags={setModelTags}
+                    modelError={modelError}
+                    saveModel={saveModel}
+                    providerSlug={providerSlug}
+                  />
+                </div>
               )}
             </div>
-            {!editingId && <p className="mt-3 text-xs text-muted">{t("api.saveProviderFirst")}</p>}
-            {editingId && (
-              <div className="mt-3 space-y-3">
-                <div className="space-y-2">
-                  {selectedProviderModels.map((model) => {
-                    const modelTone =
-                      model.last_tested_ok === true
-                        ? "bg-emerald-500"
-                        : model.last_tested_ok === false
-                          ? "bg-rose-500"
-                          : "bg-zinc-400";
-                    const modelTip =
-                      model.last_tested_ok === true
-                    ? t("api.statusOk", { time: model.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
-                    : model.last_tested_ok === false
-                      ? t("api.statusFailed", { error: model.last_tested_error ?? t("common.unknown") })
-                      : t("api.statusUntested");
-                    return (
-                      <div
-                        key={model.id}
-                        className={`rounded-md border border-border p-2 ${editingModelId === model.id ? "ring-1 ring-brand" : ""}`}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <button
-                            className="min-w-0 flex-1 text-left"
-                            type="button"
-                            onClick={() => loadModel(model)}
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${modelTone}`} title={modelTip} />
-                              <span className="truncate text-sm font-medium">{model.display_name || model.model_name}</span>
-                            </div>
-                            <div className="mt-1 truncate font-mono text-xs text-muted">{model.model_name}</div>
-                            {model.last_tested_at && (
-                              <div className={`mt-1 text-xs ${
-                                model.last_tested_ok === true
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : "text-rose-600 dark:text-rose-400"
-                              }`}>
-                                {model.last_tested_ok === true
-                                  ? t("api.testedOk", { time: formatRelativeTime(model.last_tested_at) })
-                                  : t("api.testedFailed", { time: formatRelativeTime(model.last_tested_at) })}
-                              </div>
-                            )}
-                            <div className="mt-1 flex flex-wrap gap-1">
-                              {model.is_default && <StatusPill tone="brand">{t("common.default")}</StatusPill>}
-                              {!model.enabled && <StatusPill tone="danger">{t("common.disabled")}</StatusPill>}
-                              {model.tags.slice(0, 3).map((tag) => (
-                                <StatusPill key={tag}>{tag}</StatusPill>
-                              ))}
-                            </div>
-                          </button>
-                          <div className="flex shrink-0 gap-1">
-                            <button
-                              className="btn h-7 px-2 text-xs"
-                              type="button"
-                              onClick={() => testModel.mutate(model.id)}
-                              disabled={testModel.isPending && testModel.variables === model.id}
-                              title={t("api.testModelTitle")}
-                            >
-                              {testModel.isPending && testModel.variables === model.id ? (
-                                <Wifi size={12} className="animate-pulse" />
-                              ) : (
-                                <Wifi size={12} />
-                              )}
-                            </button>
-                            <button
-                              className="btn h-7 px-2 text-xs text-danger"
-                              type="button"
-                              onClick={() => handleDeleteModel(model)}
-                              disabled={removeModel.isPending && removeModel.variables === model.id}
-                              title={t("api.deleteModelTitle")}
-                            >
-                              <Trash2 size={12} />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  {selectedProviderModels.length === 0 && (
-                    <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted">{t("api.emptyModels")}</div>
-                  )}
-                </div>
-                <div className="space-y-2 rounded-md border border-border p-3">
-                  <div className="text-sm font-medium">{editingModelId ? t("api.editModel") : t("api.newModel")}</div>
-                  <label className="block">
-                    <span className="label">{t("api.displayName")}</span>
-                    <input
-                      name="api-model-display-name"
-                      className="input mt-1 w-full"
-                      value={modelDisplayName}
-                      onChange={(event) => setModelDisplayName(event.target.value)}
-                      placeholder="GPT-4o mini"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="label">{t("common.model")}</span>
-                    <input
-                      name="api-model-name"
-                      className="input mt-1 w-full font-mono"
-                      value={modelName}
-                      onChange={(event) => setModelName(event.target.value)}
-                      placeholder={`${providerSlug || "openai"}/gpt-4o-mini`}
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="label">{t("api.contextWindow")}</span>
-                    <input
-                      name="api-model-context-window"
-                      className="input mt-1 w-full"
-                      type="number"
-                      min={1}
-                      value={contextWindow}
-                      onChange={(event) => setContextWindow(event.target.value)}
-                      placeholder="128000"
-                    />
-                  </label>
-                  <label className="block">
-                    <span className="label">{t("common.tags")}</span>
-                    <input
-                      name="api-model-tags"
-                      className="input mt-1 w-full"
-                      value={modelTags}
-                      onChange={(event) => setModelTags(event.target.value)}
-                      placeholder="fast,cheap"
-                    />
-                  </label>
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <label className="flex items-center gap-2 rounded-md border border-border px-2 py-2">
-                      <input
-                        type="checkbox"
-                        checked={modelEnabled}
-                        onChange={(event) => setModelEnabled(event.target.checked)}
-                      />
-                      {t("common.enabled")}
-                    </label>
-                    <label className="flex items-center gap-2 rounded-md border border-border px-2 py-2">
-                      <input
-                        type="checkbox"
-                        checked={modelIsDefault}
-                        onChange={(event) => setModelIsDefault(event.target.checked)}
-                      />
-                      {t("api.providerDefault")}
-                    </label>
+          );
+        })}
+        {(providers.data ?? []).length === 0 && !isDraft && (
+          <div className="panel p-6 text-sm text-muted">{t("api.emptyProviders")}</div>
+        )}
+      </div>
+
+      {/* keep `hasRealSelection` referenced — used to silence unused-var lint
+          in case future expansion needs it */}
+      {!hasRealSelection && null}
+    </section>
+  );
+}
+
+// Reusable wrapper for the inline-expanded "draft" card variant — same chrome
+// as a real provider card minus the header click target.
+function ExpandedProviderCard({
+  expandedHeader,
+  children
+}: {
+  isDraft: boolean;
+  expandedHeader: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-brand bg-panel shadow-card">
+      {expandedHeader}
+      <div className="grid grid-cols-2 gap-4 border-t border-border bg-surface/40 p-4 max-lg:grid-cols-1">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+type TFn = ReturnType<typeof useI18n>["t"];
+
+function ProviderConfigForm({
+  t,
+  isDraft,
+  editing,
+  name,
+  setName,
+  providerSlug,
+  setProviderSlug,
+  apiKey,
+  setApiKey,
+  apiBase,
+  setApiBase,
+  showKey,
+  setShowKey,
+  pendingError,
+  save,
+  editingModelId,
+  setModelName,
+  modelName
+}: {
+  t: TFn;
+  isDraft: boolean;
+  editing: ApiProvider | null | undefined;
+  name: string;
+  setName: (v: string) => void;
+  providerSlug: string;
+  setProviderSlug: (v: string) => void;
+  apiKey: string;
+  setApiKey: (v: string) => void;
+  apiBase: string;
+  setApiBase: (v: string) => void;
+  showKey: boolean;
+  setShowKey: (fn: (v: boolean) => boolean) => void;
+  pendingError: string | null;
+  save: { mutate: () => void; isPending: boolean };
+  editingModelId: string | null;
+  setModelName: (v: string) => void;
+  modelName: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="text-xs font-semibold uppercase text-muted">{t("api.providerConfig")}</div>
+      <label className="block">
+        <span className="label">{t("common.name")}</span>
+        <input
+          name="api-provider-name"
+          className="input mt-1 w-full"
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={t("api.providerNamePlaceholder")}
+        />
+      </label>
+      <label className="block">
+        <span className="label">{t("api.provider")}</span>
+        <select
+          name="api-provider-slug"
+          className="input mt-1 w-full"
+          value={providerSlug}
+          onChange={(event) => {
+            setProviderSlug(event.target.value);
+            if (!editingModelId && (!modelName.trim() || modelName.endsWith("/"))) {
+              setModelName(`${event.target.value}/`);
+            }
+          }}
+        >
+          {PROVIDER_KINDS.map((slug) => (
+            <option key={slug} value={slug}>{providerKindLabel(slug, t)}</option>
+          ))}
+        </select>
+        <p className="mt-1 text-xs text-muted">{t("api.providerHelp")}</p>
+      </label>
+      <label className="block">
+        <span className="label">{t("api.apiKey")}</span>
+        <div className="mt-1 flex items-stretch gap-2">
+          <input
+            name="api-provider-key"
+            className="input flex-1"
+            type={showKey ? "text" : "password"}
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder="sk-..."
+          />
+          <button
+            type="button"
+            className="btn px-2"
+            onClick={() => setShowKey((value) => !value)}
+            aria-label={showKey ? t("api.hide") : t("api.show")}
+          >
+            {showKey ? <EyeOff size={14} /> : <Eye size={14} />}
+          </button>
+        </div>
+        {editing && !apiKey && (
+          <p className="mt-1 text-xs text-muted">{t("api.currentKey", { preview: editing.api_key_preview })}</p>
+        )}
+      </label>
+      <label className="block">
+        <span className="label">{t("api.apiBase")}</span>
+        <input
+          name="api-provider-base"
+          className="input mt-1 w-full"
+          value={apiBase}
+          onChange={(event) => setApiBase(event.target.value)}
+          placeholder="https://api.example.com/v1"
+        />
+        <p className="mt-1 text-xs text-muted">{t("api.apiBaseHelp")}</p>
+      </label>
+      {pendingError && <div className="text-xs text-danger">{pendingError}</div>}
+      <button
+        className="btn btn-primary w-full"
+        onClick={() => save.mutate()}
+        disabled={!name.trim() || !providerSlug.trim() || save.isPending}
+      >
+        <Save size={16} />
+        {isDraft ? t("api.saveProvider") : t("common.saveChanges")}
+      </button>
+    </div>
+  );
+}
+
+function ProviderModelsPanel({
+  t,
+  formatRelativeTime,
+  selectedProviderModels,
+  editingModelId,
+  loadModel,
+  handleDeleteModel,
+  testModel,
+  removeModel,
+  resetModelForm,
+  modelDisplayName,
+  setModelDisplayName,
+  modelName,
+  setModelName,
+  modelEnabled,
+  setModelEnabled,
+  modelIsDefault,
+  setModelIsDefault,
+  contextWindow,
+  setContextWindow,
+  modelTags,
+  setModelTags,
+  modelError,
+  saveModel,
+  providerSlug
+}: {
+  t: TFn;
+  formatRelativeTime: ReturnType<typeof useI18n>["formatRelativeTime"];
+  selectedProviderModels: ApiModel[];
+  editingModelId: string | null;
+  loadModel: (model: ApiModel) => void;
+  handleDeleteModel: (model: ApiModel) => void;
+  testModel: { mutate: (id: string) => void; isPending: boolean; variables?: string };
+  removeModel: { isPending: boolean; variables?: string };
+  resetModelForm: () => void;
+  modelDisplayName: string;
+  setModelDisplayName: (v: string) => void;
+  modelName: string;
+  setModelName: (v: string) => void;
+  modelEnabled: boolean;
+  setModelEnabled: (v: boolean) => void;
+  modelIsDefault: boolean;
+  setModelIsDefault: (v: boolean) => void;
+  contextWindow: string;
+  setContextWindow: (v: string) => void;
+  modelTags: string;
+  setModelTags: (v: string) => void;
+  modelError: string | null;
+  saveModel: { mutate: () => void; isPending: boolean };
+  providerSlug: string;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-xs font-semibold uppercase text-muted">{t("api.models")}</div>
+          <p className="mt-0.5 text-xs text-muted">{t("api.modelsHelp")}</p>
+        </div>
+        <button className="btn h-8 px-2 text-xs" type="button" onClick={resetModelForm}>
+          <Plus size={14} />
+          {t("common.new")}
+        </button>
+      </div>
+      <div className="space-y-2">
+        {selectedProviderModels.map((model) => {
+          const modelTone =
+            model.last_tested_ok === true
+              ? "bg-emerald-500"
+              : model.last_tested_ok === false
+                ? "bg-rose-500"
+                : "bg-zinc-400";
+          const modelTip =
+            model.last_tested_ok === true
+              ? t("api.statusOk", { time: model.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
+              : model.last_tested_ok === false
+                ? t("api.statusFailed", { error: model.last_tested_error ?? t("common.unknown") })
+                : t("api.statusUntested");
+          return (
+            <div
+              key={model.id}
+              className={`rounded-md border border-border bg-panel p-2 ${editingModelId === model.id ? "ring-1 ring-brand" : ""}`}
+            >
+              <div className="flex items-start justify-between gap-2">
+                <button
+                  className="min-w-0 flex-1 text-left"
+                  type="button"
+                  onClick={() => loadModel(model)}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${modelTone}`} title={modelTip} />
+                    <span className="truncate text-sm font-medium">{model.display_name || model.model_name}</span>
                   </div>
-                  {modelError && <div className="text-xs text-danger">{modelError}</div>}
+                  <div className="mt-1 truncate font-mono text-xs text-muted">{model.model_name}</div>
+                  {model.last_tested_at && (
+                    <div className={`mt-1 text-xs ${
+                      model.last_tested_ok === true
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-rose-600 dark:text-rose-400"
+                    }`}>
+                      {model.last_tested_ok === true
+                        ? t("api.testedOk", { time: formatRelativeTime(model.last_tested_at) })
+                        : t("api.testedFailed", { time: formatRelativeTime(model.last_tested_at) })}
+                    </div>
+                  )}
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {model.is_default && <StatusPill tone="brand">{t("common.default")}</StatusPill>}
+                    {!model.enabled && <StatusPill tone="danger">{t("common.disabled")}</StatusPill>}
+                    {model.tags.slice(0, 3).map((tag) => (
+                      <StatusPill key={tag}>{tag}</StatusPill>
+                    ))}
+                  </div>
+                </button>
+                <div className="flex shrink-0 gap-1">
                   <button
-                    className="btn btn-primary w-full"
+                    className="btn h-7 px-2 text-xs"
                     type="button"
-                    onClick={() => saveModel.mutate()}
-                    disabled={!modelName.trim() || saveModel.isPending}
+                    onClick={() => testModel.mutate(model.id)}
+                    disabled={testModel.isPending && testModel.variables === model.id}
+                    title={t("api.testModelTitle")}
                   >
-                    <Save size={14} />
-                    {editingModelId ? t("api.saveModel") : t("api.addModel")}
+                    {testModel.isPending && testModel.variables === model.id ? (
+                      <Wifi size={12} className="animate-pulse" />
+                    ) : (
+                      <Wifi size={12} />
+                    )}
+                  </button>
+                  <button
+                    className="btn h-7 px-2 text-xs text-danger"
+                    type="button"
+                    onClick={() => handleDeleteModel(model)}
+                    disabled={removeModel.isPending && removeModel.variables === model.id}
+                    title={t("api.deleteModelTitle")}
+                  >
+                    <Trash2 size={12} />
                   </button>
                 </div>
               </div>
-            )}
-          </div>
+            </div>
+          );
+        })}
+        {selectedProviderModels.length === 0 && (
+          <div className="rounded-md border border-dashed border-border p-3 text-xs text-muted">{t("api.emptyModels")}</div>
+        )}
+      </div>
+      <div className="space-y-2 rounded-md border border-border bg-panel p-3">
+        <div className="text-sm font-medium">{editingModelId ? t("api.editModel") : t("api.newModel")}</div>
+        <label className="block">
+          <span className="label">{t("api.displayName")}</span>
+          <input
+            name="api-model-display-name"
+            className="input mt-1 w-full"
+            value={modelDisplayName}
+            onChange={(event) => setModelDisplayName(event.target.value)}
+            placeholder="GPT-4o mini"
+          />
+        </label>
+        <label className="block">
+          <span className="label">{t("common.model")}</span>
+          <input
+            name="api-model-name"
+            className="input mt-1 w-full font-mono"
+            value={modelName}
+            onChange={(event) => setModelName(event.target.value)}
+            placeholder={`${providerSlug || "openai"}/gpt-4o-mini`}
+          />
+        </label>
+        <label className="block">
+          <span className="label">{t("api.contextWindow")}</span>
+          <input
+            name="api-model-context-window"
+            className="input mt-1 w-full"
+            type="number"
+            min={1}
+            value={contextWindow}
+            onChange={(event) => setContextWindow(event.target.value)}
+            placeholder="128000"
+          />
+        </label>
+        <label className="block">
+          <span className="label">{t("common.tags")}</span>
+          <input
+            name="api-model-tags"
+            className="input mt-1 w-full"
+            value={modelTags}
+            onChange={(event) => setModelTags(event.target.value)}
+            placeholder="fast,cheap"
+          />
+        </label>
+        <div className="grid grid-cols-2 gap-2 text-xs">
+          <label className="flex items-center gap-2 rounded-md border border-border bg-panel px-2 py-2">
+            <input
+              type="checkbox"
+              checked={modelEnabled}
+              onChange={(event) => setModelEnabled(event.target.checked)}
+            />
+            {t("common.enabled")}
+          </label>
+          <label className="flex items-center gap-2 rounded-md border border-border bg-panel px-2 py-2">
+            <input
+              type="checkbox"
+              checked={modelIsDefault}
+              onChange={(event) => setModelIsDefault(event.target.checked)}
+            />
+            {t("api.providerDefault")}
+          </label>
         </div>
-      </aside>
-    </section>
+        {modelError && <div className="text-xs text-danger">{modelError}</div>}
+        <button
+          className="btn btn-primary w-full"
+          type="button"
+          onClick={() => saveModel.mutate()}
+          disabled={!modelName.trim() || saveModel.isPending}
+        >
+          <Save size={14} />
+          {editingModelId ? t("api.saveModel") : t("api.addModel")}
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -145,6 +145,11 @@ export interface Room {
   recipe_id?: string | null;
   format_id?: string | null;
   created_at: string;
+  // Populated by `GET /rooms` (room list); RoomState's `room` field omits these.
+  member_count?: number;
+  members?: Array<{ id: string; name: string; color: string; icon: string }>;
+  message_count?: number;
+  last_activity_at?: string | null;
 }
 
 export interface Runtime {
@@ -164,6 +169,8 @@ export interface Runtime {
   phase_exit_suppressed_after_message_id?: string | null;
   consecutive_ai_turns?: number;
   max_consecutive_ai_turns?: number;
+  autodrive_active?: boolean;
+  current_speakers?: string[];
   phase_extra_rounds?: number;
 }
 

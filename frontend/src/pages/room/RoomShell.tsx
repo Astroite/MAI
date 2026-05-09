@@ -33,6 +33,7 @@ import { StatusPill } from "../../components/StatusPill";
 import { RoomListSidebar } from "./RoomListSidebar";
 import { RightPanel } from "./RightPanel";
 import { MessageList } from "./MessageList";
+import { SpeakerStateBar } from "./SpeakerStateBar";
 import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
@@ -248,6 +249,12 @@ export function RoomShell() {
                 }
               />
             )}
+            <SpeakerStateBar
+              roomId={activeRoomId}
+              runtime={state.runtime}
+              personas={state.personas.filter((p) => p.kind === "discussant")}
+              frozen={state.runtime.frozen}
+            />
             <MessageList
               roomId={activeRoomId}
               frozen={state.runtime.frozen}

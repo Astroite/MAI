@@ -1,13 +1,14 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink, useNavigate } from "react-router-dom";
-import { Plus, Search, Trash2 } from "lucide-react";
+import { CornerDownRight, MessageCircle, Plus, Search, Snowflake, Trash2, Users } from "lucide-react";
 import { api } from "../../api";
 import { StatusPill } from "../../components/StatusPill";
 import { useConfirm } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toaster";
 import type { Room } from "../../types";
 import { useI18n } from "../../i18n";
+import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../../components/PersonaIcon";
 
 export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const queryClient = useQueryClient();
@@ -208,33 +209,104 @@ function RoomEntry({
   parentId?: string;
   onDelete: () => void;
 }) {
-  const { t, display } = useI18n();
+  const { t, display, formatRelativeTime } = useI18n();
   const to = parentId ? `/rooms/${parentId}/sub/${room.id}` : `/rooms/${room.id}`;
+  const isFrozen = room.status === "frozen";
+  const members = room.members ?? [];
+  const memberCount = room.member_count ?? members.length;
+  const messageCount = room.message_count ?? 0;
+  // The card's accent color tracks the first member's persona color so each
+  // room reads visually distinct in the rail.
+  const accent = members[0]?.color || DEFAULT_PERSONA_COLOR;
+  const lastActivity = room.last_activity_at ?? room.created_at;
+  const lastActivityRel = lastActivity ? formatRelativeTime(lastActivity) : null;
+
   return (
-    <div className={`group relative ${indent ? "ml-5 border-l border-border/80 pl-2" : ""}`}>
+    <div className={`group relative ${indent ? "ml-4" : ""}`}>
       <NavLink
         to={to}
-        className={`flex items-center gap-2 rounded-lg border px-2 py-2 pr-9 text-sm shadow-card transition ${
-          active ? "border-brand/60 bg-brand/10 text-brand" : "border-transparent text-text hover:border-border hover:bg-surface"
+        className={`relative block overflow-hidden rounded-lg border bg-panel shadow-card transition hover:shadow-soft ${
+          active ? "border-current ring-1" : "border-border hover:border-brand/60"
         }`}
+        style={
+          active
+            ? ({ borderColor: accent, ["--tw-ring-color" as string]: accent, color: accent } as React.CSSProperties)
+            : undefined
+        }
       >
-        <div className={`grid h-8 w-8 flex-shrink-0 place-items-center rounded-md text-xs font-semibold ${
-          active ? "bg-brand text-white" : "bg-surface text-muted"
-        }`}>
-          {indent ? "↳" : room.title.slice(0, 2)}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate font-medium">{room.title}</div>
-          <div className="mt-1 flex items-center gap-1.5 text-xs text-muted">
-            <span className={`h-1.5 w-1.5 rounded-full ${room.status === "frozen" ? "bg-danger" : "bg-success"}`} />
-            {display("roomStatus", room.status)}
+        {/* Left accent strip = persona color (or muted when frozen). */}
+        <span
+          aria-hidden
+          className="absolute inset-y-0 left-0 w-1"
+          style={{ backgroundColor: isFrozen ? "rgb(244 63 94 / 0.6)" : accent }}
+        />
+
+        <div className="px-3 py-2.5 pl-4 text-text">
+          {/* Title row */}
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-1.5">
+              {indent && <CornerDownRight size={12} className="shrink-0 text-muted" />}
+              <h3 className="truncate text-sm font-semibold leading-5">{room.title}</h3>
+            </div>
+            {isFrozen && (
+              <StatusPill tone="danger">
+                <Snowflake size={10} className="-ml-0.5" />
+                {display("roomStatus", room.status)}
+              </StatusPill>
+            )}
+          </div>
+
+          {/* Member avatars row */}
+          {members.length > 0 ? (
+            <div className="mt-2 flex items-center gap-2">
+              <div className="flex -space-x-2">
+                {members.slice(0, 4).map((member) => (
+                  <span
+                    key={member.id}
+                    className="rounded-full ring-2 ring-panel"
+                    title={member.name}
+                  >
+                    <PersonaIcon
+                      icon={member.icon}
+                      color={member.color}
+                      size={22}
+                      iconSize={11}
+                      rounded="full"
+                    />
+                  </span>
+                ))}
+                {memberCount > 4 && (
+                  <span
+                    className="grid h-[22px] w-[22px] place-items-center rounded-full bg-surface text-[10px] font-semibold text-muted ring-2 ring-panel"
+                    title={t("room.membersTitle", { count: memberCount })}
+                  >
+                    +{memberCount - 4}
+                  </span>
+                )}
+              </div>
+              <span className="text-[11px] text-muted">{t("room.memberCount", { count: memberCount })}</span>
+            </div>
+          ) : (
+            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted">
+              <Users size={11} />
+              {t("room.noMembers")}
+            </div>
+          )}
+
+          {/* Footer: message count + last activity */}
+          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted">
+            <span className="inline-flex items-center gap-1">
+              <MessageCircle size={11} />
+              {t("room.messageCount", { count: messageCount })}
+            </span>
+            {lastActivityRel && <span className="truncate">{lastActivityRel}</span>}
           </div>
         </div>
-        {room.status === "frozen" && <StatusPill tone="danger">{display("roomStatus", room.status)}</StatusPill>}
       </NavLink>
+
       <button
         type="button"
-        className="absolute right-1 top-1/2 -translate-y-1/2 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500"
+        className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -243,7 +315,7 @@ function RoomEntry({
         title={t("common.delete")}
         aria-label={`${t("common.delete")} ${room.title}`}
       >
-        <Trash2 size={14} />
+        <Trash2 size={13} />
       </button>
     </div>
   );

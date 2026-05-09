@@ -1,6 +1,8 @@
+import { Fragment } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { Check, Plus, RefreshCw } from "lucide-react";
+import { Check, MessagesSquare, Plus, RefreshCw, Settings2, UsersRound } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { api } from "../api";
 import { StatusPill } from "../components/StatusPill";
 import { useI18n } from "../i18n";
@@ -71,6 +73,14 @@ export function DashboardPage() {
   );
 }
 
+type StepDef = {
+  key: string;
+  done: boolean;
+  label: string;
+  icon: LucideIcon;
+  action: { to: string; label: string };
+};
+
 function GettingStartedCard({
   apiReady,
   hasPersonas
@@ -79,68 +89,142 @@ function GettingStartedCard({
   hasPersonas: boolean;
 }) {
   const { t } = useI18n();
-  const steps = [
+  const steps: StepDef[] = [
     {
       key: "api",
       done: apiReady,
+      icon: Settings2,
       label: t("dashboard.gettingStarted.step.api"),
       action: { to: "/settings", label: t("dashboard.gettingStarted.go.api") }
     },
     {
       key: "personas",
       done: hasPersonas,
+      icon: UsersRound,
       label: t("dashboard.gettingStarted.step.personas"),
       action: { to: "/templates/personas", label: t("dashboard.gettingStarted.go.personas") }
     },
     {
       key: "room",
       done: false,
+      icon: MessagesSquare,
       label: t("dashboard.gettingStarted.step.room"),
       action: { to: "/dashboard/new", label: t("dashboard.newRoom") }
     }
   ];
-  const nextStep = steps.find((step) => !step.done);
+  const nextKey = steps.find((step) => !step.done)?.key;
 
   return (
     <div className="px-6 py-10">
-      <div className="mx-auto max-w-2xl space-y-5 text-center">
-        <div className="space-y-2">
+      <div className="mx-auto max-w-4xl space-y-8">
+        <div className="space-y-2 text-center">
           <h2 className="text-lg font-semibold">{t("dashboard.gettingStarted.title")}</h2>
           <p className="text-sm text-muted">{t("dashboard.gettingStarted.subtitle")}</p>
         </div>
-        <ol className="space-y-2 text-left text-sm">
-          {steps.map((step, index) => {
-            const isNext = step === nextStep;
-            return (
-              <li
-                key={step.key}
-                className={`flex items-center gap-3 rounded-md border px-3 py-2 ${
-                  step.done
-                    ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
-                    : isNext
-                      ? "border-brand bg-brand/5 text-text"
-                      : "border-border bg-surface text-muted"
-                }`}
-              >
-                {step.done ? (
-                  <Check size={14} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
-                ) : (
-                  <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-current text-xs">
-                    {index + 1}
-                  </span>
-                )}
-                <span className={`flex-1 ${step.done ? "line-through opacity-70" : ""}`}>{step.label}</span>
-                {step.action && !step.done && (
-                  <Link to={step.action.to} className="btn h-7 px-2 text-xs">
-                    {step.key === "room" && <Plus size={12} />}
-                    {step.action.label}
-                  </Link>
-                )}
-              </li>
-            );
-          })}
+
+        <ol
+          // 3 equal-width nodes on md+, vertical stack on mobile. Connectors
+          // are flex items rendered between the nodes — they hide on mobile
+          // because the layout switches to a column.
+          className="flex items-stretch justify-center gap-3 max-md:flex-col"
+        >
+          {steps.map((step, index) => (
+            <Fragment key={step.key}>
+              <StepNode step={step} index={index} isNext={step.key === nextKey} />
+              {index < steps.length - 1 && <StepConnector done={step.done} />}
+            </Fragment>
+          ))}
         </ol>
       </div>
     </div>
+  );
+}
+
+function StepNode({
+  step,
+  index,
+  isNext
+}: {
+  step: StepDef;
+  index: number;
+  isNext: boolean;
+}) {
+  const { t } = useI18n();
+  // Three visual states: done (green), next (brand-highlighted, primary CTA),
+  // upcoming (muted). The whole card is the same shape; only color shifts so
+  // the row reads as a continuous progress strip rather than three islands.
+  const state = step.done ? "done" : isNext ? "next" : "upcoming";
+  const tone = {
+    done: "border-emerald-500/40 bg-emerald-500/5",
+    next: "border-brand bg-brand/5 shadow-card",
+    upcoming: "border-border bg-surface"
+  }[state];
+  const Icon = step.icon;
+
+  return (
+    <li
+      className={`flex w-full max-w-[16rem] flex-1 flex-col items-center gap-3 rounded-lg border px-4 py-5 text-center transition ${tone}`}
+    >
+      <div className="relative">
+        {/* Numbered badge with the step's icon inside; flips to a check when done. */}
+        <span
+          className={`grid h-12 w-12 place-items-center rounded-full ${
+            state === "done"
+              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              : state === "next"
+                ? "bg-brand/15 text-brand"
+                : "bg-panel text-muted"
+          }`}
+        >
+          {state === "done" ? <Check size={22} /> : <Icon size={22} />}
+        </span>
+        <span
+          aria-hidden
+          className={`absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full border-2 border-panel text-[10px] font-semibold ${
+            state === "done"
+              ? "bg-emerald-500 text-white"
+              : state === "next"
+                ? "bg-brand text-white"
+                : "bg-surface text-muted"
+          }`}
+        >
+          {index + 1}
+        </span>
+      </div>
+
+      <div className="min-h-[2.5rem] text-sm font-medium leading-snug text-text">
+        {step.label}
+      </div>
+
+      {step.done ? (
+        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          {t("common.done")}
+        </span>
+      ) : (
+        <Link
+          to={step.action.to}
+          className={`btn h-8 px-3 text-xs ${state === "next" ? "btn-primary" : ""}`}
+        >
+          {step.key === "room" && <Plus size={12} />}
+          {step.action.label}
+        </Link>
+      )}
+    </li>
+  );
+}
+
+function StepConnector({ done }: { done: boolean }) {
+  // Small "rail" between nodes. Filled when the previous step is done so the
+  // strip reads left-to-right like a progress bar.
+  return (
+    <li
+      aria-hidden
+      className="flex flex-1 items-center max-md:hidden"
+      style={{ maxWidth: "3rem" }}
+    >
+      <span
+        className={`h-[2px] w-full rounded-full ${done ? "bg-emerald-500/50" : "bg-border"}`}
+      />
+    </li>
   );
 }

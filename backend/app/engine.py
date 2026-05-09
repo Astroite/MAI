@@ -188,13 +188,44 @@ async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
     if runtime.consecutive_ai_turns >= runtime.max_consecutive_ai_turns:
         return False
     ordering = (template.ordering_rule or {}).get("type")
-    if ordering == "casual":
+    phase_tags = set(template.tags or [])
+    is_story = "story" in phase_tags
+    if ordering == "casual" and not is_story:
+        # Story phases run continuously until the user freezes or the cap
+        # hits — geometric decay would otherwise tail the conversation off
+        # within a few turns, defeating the "let them play out the scene"
+        # design. Other casual rooms (chat) keep the gentle taper.
         p = CASUAL_CONTINUATION_BASE * (CASUAL_CONTINUATION_DECAY ** runtime.consecutive_ai_turns)
         if random.random() > p:
             return False
     room = await session.get(Room, room_id)
     if room and await check_phase_exit(session, room, runtime, emit=False):
         return False
+    return True
+
+
+def is_autodrive_active(room_id: str) -> bool:
+    """True while an `_autodrive_runner` is iterating turns for this room.
+
+    Surfaced to the UI so the speaker-status strip can distinguish
+    "AI is taking the next turn" from "waiting for the user to nudge".
+    """
+    lock = _AUTODRIVE_LOCKS.get(room_id)
+    return lock is not None and lock.locked()
+
+
+def schedule_autodrive(room_id: str) -> bool:
+    """Manually kick the autodrive chain without requiring a user message.
+
+    Used by `POST /rooms/{id}/autodrive/resume` so the user can let the AI
+    keep going by clicking a button instead of typing. No-op (returns False)
+    if a chain is already running or any persona stream is in flight."""
+    lock = _autodrive_lock(room_id)
+    if lock.locked():
+        return False
+    if active_calls_for_room(room_id):
+        return False
+    asyncio.create_task(_autodrive_runner(room_id, lock))
     return True
 
 
