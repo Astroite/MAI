@@ -1260,3 +1260,55 @@ class SceneExitRequest(APIModel):
         max_length=500,
         description="可选的离场系统消息文本。留空时使用默认 '<角色名> 离开了场景。'",
     )
+
+
+# --- Character episodic memory ------------------------------------------
+
+WORLD_MEMORY_KINDS = ("episode", "impression", "vow", "fact", "backstory")
+
+
+class WorldCharacterMemoryOut(APIModel):
+    id: str
+    world_character_id: str
+    source_scene_id: str | None = None
+    scene_index_at_write: int | None = None
+    in_world_time_at_event: str = ""
+    kind: Literal["episode", "impression", "vow", "fact", "backstory"]
+    target_character_id: str | None = None
+    content: str
+    salience: float = 0.5
+    created_at: datetime
+
+
+class WorldCharacterMemoryCreate(APIModel):
+    """Manual write — used by the user as 'director' to seed backstory or
+    correct the LLM's output. The scene-end memory scribe writes its own
+    rows directly via the engine helper, not this schema."""
+
+    kind: Literal["episode", "impression", "vow", "fact", "backstory"] = "backstory"
+    content: str = Field(min_length=1, max_length=2000)
+    salience: float = Field(default=0.5, ge=0.0, le=1.0)
+    in_world_time_at_event: str = ""
+    target_character_id: str | None = None
+
+
+# --- Memory distillation tool schema (LLM output at scene seal) ---------
+
+
+class MemoryEntryDraft(APIModel):
+    """One row the LLM proposes adding for a character at scene seal."""
+
+    kind: Literal["episode", "vow"] = "episode"
+    content: str = Field(min_length=1, max_length=600)
+    salience: float = Field(default=0.5, ge=0.0, le=1.0)
+
+
+class MemoryDistillation(APIModel):
+    """Tool-call output for run_scene_memory_scribe.
+
+    v1 only writes new episodes/vows. Impressions become relationship-card
+    updates in PR 4 (different table). skill_changes is a v2 placeholder.
+    """
+
+    new_episodes: list[MemoryEntryDraft] = Field(default_factory=list)
+    reasoning: str = Field(default="", max_length=400)

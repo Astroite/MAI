@@ -514,3 +514,31 @@ export interface SceneExitBody {
   world_character_id: string;
   description?: string;
 }
+
+export type WorldCharacterMemoryKind =
+  | "episode"
+  | "impression"
+  | "vow"
+  | "fact"
+  | "backstory";
+
+export interface WorldCharacterMemory {
+  id: string;
+  world_character_id: string;
+  source_scene_id: string | null;
+  scene_index_at_write: number | null;
+  in_world_time_at_event: string;
+  kind: WorldCharacterMemoryKind;
+  target_character_id: string | null;
+  content: string;
+  salience: number;
+  created_at: string;
+}
+
+export interface WorldCharacterMemoryCreateBody {
+  kind?: WorldCharacterMemoryKind;
+  content: string;
+  salience?: number;
+  in_world_time_at_event?: string;
+  target_character_id?: string | null;
+}

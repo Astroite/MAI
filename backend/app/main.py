@@ -33,6 +33,7 @@ from .engine import (
     is_autodrive_active,
     run_manual_facilitator_eval,
     run_room_turn,
+    run_scene_memory_scribe,
     schedule_autodrive,
     transition_to_next_phase,
     unfreeze_room,
@@ -63,6 +64,7 @@ from .models import (
     Upload,
     World,
     WorldCharacter,
+    WorldCharacterMemory,
     WorldSceneMember,
 )
 from .schemas import (
@@ -132,6 +134,8 @@ from .schemas import (
     SceneRosterEntry,
     SceneTimelineEntry,
     WorldCharacterCreate,
+    WorldCharacterMemoryCreate,
+    WorldCharacterMemoryOut,
     WorldCharacterOut,
     WorldCharacterUpdate,
     WorldCreate,
@@ -2260,11 +2264,152 @@ async def delete_world_character(
     return character
 
 
+# --- Character episodic memory ------------------------------------------
+
+
+@app.get(
+    "/worlds/{world_id}/characters/{character_id}/memories",
+    response_model=list[WorldCharacterMemoryOut],
+)
+async def list_character_memories(
+    world_id: str,
+    character_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """All memory rows for a character, newest first by scene then created_at.
+    Used by the memory inspection panel and (in PR 5) the manual edit UI."""
+    await _get_character_or_404(session, world_id, character_id)
+    rows = (
+        await session.scalars(
+            select(WorldCharacterMemory)
+            .where(WorldCharacterMemory.world_character_id == character_id)
+            .order_by(
+                WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
+                WorldCharacterMemory.created_at.desc(),
+            )
+        )
+    ).all()
+    return rows
+
+
+@app.post(
+    "/worlds/{world_id}/characters/{character_id}/memories",
+    response_model=WorldCharacterMemoryOut,
+)
+async def create_character_memory(
+    world_id: str,
+    character_id: str,
+    body: WorldCharacterMemoryCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    """Manual write — used by the user as 'director' to seed backstory or
+    correct the LLM's output. The scene-end memory scribe writes its own
+    rows directly via the engine helper, not this route."""
+    character = await _get_character_or_404(session, world_id, character_id)
+    if body.target_character_id is not None:
+        target = await session.get(WorldCharacter, body.target_character_id)
+        if target is None or target.world_id != world_id:
+            raise HTTPException(422, "target_character_id not in this world")
+    memory = WorldCharacterMemory(
+        id=new_id(),
+        world_character_id=character.id,
+        source_scene_id=None,
+        scene_index_at_write=None,
+        in_world_time_at_event=body.in_world_time_at_event,
+        kind=body.kind,
+        target_character_id=body.target_character_id,
+        content=body.content,
+        salience=body.salience,
+    )
+    session.add(memory)
+    await session.commit()
+    await session.refresh(memory)
+    return memory
+
+
+@app.delete(
+    "/worlds/{world_id}/characters/{character_id}/memories/{memory_id}"
+)
+async def delete_character_memory(
+    world_id: str,
+    character_id: str,
+    memory_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    await _get_character_or_404(session, world_id, character_id)
+    memory = await session.get(WorldCharacterMemory, memory_id)
+    if memory is None or memory.world_character_id != character_id:
+        raise HTTPException(404, "memory not found")
+    await session.delete(memory)
+    await session.commit()
+    return {"status": "deleted"}
+
+
 # --- Scenes (Rooms within a World) --------------------------------------
 
 
+# Top-K memories injected into a fresh scene's persona prompt. Kept small to
+# avoid drowning the rest of the system prompt; v2 will use embedding-based
+# retrieval and a budget rather than a fixed K.
+MEMORY_RETRIEVAL_TOP_K = 6
+
+
+async def _fetch_top_memories(
+    session: AsyncSession, character_id: str, limit: int = MEMORY_RETRIEVAL_TOP_K
+) -> list[WorldCharacterMemory]:
+    """v1 retrieval: top-K by salience desc, then most recent first.
+
+    No BM25 / embedding match — that's a v2 enhancement once we feel the
+    pain of irrelevant top-K. This still beats the alternative (everything
+    or nothing) and matches design doc §5.4's "salience-driven" intent.
+    """
+    rows = (
+        await session.scalars(
+            select(WorldCharacterMemory)
+            .where(WorldCharacterMemory.world_character_id == character_id)
+            .order_by(
+                WorldCharacterMemory.salience.desc(),
+                WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
+                WorldCharacterMemory.created_at.desc(),
+            )
+            .limit(limit)
+        )
+    ).all()
+    # Re-order chronologically for prompt readability — the model sees a
+    # natural timeline rather than a salience-sorted soup.
+    return sorted(
+        rows,
+        key=lambda m: (
+            m.scene_index_at_write if m.scene_index_at_write is not None else -1,
+            m.created_at,
+        ),
+    )
+
+
+def _format_memory_line(memory: WorldCharacterMemory) -> str:
+    prefix_parts: list[str] = []
+    if memory.scene_index_at_write is not None:
+        prefix_parts.append(f"第{memory.scene_index_at_write}幕")
+    elif memory.kind == "backstory":
+        prefix_parts.append("过往")
+    if memory.in_world_time_at_event:
+        prefix_parts.append(memory.in_world_time_at_event)
+    prefix = "（" + " · ".join(prefix_parts) + "）" if prefix_parts else ""
+    kind_label = {
+        "episode": "经历",
+        "vow": "誓言",
+        "impression": "印象",
+        "fact": "事实",
+        "backstory": "背景",
+    }.get(memory.kind, memory.kind)
+    return f"- [{kind_label}]{prefix} {memory.content.strip()}"
+
+
 def _compose_scene_persona_prompt(
-    world: World, character: WorldCharacter, scene: Room
+    world: World,
+    character: WorldCharacter,
+    scene: Room,
+    memories: list[WorldCharacterMemory] | None = None,
 ) -> str:
     """Bake World + character context into the persona's system_prompt at
     PersonaInstance creation time.
@@ -2300,6 +2445,10 @@ def _compose_scene_persona_prompt(
     if character.goals_text.strip():
         char_lines.append(f"当前目标：{character.goals_text.strip()}")
     parts.append("## 你是谁\n" + "\n".join(char_lines))
+    # Memory block (retrieved at scene-creation; frozen in the snapshot).
+    if memories:
+        memory_lines = [_format_memory_line(m) for m in memories]
+        parts.append("## 你记得的事\n" + "\n".join(memory_lines))
     # Scene block (time + background hints)
     scene_lines: list[str] = []
     if scene.in_world_time_start.strip():
@@ -2330,7 +2479,8 @@ async def _create_scene_persona_instance(
     template = await session.get(PersonaTemplate, character.persona_template_id)
     if template is None:
         raise HTTPException(422, f"persona template {character.persona_template_id} not found")
-    composed_prompt = _compose_scene_persona_prompt(world, character, scene)
+    memories = await _fetch_top_memories(session, character.id)
+    composed_prompt = _compose_scene_persona_prompt(world, character, scene, memories)
     full_prompt = template.system_prompt
     if composed_prompt:
         full_prompt = f"{template.system_prompt}\n\n{composed_prompt}"
@@ -2683,17 +2833,29 @@ async def scene_exit(
 
 @app.post("/rooms/{room_id}/seal", response_model=RoomOut)
 async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session)):
-    """Mark a scene as sealed.
+    """Mark a scene as sealed and run the per-character memory scribe.
 
-    PR 2 just sets the timestamp — no memory pipeline yet (that's PR 3+).
-    Sealed scenes reject further enter/exit and message posts (the existing
-    freeze guard handles message posts; enter/exit checks sealed_at).
+    The scribe is synchronous: each AI character on the roster gets one LLM
+    tool-call that distills 0–6 episode/vow rows into world_character_memories.
+    Failures per character are logged via trace; the scene still seals so the
+    user isn't blocked. Re-sealing a sealed scene is a no-op (idempotent at
+    both the seal-stamp and per-character memory layers).
     """
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
         return scene
     scene.sealed_at = datetime.now(timezone.utc)
     await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
+    # Hold the sealed_at write so even if the scribe crashes, the seal sticks.
+    await session.flush()
+    results = await run_scene_memory_scribe(session, scene)
+    await trace_record(
+        session,
+        scene.id,
+        "scene_memory_summary",
+        "per-character memory scribe completed",
+        {"results": results},
+    )
     await session.commit()
     await session.refresh(scene)
     return scene
