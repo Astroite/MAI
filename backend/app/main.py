@@ -2689,8 +2689,10 @@ def _compose_scene_persona_prompt(
         char_header += f"（{identity}）"
     char_header += "。"
     char_lines = [char_header]
-    if character.core_identity.strip():
-        char_lines.append(character.core_identity.strip())
+    # Note: character.core_identity is intentionally NOT inlined here. It
+    # plays the role of the character's primary system prompt and is emitted
+    # once at the very top of the composed prompt by `_create_scene_persona_instance`.
+    # Including it here too would duplicate it in the LLM context.
     if character.brief.strip():
         char_lines.append(character.brief.strip())
     if character.skills_text.strip():
@@ -2750,9 +2752,16 @@ async def _create_scene_persona_instance(
     composed_prompt = _compose_scene_persona_prompt(
         world, character, scene, memories, relations, peer_characters or []
     )
-    full_prompt = template.system_prompt
+    # Single source of truth for the character's "main" prompt: prefer
+    # character.core_identity (written by the user via the WorldCharacter
+    # editor — and pre-filled from template.system_prompt at character
+    # creation time) over the template's prompt. The fallback handles legacy
+    # characters that were created before the picker started snapshotting
+    # template.system_prompt into core_identity.
+    primary_prompt = character.core_identity.strip() or template.system_prompt
+    full_prompt = primary_prompt
     if composed_prompt:
-        full_prompt = f"{template.system_prompt}\n\n{composed_prompt}"
+        full_prompt = f"{primary_prompt}\n\n{composed_prompt}"
     instance = PersonaInstance(
         id=new_id(),
         room_id=scene.id,

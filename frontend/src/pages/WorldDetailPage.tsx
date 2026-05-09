@@ -104,6 +104,10 @@ export function WorldDetailPage() {
           name: tpl.name,
           identity: tpl.identity,
           brief: tpl.description,
+          // Snapshot the template's system_prompt into core_identity so the
+          // character carries its own (editable) prompt — same convention as
+          // the inline AddCharacterForm path.
+          core_identity: tpl.system_prompt,
           persona_template_id: tpl.id,
           color: tpl.color,
           icon: tpl.icon
@@ -366,15 +370,15 @@ function CharacterRow({
         <>
           <button
             type="button"
-            className="btn h-7 w-7 px-0 text-muted hover:text-brand"
+            className="btn h-9 w-9 px-0 text-muted hover:text-brand"
             title="编辑角色档案"
             onClick={() => setEditing(true)}
           >
-            <Pencil size={13} />
+            <Pencil size={16} />
           </button>
           <button
             type="button"
-            className="btn h-7 w-7 px-0 text-muted hover:text-danger"
+            className="btn h-9 w-9 px-0 text-muted hover:text-danger"
             title="退场（保留历史）"
             onClick={async () => {
               const ok = await confirm({
@@ -387,7 +391,7 @@ function CharacterRow({
             }}
             disabled={remove.isPending}
           >
-            <Trash2 size={14} />
+            <Trash2 size={16} />
           </button>
         </>
       )}
@@ -427,7 +431,12 @@ function AddCharacterForm({
   // auto-fills only the fields that haven't been touched (or that were
   // last filled BY a previous template selection). This stops switching
   // templates from clobbering deliberate character names like "苏离".
-  const userEdited = useRef({ name: false, identity: false, brief: false });
+  const userEdited = useRef({
+    name: false,
+    identity: false,
+    brief: false,
+    coreIdentity: false
+  });
 
   const selectedTemplate = templateId
     ? templates.find((tpl) => tpl.id === templateId) ?? null
@@ -438,6 +447,10 @@ function AddCharacterForm({
     if (!userEdited.current.name) setName(template.name);
     if (!userEdited.current.identity) setIdentity(template.identity);
     if (!userEdited.current.brief) setBrief(template.description);
+    // The template's system_prompt is what actually drives the LLM. Snapshot
+    // it into core_identity so the user can see it, edit it, and so the
+    // engine relies on a single canonical field per character.
+    if (!userEdited.current.coreIdentity) setCoreIdentity(template.system_prompt);
     setColor(template.color || color);
     setIcon(template.icon || icon);
     setPickerOpen(false);
@@ -467,7 +480,7 @@ function AddCharacterForm({
       setSkillsText("");
       setGoalsText("");
       setTemplateId(null);
-      userEdited.current = { name: false, identity: false, brief: false };
+      userEdited.current = { name: false, identity: false, brief: false, coreIdentity: false };
       onDone();
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -597,13 +610,19 @@ function AddCharacterForm({
           hint="只对 AI 角色生效，每场都进 prompt 引导发言风格。"
         >
           <div className="space-y-2.5">
-            <LabeledField label="Core identity" hint="角色的底色与性格。">
+            <LabeledField
+              label="Core identity"
+              hint="角色的底色与性格 / system prompt。选模板后会自动填入模板的 system prompt，可继续追加。"
+            >
               <textarea
                 className="input w-full"
-                rows={3}
+                rows={5}
                 placeholder="例：沉默寡言，对承诺极重；少年时曾被门派遗弃，至今不愿提起。"
                 value={coreIdentity}
-                onChange={(event) => setCoreIdentity(event.target.value)}
+                onChange={(event) => {
+                  userEdited.current.coreIdentity = true;
+                  setCoreIdentity(event.target.value);
+                }}
               />
             </LabeledField>
             <LabeledField label="技能">
