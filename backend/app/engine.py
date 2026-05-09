@@ -1493,6 +1493,15 @@ async def run_facilitator_eval(
     latest_message_id: str,
     force: bool = False,
 ) -> FacilitatorSignal | None:
+    # Story World scenes don't need a discussion facilitator — pacing,
+    # consensus signals, and decision-pending tags all assume a working
+    # session, not an unfolding scene. Mirrors the scribe skip in
+    # run_scribe_update; a manual `force=True` request still goes through
+    # for the rare case the user explicitly asks via /facilitator.
+    if not force:
+        room = await session.get(Room, room_id)
+        if room is not None and room.world_id is not None:
+            return None
     facilitator = await get_room_system_persona(session, room_id, "facilitator")
     config = facilitator.config or {}
     if config.get("disabled") and not force:

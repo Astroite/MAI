@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     data_dir: Path = Field(default_factory=_default_data_dir)
     database_url: str = ""
     trace_payload_dir: Path = Path("trace_payloads")
+    # Sidecar payload files smaller than this byte size are not written to
+    # disk. The trace_events row still records what happened. Defaults to
+    # 500 bytes to drop the noise from "I picked persona X" / "stream
+    # started" style events while keeping LLM-bearing payloads. Set to 0 to
+    # write every payload (legacy behavior); set to a huge number to keep
+    # only the row and write no sidecars.
+    trace_payload_min_bytes: int = 500
     upload_dir: Path = Path("uploads")
     cors_origins: str = Field(
         default="http://localhost:5173,http://127.0.0.1:5173,tauri://localhost,http://tauri.localhost",
