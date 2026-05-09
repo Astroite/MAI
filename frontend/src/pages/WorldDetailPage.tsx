@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -53,8 +53,12 @@ export function WorldDetailPage() {
     enabled: Boolean(worldId)
   });
   const aiTemplates = useQuery({
-    queryKey: ["persona-templates", "discussant"],
-    queryFn: () => api.personaTemplates("discussant")
+    // Story-world characters bind to user-authored persona templates. Built-in
+    // templates (架构师, 性能批评者 …) are written for discussion rooms and
+    // their identities don't make sense as story characters — the user should
+    // duplicate-then-edit a built-in if they want to derive from one.
+    queryKey: ["persona-templates", "discussant", "user"],
+    queryFn: () => api.personaTemplates("discussant", false)
   });
 
   const [addingCharacter, setAddingCharacter] = useState(false);
@@ -508,7 +512,6 @@ function CreateSceneForm({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const [title, setTitle] = useState("");
   const [background, setBackground] = useState("");
   const [timeStart, setTimeStart] = useState("");
@@ -534,9 +537,11 @@ function CreateSceneForm({
     onSuccess: (state) => {
       void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
       void queryClient.invalidateQueries({ queryKey: ["world-timeline", worldId] });
-      toast.success(`已创建第 ${state.room.scene_index} 幕。`);
+      // Story-world scenes intentionally don't yank the user into the
+      // discussion-room shell — the timeline is the source of truth and the
+      // user can pick when to drop into the scene from the new card.
+      toast.success(`已创建第 ${state.room.scene_index} 幕，可在时间线点击进入。`);
       onDone();
-      navigate(`/rooms/${state.room.id}`);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });

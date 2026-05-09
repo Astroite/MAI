@@ -766,8 +766,16 @@ async def _stream_one_message(
     # Map peer persona ids -> display names so llm_adapter can label "who said
     # what" in the transcript. Without this every AI sees prior AI turns as
     # its own `assistant` history and they all converge to one narrator voice.
+    # Only discussants are peers — scribe and facilitator are system roles
+    # the AI character should not be aware of (they'd otherwise show up in
+    # the "本房间在场的其他人" roster block of the system prompt).
     peer_personas = (
-        await session.scalars(select(PersonaInstance).where(PersonaInstance.room_id == room.id))
+        await session.scalars(
+            select(PersonaInstance).where(
+                PersonaInstance.room_id == room.id,
+                PersonaInstance.kind == "discussant",
+            )
+        )
     ).all()
     peer_names = {p.id: p.name for p in peer_personas}
     peer_identities = {p.id: (p.identity or "") for p in peer_personas}

@@ -153,7 +153,16 @@ export function PersonaTemplatePicker({
                   );
                 })}
                 {filtered.length === 0 && (
-                  <li className="py-6 text-center text-xs text-muted">没有匹配的模板。</li>
+                  <li className="space-y-2 px-3 py-6 text-center text-xs text-muted">
+                    {templates.length === 0 ? (
+                      <>
+                        <div>还没有可用的人设模板。</div>
+                        <div>到「模板 → 智能体」复制一个内置模板再回来选。</div>
+                      </>
+                    ) : (
+                      <div>没有匹配的模板。</div>
+                    )}
+                  </li>
                 )}
               </ul>
             </div>
