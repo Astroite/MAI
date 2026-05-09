@@ -146,6 +146,13 @@ export interface Room {
   status: "active" | "frozen" | "archived";
   recipe_id?: string | null;
   format_id?: string | null;
+  // Story World scene fields (non-null world_id marks the room as a scene).
+  world_id?: string | null;
+  scene_index?: number | null;
+  in_world_time_start?: string;
+  in_world_time_end?: string;
+  in_world_duration_hint?: string;
+  sealed_at?: string | null;
   created_at: string;
   // Populated by `GET /rooms` (room list); RoomState's `room` field omits these.
   member_count?: number;
@@ -453,4 +460,57 @@ export interface WorldCharacterUpdateBody {
   goals_text?: string;
   status?: WorldCharacterStatus;
   config?: Record<string, unknown>;
+}
+
+export interface WorldSceneMember {
+  scene_id: string;
+  world_character_id: string;
+  role_in_scene: string;
+  speak_as_user: boolean;
+  entered_at_message_id: string | null;
+  exited_at_message_id: string | null;
+  joined_at: string;
+}
+
+export interface SceneRosterEntry {
+  world_character_id: string;
+  role_in_scene?: string;
+  speak_as_user?: boolean;
+}
+
+export interface SceneCreateBody {
+  title: string;
+  background?: string;
+  members?: SceneRosterEntry[];
+  in_world_time_start?: string;
+  in_world_time_end?: string;
+  in_world_duration_hint?: string;
+  format_id?: string | null;
+  recipe_id?: string | null;
+}
+
+export interface SceneTimelineEntry {
+  id: string;
+  scene_index: number;
+  title: string;
+  status: "active" | "frozen" | "archived";
+  sealed_at: string | null;
+  in_world_time_start: string;
+  in_world_time_end: string;
+  in_world_duration_hint: string;
+  member_count: number;
+  message_count: number;
+  created_at: string;
+}
+
+export interface SceneEnterBody {
+  world_character_id: string;
+  role_in_scene?: string;
+  speak_as_user?: boolean;
+  description?: string;
+}
+
+export interface SceneExitBody {
+  world_character_id: string;
+  description?: string;
 }

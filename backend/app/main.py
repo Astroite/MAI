@@ -63,6 +63,7 @@ from .models import (
     Upload,
     World,
     WorldCharacter,
+    WorldSceneMember,
 )
 from .schemas import (
     AddPersonaInstancesRequest,
@@ -125,12 +126,18 @@ from .schemas import (
     TurnRequest,
     UploadOut,
     VerdictCreate,
+    SceneCreate,
+    SceneEnterRequest,
+    SceneExitRequest,
+    SceneRosterEntry,
+    SceneTimelineEntry,
     WorldCharacterCreate,
     WorldCharacterOut,
     WorldCharacterUpdate,
     WorldCreate,
     WorldDetailOut,
     WorldOut,
+    WorldSceneMemberOut,
     WorldSummaryOut,
     WorldUpdate,
 )
@@ -2075,11 +2082,33 @@ async def list_worlds(session: AsyncSession = Depends(get_session)):
             )
         ).all()
     )
+    scene_counts = dict(
+        (
+            await session.execute(
+                select(Room.world_id, func.count(Room.id))
+                .where(Room.world_id.in_(world_ids))
+                .group_by(Room.world_id)
+            )
+        ).all()
+    )
+    # last_activity_at is the latest of (scene.created_at, latest message.created_at)
+    # across all scenes in the world. Compute via JOIN so 0-message scenes still
+    # contribute their created_at.
+    activity_rows = (
+        await session.execute(
+            select(Room.world_id, func.max(Message.created_at))
+            .join(Message, Message.room_id == Room.id, isouter=True)
+            .where(Room.world_id.in_(world_ids))
+            .group_by(Room.world_id)
+        )
+    ).all()
+    last_activity = {wid: ts for wid, ts in activity_rows}
     out: list[WorldSummaryOut] = []
     for world in worlds:
         summary = WorldSummaryOut.model_validate(world)
         summary.character_count = int(counts.get(world.id, 0))
-        # scene_count + last_activity_at populated in PR 2 once Room.world_id exists.
+        summary.scene_count = int(scene_counts.get(world.id, 0))
+        summary.last_activity_at = last_activity.get(world.id)
         out.append(summary)
     return out
 
@@ -2229,6 +2258,459 @@ async def delete_world_character(
     await session.commit()
     await session.refresh(character)
     return character
+
+
+# --- Scenes (Rooms within a World) --------------------------------------
+
+
+def _compose_scene_persona_prompt(
+    world: World, character: WorldCharacter, scene: Room
+) -> str:
+    """Bake World + character context into the persona's system_prompt at
+    PersonaInstance creation time.
+
+    Editing the source World/Character later does *not* retroactively rewrite
+    instances of already-created scenes (per design doc R2). New scenes pick
+    up fresh context.
+    """
+    parts: list[str] = []
+    # World block
+    world_lines: list[str] = []
+    if world.synopsis.strip():
+        world_lines.append(world.synopsis.strip())
+    if world.setting.strip():
+        world_lines.append(f"设定：{world.setting.strip()}")
+    if world.calendar_hint.strip():
+        world_lines.append(f"纪年法：{world.calendar_hint.strip()}")
+    if world_lines:
+        parts.append(f"## 世界『{world.name}』\n" + "\n".join(world_lines))
+    # Character block
+    identity = character.identity.strip()
+    char_header = f"你是「{character.name}」"
+    if identity:
+        char_header += f"（{identity}）"
+    char_header += "。"
+    char_lines = [char_header]
+    if character.core_identity.strip():
+        char_lines.append(character.core_identity.strip())
+    if character.brief.strip():
+        char_lines.append(character.brief.strip())
+    if character.skills_text.strip():
+        char_lines.append(f"技能：{character.skills_text.strip()}")
+    if character.goals_text.strip():
+        char_lines.append(f"当前目标：{character.goals_text.strip()}")
+    parts.append("## 你是谁\n" + "\n".join(char_lines))
+    # Scene block (time + background hints)
+    scene_lines: list[str] = []
+    if scene.in_world_time_start.strip():
+        scene_lines.append(f"时间：{scene.in_world_time_start.strip()}")
+    if scene.in_world_duration_hint.strip():
+        scene_lines.append(f"时长：{scene.in_world_duration_hint.strip()}")
+    if scene.background.strip():
+        scene_lines.append(scene.background.strip())
+    if scene_lines:
+        parts.append(f"## 这一幕（第 {scene.scene_index} 幕）\n" + "\n".join(scene_lines))
+    return "\n\n".join(parts)
+
+
+async def _create_scene_persona_instance(
+    session: AsyncSession,
+    scene: Room,
+    world: World,
+    character: WorldCharacter,
+    next_position: int,
+) -> PersonaInstance:
+    """Snapshot a WorldCharacter (kind=ai) into a PersonaInstance for the scene.
+    Mirrors `_create_persona_instances` but pulls from the bound PersonaTemplate
+    plus World/character context."""
+    if character.kind != "ai":
+        raise HTTPException(422, f"character {character.id} is not an ai character")
+    if not character.persona_template_id:
+        raise HTTPException(422, f"character {character.id} has no persona_template_id")
+    template = await session.get(PersonaTemplate, character.persona_template_id)
+    if template is None:
+        raise HTTPException(422, f"persona template {character.persona_template_id} not found")
+    composed_prompt = _compose_scene_persona_prompt(world, character, scene)
+    full_prompt = template.system_prompt
+    if composed_prompt:
+        full_prompt = f"{template.system_prompt}\n\n{composed_prompt}"
+    instance = PersonaInstance(
+        id=new_id(),
+        room_id=scene.id,
+        template_id=template.id,
+        template_version=template.version,
+        position=next_position,
+        kind=template.kind,
+        # Use the WorldCharacter's name/identity (not the template's), so the
+        # scene shows the character as the World named them.
+        name=character.name,
+        identity=character.identity,
+        description=character.brief or template.description,
+        backing_model=template.backing_model,
+        api_provider_id=template.api_provider_id,
+        api_model_id=template.api_model_id,
+        system_prompt=full_prompt,
+        temperature=template.temperature,
+        talkativeness=template.talkativeness,
+        color=character.color,
+        icon=character.icon,
+        config=dict(template.config or {}),
+        tags=list(template.tags or []),
+        world_character_id=character.id,
+    )
+    session.add(instance)
+    return instance
+
+
+async def _next_scene_index(session: AsyncSession, world_id: str) -> int:
+    current_max = await session.scalar(
+        select(func.max(Room.scene_index)).where(Room.world_id == world_id)
+    )
+    return int(current_max or 0) + 1
+
+
+async def _resolve_story_format(session: AsyncSession) -> DebateFormat | None:
+    fmt = await session.get(
+        DebateFormat, builtin_id("format", "story_format")
+    )
+    if fmt is not None:
+        return fmt
+    # Fallback: any format tagged 'story', else None and let create_room pick default.
+    return await session.scalar(
+        select(DebateFormat).where(DebateFormat.name == "故事模式")
+    )
+
+
+@app.post("/worlds/{world_id}/scenes", response_model=RoomState)
+async def create_scene(
+    world_id: str, body: SceneCreate, session: AsyncSession = Depends(get_session)
+):
+    world = await _get_world_or_404(session, world_id)
+    # Resolve format: caller-provided OR story_format default.
+    selected_format = (
+        await _select_format(session, body.format_id) if body.format_id else None
+    )
+    if selected_format is None:
+        selected_format = await _resolve_story_format(session)
+    if selected_format is None:
+        raise HTTPException(500, "story_format builtin missing — re-run init_db")
+
+    selected_recipe = await _select_recipe(session, body.recipe_id)
+    settings_payload = selected_recipe.initial_settings if selected_recipe else {}
+
+    # Validate roster: all character ids must belong to this World, no dupes,
+    # no retired characters.
+    seen_ids: set[str] = set()
+    resolved_members: list[tuple[SceneRosterEntry, WorldCharacter]] = []
+    for entry in body.members:
+        if entry.world_character_id in seen_ids:
+            raise HTTPException(422, f"duplicate roster entry: {entry.world_character_id}")
+        seen_ids.add(entry.world_character_id)
+        character = await session.get(WorldCharacter, entry.world_character_id)
+        if character is None or character.world_id != world_id:
+            raise HTTPException(422, f"character {entry.world_character_id} not in this world")
+        if character.status != "active":
+            raise HTTPException(422, f"character {character.id} is retired")
+        resolved_members.append((entry, character))
+
+    scene_index = await _next_scene_index(session, world_id)
+    scene = Room(
+        id=new_id(),
+        title=body.title,
+        background=body.background,
+        format_id=selected_format.id,
+        format_version=selected_format.version,
+        status="active",
+        world_id=world_id,
+        scene_index=scene_index,
+        in_world_time_start=body.in_world_time_start,
+        in_world_time_end=body.in_world_time_end,
+        in_world_duration_hint=body.in_world_duration_hint,
+    )
+    session.add(scene)
+    await session.flush()
+
+    runtime = RoomRuntimeState(
+        room_id=scene.id,
+        max_message_tokens=settings_payload.get("max_message_tokens", 900),
+        max_room_tokens=settings_payload.get("max_room_tokens", 120000),
+        max_phase_rounds=settings_payload.get("max_phase_rounds", 3),
+        max_account_daily_tokens=settings_payload.get("max_account_daily_tokens", 250000),
+        max_account_monthly_tokens=settings_payload.get("max_account_monthly_tokens", 3000000),
+        max_consecutive_ai_turns=settings_payload.get("max_consecutive_ai_turns", 10),
+        auto_transition=settings_payload.get("auto_transition", False),
+    )
+    scribe = ScribeState(room_id=scene.id, current_state=DEFAULT_SCRIBE_STATE.copy())
+    session.add_all([runtime, scribe])
+
+    # Always include the system scribe + facilitator personas — they don't
+    # bind to a WorldCharacter but the engine still expects their slots.
+    await _create_persona_instances(session, scene.id, await _system_persona_ids(session))
+
+    # AI characters get PersonaInstance with World+character-baked prompt.
+    next_position = (
+        await session.scalar(
+            select(func.coalesce(func.max(PersonaInstance.position), -1) + 1).where(
+                PersonaInstance.room_id == scene.id
+            )
+        )
+    ) or 0
+    for entry, character in resolved_members:
+        if character.kind == "ai":
+            await _create_scene_persona_instance(
+                session, scene, world, character, int(next_position)
+            )
+            next_position = int(next_position) + 1
+        # Roster row for both kinds — entered_at_message_id NULL = on stage from open.
+        session.add(
+            WorldSceneMember(
+                scene_id=scene.id,
+                world_character_id=character.id,
+                role_in_scene=entry.role_in_scene,
+                speak_as_user=entry.speak_as_user,
+            )
+        )
+
+    # Phase plan from format.
+    for index, slot in enumerate(selected_format.phase_sequence or []):
+        session.add(
+            RoomPhasePlan(
+                room_id=scene.id,
+                position=index,
+                phase_template_id=slot["phase_template_id"],
+                phase_template_version=slot.get("phase_template_version", 1),
+                source="format",
+                variable_bindings={},
+            )
+        )
+    await session.flush()
+    await transition_to_next_phase(session, scene.id, target_position=0)
+    await trace_record(
+        session,
+        scene.id,
+        "state_mutation",
+        "scene created",
+        {"world_id": world_id, "scene_index": scene_index, "member_count": len(resolved_members)},
+    )
+    await session.commit()
+    return await _room_state(session, scene.id)
+
+
+@app.get("/worlds/{world_id}/timeline", response_model=list[SceneTimelineEntry])
+async def get_world_timeline(world_id: str, session: AsyncSession = Depends(get_session)):
+    await _get_world_or_404(session, world_id)
+    scenes = (
+        await session.scalars(
+            select(Room)
+            .where(Room.world_id == world_id, Room.scene_index.is_not(None))
+            .order_by(Room.scene_index)
+        )
+    ).all()
+    if not scenes:
+        return []
+    scene_ids = [scene.id for scene in scenes]
+    member_counts = dict(
+        (
+            await session.execute(
+                select(WorldSceneMember.scene_id, func.count(WorldSceneMember.world_character_id))
+                .where(WorldSceneMember.scene_id.in_(scene_ids))
+                .group_by(WorldSceneMember.scene_id)
+            )
+        ).all()
+    )
+    message_counts = dict(
+        (
+            await session.execute(
+                select(Message.room_id, func.count(Message.id))
+                .where(Message.room_id.in_(scene_ids))
+                .group_by(Message.room_id)
+            )
+        ).all()
+    )
+    out: list[SceneTimelineEntry] = []
+    for scene in scenes:
+        out.append(
+            SceneTimelineEntry(
+                id=scene.id,
+                scene_index=scene.scene_index or 0,
+                title=scene.title,
+                status=scene.status,  # type: ignore[arg-type]
+                sealed_at=scene.sealed_at,
+                in_world_time_start=scene.in_world_time_start,
+                in_world_time_end=scene.in_world_time_end,
+                in_world_duration_hint=scene.in_world_duration_hint,
+                member_count=int(member_counts.get(scene.id, 0)),
+                message_count=int(message_counts.get(scene.id, 0)),
+                created_at=scene.created_at,
+            )
+        )
+    return out
+
+
+async def _scene_or_404(session: AsyncSession, room_id: str) -> Room:
+    """Resolve a Room and reject if it isn't a scene (no world_id)."""
+    room = await session.get(Room, room_id)
+    if room is None:
+        raise HTTPException(404, "room not found")
+    if not room.world_id:
+        raise HTTPException(409, "room is not a scene of any world")
+    return room
+
+
+@app.post("/rooms/{room_id}/scene/enter", response_model=WorldSceneMemberOut)
+async def scene_enter(
+    room_id: str, body: SceneEnterRequest, session: AsyncSession = Depends(get_session)
+):
+    """Add a character to the scene mid-stream. Appends a participant.enter
+    system message (visible to models) and binds the character into the roster."""
+    scene = await _scene_or_404(session, room_id)
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    if scene.sealed_at is not None:
+        raise HTTPException(409, "scene is sealed")
+    character = await session.get(WorldCharacter, body.world_character_id)
+    if character is None or character.world_id != scene.world_id:
+        raise HTTPException(422, "character not in this world")
+    if character.status != "active":
+        raise HTTPException(422, "character is retired")
+    existing = await session.get(
+        WorldSceneMember, {"scene_id": scene.id, "world_character_id": character.id}
+    )
+    if existing is not None:
+        raise HTTPException(409, "character already on the scene roster")
+    world = await _get_world_or_404(session, scene.world_id)
+    description = body.description.strip() or f"{character.name} 进入了场景。"
+    message = Message(
+        room_id=scene.id,
+        phase_instance_id=runtime.current_phase_instance_id,
+        message_type="participant.enter",
+        author_actual="system",
+        visibility="public",
+        visibility_to_models=True,
+        content=description,
+        completion_tokens=estimate_tokens(description),
+        cost_usd=0,
+    )
+    session.add(message)
+    await session.flush()
+
+    if character.kind == "ai":
+        next_position = (
+            await session.scalar(
+                select(func.coalesce(func.max(PersonaInstance.position), -1) + 1).where(
+                    PersonaInstance.room_id == scene.id
+                )
+            )
+        ) or 0
+        await _create_scene_persona_instance(
+            session, scene, world, character, int(next_position)
+        )
+    member = WorldSceneMember(
+        scene_id=scene.id,
+        world_character_id=character.id,
+        role_in_scene=body.role_in_scene,
+        speak_as_user=body.speak_as_user,
+        entered_at_message_id=message.id,
+    )
+    session.add(member)
+    await trace_record(
+        session,
+        scene.id,
+        "state_mutation",
+        "scene member entered",
+        {"character_id": character.id, "message_id": message.id},
+    )
+    await session.commit()
+    await session.refresh(member)
+    await event_bus.publish(
+        scene.id,
+        {"type": "message.appended", "message": MessageOut.model_validate(message).model_dump(mode="json")},
+    )
+    return member
+
+
+@app.post("/rooms/{room_id}/scene/exit", response_model=WorldSceneMemberOut)
+async def scene_exit(
+    room_id: str, body: SceneExitRequest, session: AsyncSession = Depends(get_session)
+):
+    """Mark a character as having left the scene. Appends a participant.exit
+    message; future routing skips them."""
+    scene = await _scene_or_404(session, room_id)
+    runtime = await _runtime_or_404(session, room_id)
+    _ensure_not_frozen(runtime)
+    if scene.sealed_at is not None:
+        raise HTTPException(409, "scene is sealed")
+    member = await session.get(
+        WorldSceneMember, {"scene_id": scene.id, "world_character_id": body.world_character_id}
+    )
+    if member is None:
+        raise HTTPException(404, "character not on this scene's roster")
+    if member.exited_at_message_id is not None:
+        raise HTTPException(409, "character has already exited this scene")
+    character = await session.get(WorldCharacter, body.world_character_id)
+    description = body.description.strip() or (
+        f"{character.name} 离开了场景。" if character else "角色离开了场景。"
+    )
+    message = Message(
+        room_id=scene.id,
+        phase_instance_id=runtime.current_phase_instance_id,
+        message_type="participant.exit",
+        author_actual="system",
+        visibility="public",
+        visibility_to_models=True,
+        content=description,
+        completion_tokens=estimate_tokens(description),
+        cost_usd=0,
+    )
+    session.add(message)
+    await session.flush()
+    member.exited_at_message_id = message.id
+    await trace_record(
+        session,
+        scene.id,
+        "state_mutation",
+        "scene member exited",
+        {"character_id": body.world_character_id, "message_id": message.id},
+    )
+    await session.commit()
+    await session.refresh(member)
+    await event_bus.publish(
+        scene.id,
+        {"type": "message.appended", "message": MessageOut.model_validate(message).model_dump(mode="json")},
+    )
+    return member
+
+
+@app.post("/rooms/{room_id}/seal", response_model=RoomOut)
+async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Mark a scene as sealed.
+
+    PR 2 just sets the timestamp — no memory pipeline yet (that's PR 3+).
+    Sealed scenes reject further enter/exit and message posts (the existing
+    freeze guard handles message posts; enter/exit checks sealed_at).
+    """
+    scene = await _scene_or_404(session, room_id)
+    if scene.sealed_at is not None:
+        return scene
+    scene.sealed_at = datetime.now(timezone.utc)
+    await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
+    await session.commit()
+    await session.refresh(scene)
+    return scene
+
+
+@app.get("/rooms/{room_id}/scene/members", response_model=list[WorldSceneMemberOut])
+async def list_scene_members(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Returns the full roster (active + exited) ordered by joined_at."""
+    scene = await _scene_or_404(session, room_id)
+    rows = (
+        await session.scalars(
+            select(WorldSceneMember)
+            .where(WorldSceneMember.scene_id == scene.id)
+            .order_by(WorldSceneMember.joined_at)
+        )
+    ).all()
+    return rows
 
 
 async def _scenario_catalog(session: AsyncSession) -> list[ScenarioOut]:

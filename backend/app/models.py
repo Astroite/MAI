@@ -116,6 +116,11 @@ class PersonaInstance(Base):
     icon: Mapped[str] = mapped_column(String(48), default="Sparkles")
     config: Mapped[dict] = mapped_column(JSONType, default=dict)
     tags: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    # Story World linkage. Set when the instance was spawned from a
+    # WorldCharacter so the engine can reach back to the character's record
+    # (currently used for scene-roster filtering; future PRs use it for
+    # episodic memory retrieval).
+    world_character_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
@@ -267,6 +272,14 @@ class Room(Base):
     format_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="active")
     frozen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Story World scene fields. world_id + scene_index identify the room as a
+    # scene within a World; both NULL means a normal discussion room.
+    world_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    scene_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    in_world_time_start: Mapped[str] = mapped_column(Text, default="")
+    in_world_time_end: Mapped[str] = mapped_column(Text, default="")
+    in_world_duration_hint: Mapped[str] = mapped_column(Text, default="")
+    sealed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
@@ -524,4 +537,34 @@ class WorldCharacter(Base):
 
     __table_args__ = (
         Index("ix_world_characters_world_status", "world_id", "status"),
+    )
+
+
+class WorldSceneMember(Base):
+    """Roster row binding a WorldCharacter into a Scene (Room with world_id).
+
+    The presence interval is identified by entered/exited message ids:
+      * entered_at_message_id IS NULL  -> on stage from scene open
+      * exited_at_message_id  IS NULL  -> still on stage
+
+    A character can only have one row per scene; v1 does not support a
+    character leaving and re-entering the same scene (logged as v2).
+    """
+
+    __tablename__ = "world_scene_members"
+
+    scene_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("rooms.id", ondelete="CASCADE"), primary_key=True
+    )
+    world_character_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("world_characters.id", ondelete="CASCADE"), primary_key=True
+    )
+    role_in_scene: Mapped[str] = mapped_column(Text, default="")
+    speak_as_user: Mapped[bool] = mapped_column(Boolean, default=False)
+    entered_at_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    exited_at_message_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+
+    __table_args__ = (
+        Index("ix_world_scene_members_character", "world_character_id"),
     )

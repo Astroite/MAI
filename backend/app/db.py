@@ -101,6 +101,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
         ("color", "varchar(16) DEFAULT '#3b82f6' NOT NULL", "VARCHAR(16) DEFAULT '#3b82f6' NOT NULL"),
         ("icon", "varchar(48) DEFAULT 'Sparkles' NOT NULL", "VARCHAR(48) DEFAULT 'Sparkles' NOT NULL"),
         ("identity", "varchar(120) DEFAULT '' NOT NULL", "VARCHAR(120) DEFAULT '' NOT NULL"),
+        ("world_character_id", "varchar(36)", "VARCHAR(36)"),
     ],
     "api_providers": [
         ("last_tested_ok", "boolean", "BOOLEAN"),
@@ -115,6 +116,12 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "rooms": [
         ("background", "text DEFAULT '' NOT NULL", "TEXT DEFAULT '' NOT NULL"),
+        ("world_id", "varchar(36)", "VARCHAR(36)"),
+        ("scene_index", "integer", "INTEGER"),
+        ("in_world_time_start", "text DEFAULT '' NOT NULL", "TEXT DEFAULT '' NOT NULL"),
+        ("in_world_time_end", "text DEFAULT '' NOT NULL", "TEXT DEFAULT '' NOT NULL"),
+        ("in_world_duration_hint", "text DEFAULT '' NOT NULL", "TEXT DEFAULT '' NOT NULL"),
+        ("sealed_at", "timestamp with time zone", "DATETIME"),
     ],
     "phase_templates": [
         ("auto_discuss", "boolean DEFAULT false NOT NULL", "BOOLEAN DEFAULT 0 NOT NULL"),
