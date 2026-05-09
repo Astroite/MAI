@@ -37,10 +37,18 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+          run_install: false
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install backend dependencies
         working-directory: backend
@@ -56,9 +64,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Enable pnpm
-        run: corepack enable
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Build frontend
         working-directory: frontend
@@ -123,10 +130,20 @@ jobs:
           # Strip leading 'v' for tauri.conf.json
           echo "version_number=${VERSION#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+          run_install: false
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
 
       - name: Install backend dependencies
         working-directory: backend
@@ -139,9 +156,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Enable pnpm
-        run: corepack enable
+          cache: "pnpm"
+          cache-dependency-path: frontend/pnpm-lock.yaml
 
       - name: Build frontend (for sidecar bundling)
         working-directory: frontend
@@ -158,16 +174,18 @@ jobs:
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Swatinem/rust-cache is smarter than a hand-rolled actions/cache:
+      # it separately tracks registry/git/target, keys on toolchain + Cargo.toml
+      # hashes (not just Cargo.lock), and prunes stale artifacts on restore.
+      # `prefix-key` gets a manual kill switch: set the repo-level variable
+      # CACHE_VERSION to "v2" (or any new value) to invalidate every Rust cache
+      # in one shot. pip/pnpm caches auto-invalidate on their lockfile hash, so
+      # if you ever need to nuke those, use `gh cache delete` or the Actions UI.
       - name: Cache Rust build artifacts
-        uses: actions/cache@v4
+        uses: Swatinem/rust-cache@v2
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            frontend/src-tauri/target
-          key: windows-rust-${{ hashFiles('frontend/src-tauri/Cargo.lock') }}
-          restore-keys: |
-            windows-rust-
+          prefix-key: "${{ vars.CACHE_VERSION || 'v1' }}-windows-rust"
+          workspaces: frontend/src-tauri -> target
 
       - name: Inject release version into tauri.conf.json
         shell: bash
