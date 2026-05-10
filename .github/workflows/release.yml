@@ -106,6 +106,20 @@ jobs:
               --generate-notes
           fi
 
+      - name: Upload source artifacts to COS
+        env:
+          TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          pip install coscmd --quiet
+          coscmd config -a "$TENCENTCLOUD_SECRET_ID" -s "$TENCENTCLOUD_SECRET_KEY" \
+            -b "$COS_BUCKET" -r "$COS_REGION"
+          coscmd upload -r dist-artifacts/ "releases/${VERSION}/"
+
   build-windows-exe:
     runs-on: windows-latest
 
@@ -206,6 +220,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           VERSION_NUMBER="${{ steps.version.outputs.version_number }}"
           NSIS_DIR="frontend/src-tauri/target/release/bundle/nsis"
+          COS_BUCKET="${{ secrets.COS_BUCKET }}"
 
           # Find the main installer exe
           INSTALLER=$(find "$NSIS_DIR" -maxdepth 1 -name "*setup.exe" | head -1)
@@ -214,7 +229,8 @@ jobs:
             exit 1
           fi
           INSTALLER_NAME=$(basename "$INSTALLER")
-          DOWNLOAD_URL="https://github.com/Astroite/MAI/releases/download/${VERSION}/${INSTALLER_NAME}"
+          # Use COS global acceleration URL for the updater
+          DOWNLOAD_URL="https://${COS_BUCKET}.cos.accelerate.myqcloud.com/releases/${VERSION}/${INSTALLER_NAME}"
 
           # Read the signature from the .sig file
           SIG_FILE=$(find "$NSIS_DIR" -maxdepth 1 -name "*.exe.sig" | head -1)
@@ -257,3 +273,26 @@ jobs:
               --title "MAI $VERSION" \
               --generate-notes
           fi
+
+      - name: Upload installer artifacts to COS
+        env:
+          TENCENTCLOUD_SECRET_ID: ${{ secrets.TENCENT_SECRET_ID }}
+          TENCENTCLOUD_SECRET_KEY: ${{ secrets.TENCENT_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          NSIS_DIR="frontend/src-tauri/target/release/bundle/nsis"
+          pip install coscmd --quiet
+          coscmd config -a "$TENCENTCLOUD_SECRET_ID" -s "$TENCENTCLOUD_SECRET_KEY" \
+            -b "$COS_BUCKET" -r "$COS_REGION"
+          # Upload versioned installer files
+          find "$NSIS_DIR" -maxdepth 1 \( -name "*setup.exe" -o -name "*.exe.sig" -o -name "*.nsis.zip" -o -name "*.nsis.zip.sig" \) \
+            | while read -r f; do
+                coscmd upload "$f" "releases/${VERSION}/$(basename "$f")"
+              done
+          # Upload latest.json to fixed path (Tauri auto-updater endpoint)
+          coscmd upload "$NSIS_DIR/latest.json" "releases/latest.json"
+          echo "COS upload complete. Updater endpoint:"
+          echo "  https://${COS_BUCKET}.cos.accelerate.myqcloud.com/releases/latest.json"

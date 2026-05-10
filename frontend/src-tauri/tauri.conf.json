@@ -39,7 +39,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM1NjgzMkVDM0UzQjMyODQKUldTRU1qcys3REpveFFIby9BS0xhNnBGMjhMN3R1WEgxOEV5cTBoTmFjY3VyWEo4OE1ISmtjdXAK",
       "endpoints": [
-        "https://github.com/Astroite/MAI/releases/latest/download/latest.json"
+        "https://agent-mai-1255740528.cos.accelerate.myqcloud.com/releases/latest.json"
       ]
     }
   }
