@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -61,12 +61,7 @@ export function NewDiscussionPage() {
   const [personaSearch, setPersonaSearch] = useState("");
   const [selectedPersonaTags, setSelectedPersonaTags] = useState<string[]>([]);
   const [draftFlash, setDraftFlash] = useState<string | null>(null);
-  const anchorRefs = useRef<Record<AnchorKey, HTMLDivElement | null>>({
-    scenario: null,
-    basics: null,
-    format: null,
-    personas: null
-  });
+  const [activeTab, setActiveTab] = useState<AnchorKey>("scenario");
 
   // Keep the title's default localized when no draft is loaded yet.
   useEffect(() => {
@@ -185,7 +180,7 @@ export function NewDiscussionPage() {
     }
     setPersonaTouched(false);
     setSelectedPersonaIds([]);
-    scrollTo("basics");
+    setActiveTab("basics");
   };
 
   const togglePersona = (personaId: string, checked: boolean) => {
@@ -204,10 +199,6 @@ export function NewDiscussionPage() {
   const clearPersonaFilters = () => {
     setPersonaSearch("");
     setSelectedPersonaTags([]);
-  };
-
-  const scrollTo = (key: AnchorKey) => {
-    anchorRefs.current[key]?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const persistDraftFlash = () => {
@@ -276,18 +267,18 @@ export function NewDiscussionPage() {
         <PhaseStepper
           steps={stepperSteps}
           size="sm"
-          onSelect={(step) => scrollTo(step.id as AnchorKey)}
+          onSelect={(step) => setActiveTab(step.id as AnchorKey)}
         />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
         <div className="space-y-4">
+          {activeTab === "scenario" && (
           <SectionCard
             title={t("dashboard.steps.scenario")}
             icon={<Sparkles size={14} />}
             tone="brand"
           >
-            <div ref={(node) => (anchorRefs.current.scenario = node)} />
             {(scenarios.data?.length ?? 0) === 0 ? (
               <div className="text-sm text-muted">{t("dashboard.scenarioEmpty")}</div>
             ) : (
@@ -322,9 +313,10 @@ export function NewDiscussionPage() {
               </div>
             )}
           </SectionCard>
+          )}
 
+          {activeTab === "basics" && (
           <SectionCard title={t("dashboard.steps.basics")} icon={<FileText size={14} />}>
-            <div ref={(node) => (anchorRefs.current.basics = node)} />
             <label className="block">
               <span className="label">{t("dashboard.roomTitle")}</span>
               <input
@@ -346,13 +338,14 @@ export function NewDiscussionPage() {
               <p className="mt-1 text-xs text-muted">{t("dashboard.backgroundHelp")}</p>
             </label>
           </SectionCard>
+          )}
 
+          {activeTab === "format" && (
           <SectionCard
             title={t("dashboard.steps.format")}
             icon={<Workflow size={14} />}
             tone="info"
           >
-            <div ref={(node) => (anchorRefs.current.format = node)} />
             <div className="grid gap-3 md:grid-cols-2">
               <label className="block">
                 <span className="label">{t("dashboard.recipe")}</span>
@@ -404,7 +397,9 @@ export function NewDiscussionPage() {
               </div>
             )}
           </SectionCard>
+          )}
 
+          {activeTab === "personas" && (
           <SectionCard
             title={t("dashboard.steps.personas")}
             icon={<Users size={14} />}
@@ -418,7 +413,6 @@ export function NewDiscussionPage() {
               ) : undefined
             }
           >
-            <div ref={(node) => (anchorRefs.current.personas = node)} />
             <div className="flex flex-wrap items-end gap-3">
               <label className="block min-w-[16rem] flex-1">
                 <span className="label">{t("dashboard.personaSearch")}</span>
@@ -511,6 +505,7 @@ export function NewDiscussionPage() {
               )}
             </div>
           </SectionCard>
+          )}
         </div>
 
         <aside className="xl:sticky xl:top-4 xl:self-start">

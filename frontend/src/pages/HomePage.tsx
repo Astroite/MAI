@@ -84,20 +84,20 @@ export function HomePage() {
           value={sortedWorlds.length}
           subValue={t("home.stats.scenesCount", { count: sceneRooms.length })}
           to="/worlds"
-          tone="violet"
+          tone="info"
         />
         <StatCard
           icon={UsersRound}
           label={t("home.stats.characters")}
           value={totalCharacters}
-          to="/worlds"
-          tone="emerald"
+          to="/templates/personas"
+          tone="success"
         />
         <StatCard
           icon={Hash}
           label={t("home.stats.messages")}
           value={totalMessages}
-          tone="amber"
+          tone="warning"
         />
       </section>
 
@@ -139,12 +139,12 @@ export function HomePage() {
   );
 }
 
-type Tone = "brand" | "violet" | "emerald" | "amber";
+type Tone = "brand" | "info" | "success" | "warning";
 const TONE_BG: Record<Tone, string> = {
   brand: "bg-brand/10 text-brand",
-  violet: "bg-info/10 text-info",
-  emerald: "bg-success/10 text-success",
-  amber: "bg-warning/10 text-warning"
+  info: "bg-info/10 text-info",
+  success: "bg-success/10 text-success",
+  warning: "bg-warning/10 text-warning"
 };
 
 function StatCard({

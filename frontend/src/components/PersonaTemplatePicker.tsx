@@ -135,11 +135,11 @@ export function PersonaTemplatePicker(props: PickerProps) {
                 <div className="relative">
                   <Search
                     size={14}
-                    className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
                   />
                   <input
                     ref={searchRef}
-                    className="input w-full pl-7"
+                    className="input w-full pl-9"
                     placeholder="搜索名字 / 身份 / 描述 / 标签"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
