@@ -122,6 +122,8 @@ jobs:
 
   build-windows-exe:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout
@@ -296,3 +298,18 @@ jobs:
           coscmd upload "$NSIS_DIR/latest.json" "releases/latest.json"
           echo "COS upload complete. Updater endpoint:"
           echo "  https://${COS_BUCKET}.cos.accelerate.myqcloud.com/releases/latest.json"
+
+  notify-pages:
+    needs: [source-release, build-windows-exe]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify MAI-Pages to sync release
+        env:
+          GH_TOKEN: ${{ secrets.PAGES_DISPATCH_TOKEN }}
+        shell: bash
+        run: |
+          VERSION="${{ needs.build-windows-exe.outputs.version || github.ref_name }}"
+          gh api repos/Astroite/MAI-Pages/dispatches \
+            -f event_type=mai-release \
+            -f "client_payload[version]=${VERSION}"
+          echo "Dispatched mai-release event to Astroite/MAI-Pages (version=${VERSION})"
