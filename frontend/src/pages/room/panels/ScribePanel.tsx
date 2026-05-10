@@ -75,13 +75,13 @@ export function ScribePanel({
   return (
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 text-xs">
-        <CountChip tone="brand" icon={<Gavel size={11} />} label={display("scribeSection", "decisions")} count={counts.decisions} />
-        <CountChip tone="success" icon={<CheckCircle2 size={11} />} label={display("scribeSection", "consensus")} count={counts.consensus} />
-        <CountChip tone="warning" icon={<Scale size={11} />} label={display("scribeSection", "disagreements")} count={counts.disagreements} />
-        <CountChip tone="info" icon={<CircleHelp size={11} />} label={display("scribeSection", "open_questions")} count={counts.open_questions} />
-        <CountChip tone="info" icon={<FileBox size={11} />} label={display("scribeSection", "artifacts")} count={counts.artifacts} />
+        <CountChip tone="brand" icon={<Gavel size={12} />} label={display("scribeSection", "decisions")} count={counts.decisions} />
+        <CountChip tone="success" icon={<CheckCircle2 size={12} />} label={display("scribeSection", "consensus")} count={counts.consensus} />
+        <CountChip tone="warning" icon={<Scale size={12} />} label={display("scribeSection", "disagreements")} count={counts.disagreements} />
+        <CountChip tone="info" icon={<CircleHelp size={12} />} label={display("scribeSection", "open_questions")} count={counts.open_questions} />
+        <CountChip tone="info" icon={<FileBox size={12} />} label={display("scribeSection", "artifacts")} count={counts.artifacts} />
         {counts.dead_ends > 0 && (
-          <CountChip tone="danger" icon={<AlertTriangle size={11} />} label={display("scribeSection", "dead_ends")} count={counts.dead_ends} />
+          <CountChip tone="danger" icon={<AlertTriangle size={12} />} label={display("scribeSection", "dead_ends")} count={counts.dead_ends} />
         )}
       </div>
 
@@ -167,7 +167,7 @@ function ScribeSection({
       <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="flex items-center gap-2 text-sm font-semibold">
           <span className={`grid h-6 w-6 place-items-center rounded-md ${TONE_ICON_BG[meta.tone]}`} aria-hidden="true">
-            <Icon size={13} />
+            <Icon size={14} />
           </span>
           <span>{display("scribeSection", sectionKey)}</span>
           <span className="text-xs font-normal text-muted">· {items.length}</span>
@@ -191,9 +191,9 @@ function ScribeSection({
             {visible.map((item, index) => (
               <span
                 key={`${sectionKey}-${index}`}
-                className="inline-flex items-center gap-1 rounded-md border border-danger/30 bg-danger/5 px-2 py-0.5 text-[11px] text-danger"
+                className="inline-flex items-center gap-1 rounded-md border border-danger/30 bg-danger/5 px-2 py-0.5 text-xs text-danger"
               >
-                <AlertTriangle size={11} aria-hidden="true" />
+                <AlertTriangle size={12} aria-hidden="true" />
                 <span className="max-w-[18rem] truncate">{describe(item, t)}</span>
               </span>
             ))}

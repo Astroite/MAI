@@ -49,7 +49,7 @@ export function FacilitatorPanel({
         ) : (
           <div className="flex items-center gap-2 text-sm font-semibold">
             <span className="grid h-6 w-6 place-items-center rounded-md bg-warning/10 text-warning" aria-hidden="true">
-              <Shield size={13} />
+              <Shield size={14} />
             </span>
             <span>{t("panel.facilitator.title")}</span>
             {signals.length > 0 && (
@@ -76,7 +76,7 @@ export function FacilitatorPanel({
           >
             <div className="flex items-start justify-between gap-2">
               <div className="flex items-center gap-2 text-sm font-medium">
-                <Activity size={13} className="text-warning" aria-hidden="true" />
+                <Activity size={14} className="text-warning" aria-hidden="true" />
                 <span>{signal.overall_health}</span>
               </div>
               {signal.signals[0] && (
@@ -101,7 +101,7 @@ export function FacilitatorPanel({
               </div>
             )}
             {!compact && signal.signals[0]?.reasoning && (
-              <p className="mt-2 rounded-md bg-surface p-2 text-[11px] leading-5 text-muted">
+              <p className="mt-2 rounded-md bg-surface p-2 text-xs leading-5 text-muted">
                 {signal.signals[0].reasoning}
               </p>
             )}

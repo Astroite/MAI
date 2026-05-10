@@ -284,7 +284,7 @@ export function Composer({
             disabled={frozen}
             title={t("composer.attach")}
           >
-            <Paperclip size={13} />
+            <Paperclip size={14} />
             <span>{t("composer.attach")}</span>
           </button>
         </div>

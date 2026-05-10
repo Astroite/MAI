@@ -16,8 +16,8 @@ export function PhaseStepper({
   size?: "sm" | "md";
 }) {
   if (steps.length === 0) return null;
-  const dot = size === "sm" ? "h-5 w-5 text-[10px]" : "h-8 w-8 text-xs";
-  const label = size === "sm" ? "text-[11px]" : "text-xs";
+  const dot = size === "sm" ? "h-5 w-5 text-xs" : "h-8 w-8 text-xs";
+  const label = size === "sm" ? "text-xs" : "text-xs";
   return (
     <ol className="mai-scrollbar flex min-w-0 items-start overflow-x-auto py-1">
       {steps.map((step, index) => {

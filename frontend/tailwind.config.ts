@@ -23,6 +23,11 @@ export default {
         card: "0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 1px rgba(15, 23, 42, 0.02)",
         soft: "0 8px 24px rgba(15, 23, 42, 0.06)",
         pop: "0 16px 40px rgba(15, 23, 42, 0.10)"
+      },
+      animation: {
+        "fade-up": "fade-up 0.5s ease-out both",
+        "counter-roll": "counter-roll 0.6s ease-out both",
+        shimmer: "shimmer 3s ease-in-out infinite"
       }
     }
   },

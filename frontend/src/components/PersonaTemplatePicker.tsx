@@ -135,11 +135,11 @@ export function PersonaTemplatePicker(props: PickerProps) {
                 <div className="relative">
                   <Search
                     size={14}
-                    className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted"
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
                   />
                   <input
                     ref={searchRef}
-                    className="input w-full pl-7"
+                    className="input w-full pl-9"
                     placeholder="搜索名字 / 身份 / 描述 / 标签"
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
@@ -185,7 +185,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                           <div className="flex items-center gap-1">
                             <span className="truncate text-sm font-medium">{tpl.name}</span>
                             {isSelected && (
-                              <span className="text-[10px] uppercase tracking-wide text-brand">
+                              <span className="text-xs uppercase tracking-wide text-brand">
                                 已选
                               </span>
                             )}
@@ -195,7 +195,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                           )}
                         </div>
                         {tpl.is_builtin && (
-                          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-[10px] text-muted">
+                          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-xs text-muted">
                             内置
                           </span>
                         )}
@@ -229,7 +229,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                       {highlighted.identity && (
                         <div className="text-sm text-muted">{highlighted.identity}</div>
                       )}
-                      <div className="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                      <div className="mt-1 flex flex-wrap gap-1.5 text-xs">
                         {highlighted.tags?.map((tag) => (
                           <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-muted">
                             {tag}

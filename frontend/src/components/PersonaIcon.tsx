@@ -25,6 +25,10 @@ import {
   Zap
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { DEFAULT_PERSONA_COLOR, PERSONA_COLORS } from "../constants/colors";
+
+// Re-export for backward compatibility
+export { DEFAULT_PERSONA_COLOR, PERSONA_COLORS };
 
 // Curated icon set for persona avatars. Keep this list in sync between the
 // picker and the renderer; backend stores the string key only.
@@ -57,26 +61,6 @@ export const PERSONA_ICONS: Record<string, LucideIcon> = {
 
 export const PERSONA_ICON_KEYS = Object.keys(PERSONA_ICONS);
 
-// 12-slot palette tuned to read well on both light and dark surfaces.
-export const PERSONA_COLORS = [
-  "#ef4444",
-  "#f97316",
-  "#f59e0b",
-  "#eab308",
-  "#84cc16",
-  "#22c55e",
-  "#14b8a6",
-  "#06b6d4",
-  "#0ea5e9",
-  "#3b82f6",
-  "#6366f1",
-  "#8b5cf6",
-  "#a855f7",
-  "#ec4899",
-  "#64748b"
-];
-
-export const DEFAULT_PERSONA_COLOR = "#3b82f6";
 export const DEFAULT_PERSONA_ICON = "Sparkles";
 
 export function resolvePersonaIcon(name: string | undefined | null): LucideIcon {

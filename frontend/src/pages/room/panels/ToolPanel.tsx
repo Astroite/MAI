@@ -117,7 +117,7 @@ export function ToolPanel({
         }}
       >
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Plug size={15} />
+          <Plug size={14} />
           {t("panel.tools.addServer")}
         </div>
         <input
@@ -181,10 +181,10 @@ export function ToolPanel({
               </div>
               <div className="flex gap-1">
                 <button className="btn h-7 px-2" type="button" onClick={() => syncServer.mutate(server.id)} title={t("panel.tools.sync")}>
-                  <RefreshCw size={13} />
+                  <RefreshCw size={14} />
                 </button>
                 <button className="btn h-7 px-2" type="button" onClick={() => deleteServer.mutate(server.id)} title={t("common.delete")}>
-                  <Trash2 size={13} />
+                  <Trash2 size={14} />
                 </button>
               </div>
             </div>
@@ -208,7 +208,7 @@ export function ToolPanel({
                     </StatusPill>
                   </div>
                   <p className="mt-1 text-muted">{tool.description}</p>
-                  <code className="mt-1 block truncate text-[11px] text-muted" title={tool.name}>{tool.name}</code>
+                  <code className="mt-1 block truncate text-xs text-muted" title={tool.name}>{tool.name}</code>
                 </div>
               ))}
             </div>
@@ -228,7 +228,7 @@ export function ToolPanel({
         }}
       >
         <div className="flex items-center gap-2 text-sm font-medium">
-          <Wrench size={15} />
+          <Wrench size={14} />
           {t("panel.tools.manual")}
         </div>
         <select
@@ -266,7 +266,7 @@ export function ToolPanel({
                 {item.status}
               </StatusPill>
             </div>
-            <pre className="mt-2 max-h-32 min-w-0 overflow-auto break-all whitespace-pre-wrap rounded bg-surface p-2 text-[11px] text-muted">
+            <pre className="mt-2 max-h-32 min-w-0 overflow-auto break-all whitespace-pre-wrap rounded bg-surface p-2 text-xs text-muted">
               {item.error || preview(item.result, preview(item.arguments))}
             </pre>
           </div>

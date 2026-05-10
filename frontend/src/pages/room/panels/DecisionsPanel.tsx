@@ -72,7 +72,7 @@ export function DecisionsPanel({
                 {decision.is_locked ? t("panel.decisions.locked") : t("panel.decisions.unlocked")}
               </StatusPill>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted">
+            <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
               <span>#{decision.id.slice(-6)} · {formatTime(decision.created_at)}</span>
               <button
                 className="btn h-7 px-2 text-xs"
@@ -80,14 +80,14 @@ export function DecisionsPanel({
                 onClick={() => toggleLock.mutate({ id: decision.id, lock: !decision.is_locked })}
                 title={decision.is_locked ? t("panel.decisions.unlock") : t("panel.decisions.lock")}
               >
-                {decision.is_locked ? <LockOpen size={13} /> : <Lock size={13} />}
+                {decision.is_locked ? <LockOpen size={14} /> : <Lock size={14} />}
                 {decision.is_locked ? t("panel.decisions.unlock") : t("panel.decisions.lock")}
               </button>
             </div>
           </li>
         ))}
         {typeof limit === "number" && active.length > limit && (
-          <li className="text-[11px] text-muted">
+          <li className="text-xs text-muted">
             {t("panel.decisions.moreActive", { count: active.length - limit })}
           </li>
         )}
@@ -113,7 +113,7 @@ export function DecisionsPanel({
                   className="rounded-md border border-dashed border-border bg-surface p-2 text-xs text-muted"
                 >
                   <div className="line-through decoration-muted/60">{decision.content}</div>
-                  <div className="mt-1 text-[11px]">
+                  <div className="mt-1 text-xs">
                     #{decision.id.slice(-6)} · {formatTime(decision.created_at)}
                   </div>
                 </li>
@@ -132,7 +132,7 @@ function DecisionsHeader({ lockedCount, totalCount }: { lockedCount: number; tot
     <div className="flex items-center justify-between gap-2">
       <div className="flex items-center gap-2 text-sm font-semibold">
         <span className="grid h-6 w-6 place-items-center rounded-md bg-info/10 text-info" aria-hidden="true">
-          <Gavel size={13} />
+          <Gavel size={14} />
         </span>
         <span>{t("room.panel.decisions")}</span>
         <span className="text-xs font-normal text-muted">· {totalCount}</span>

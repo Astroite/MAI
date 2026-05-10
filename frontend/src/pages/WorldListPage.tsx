@@ -6,23 +6,7 @@ import { api } from "../api";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "../components/Toaster";
 import type { WorldSummary } from "../types";
-
-const PALETTE = [
-  "#ef4444",
-  "#f97316",
-  "#f59e0b",
-  "#eab308",
-  "#84cc16",
-  "#22c55e",
-  "#14b8a6",
-  "#06b6d4",
-  "#0ea5e9",
-  "#3b82f6",
-  "#6366f1",
-  "#8b5cf6",
-  "#a855f7",
-  "#ec4899"
-];
+import { COVER_PALETTE } from "../constants/colors";
 
 export function WorldListPage() {
   const worlds = useQuery({ queryKey: ["worlds"], queryFn: api.worlds });
@@ -126,7 +110,7 @@ function WorldCard({ world }: { world: WorldSummary }) {
         </div>
       </Link>
       <button
-        className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500"
+        className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/10 hover:text-danger"
         type="button"
         title="删除世界"
         onClick={async (event) => {
@@ -154,7 +138,7 @@ function CreateWorldForm({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [synopsis, setSynopsis] = useState("");
   const [calendarHint, setCalendarHint] = useState("");
-  const [coverColor, setCoverColor] = useState(PALETTE[11]); // 8b5cf6
+  const [coverColor, setCoverColor] = useState(COVER_PALETTE[11]); // 8b5cf6
   const create = useMutation({
     mutationFn: () =>
       api.createWorld({
@@ -216,7 +200,7 @@ function CreateWorldForm({ onDone }: { onDone: () => void }) {
       <div>
         <label className="text-xs font-medium text-muted">封面色</label>
         <div className="mt-1 flex flex-wrap gap-1.5">
-          {PALETTE.map((color) => (
+          {COVER_PALETTE.map((color) => (
             <button
               key={color}
               type="button"

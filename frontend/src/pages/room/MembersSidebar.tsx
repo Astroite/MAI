@@ -6,16 +6,8 @@ import { useUIStore } from "../../store";
 import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
 import { useI18n } from "../../i18n";
 import { providerKindLabel } from "../../providers";
-import { DEFAULT_PERSONA_COLOR, PersonaIcon } from "../../components/PersonaIcon";
-
-function personaTone(persona: { id?: string | null; color?: string | null }): string {
-  if (persona.color) return persona.color;
-  if (!persona.id) return DEFAULT_PERSONA_COLOR;
-  let hash = 0;
-  for (let i = 0; i < persona.id.length; i += 1) hash = (hash * 31 + persona.id.charCodeAt(i)) | 0;
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue} 52% 48%)`;
-}
+import { PersonaIcon } from "../../components/PersonaIcon";
+import { personaTone } from "../../utils/color";
 
 function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
   if (!provider) return t("room.noProvider");
@@ -128,10 +120,10 @@ export function MembersSidebar({
                   <div className="truncate text-xs font-semibold text-text">
                     {persona.name}
                     {persona.identity && (
-                      <span className="ml-1 text-[10px] font-normal text-muted">· {persona.identity}</span>
+                      <span className="ml-1 text-xs font-normal text-muted">· {persona.identity}</span>
                     )}
                   </div>
-                  <div className="mt-0.5 truncate text-[11px] text-muted">
+                  <div className="mt-0.5 truncate text-xs text-muted">
                     {personaModelLabel(persona, modelById, providerById, t)}
                   </div>
                 </div>
@@ -142,10 +134,10 @@ export function MembersSidebar({
                   style={activePersonaIds.has(persona.id) ? { animation: "pulse-ring 1.4s ease-out infinite" } : undefined}
                 />
               </div>
-              <div className="mt-2 flex items-center gap-1 text-[11px] text-muted">
-                {Boolean(persona.config?.tools_enabled) && <Wrench size={11} aria-label={t("room.toolsEnabled")} />}
+              <div className="mt-2 flex items-center gap-1 text-xs text-muted">
+                {Boolean(persona.config?.tools_enabled) && <Wrench size={12} aria-label={t("room.toolsEnabled")} />}
                 {(persona.config?.auto_reply_enabled ?? true) === false && (
-                  <PauseCircle size={11} aria-label={t("room.autoReplyDisabled")} />
+                  <PauseCircle size={12} aria-label={t("room.autoReplyDisabled")} />
                 )}
                 <span className="truncate">{persona.tags?.slice(0, 2).join(" · ") || persona.description}</span>
               </div>
@@ -261,14 +253,14 @@ function PersonaRow({
           <div className="mt-0.5 truncate text-xs text-muted">{personaModelLabel(persona, modelById, providerById, t)}</div>
           <div className="mt-1 flex flex-wrap gap-1">
             {(persona.config?.auto_reply_enabled ?? true) === false && (
-              <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted">
-                <PauseCircle size={11} />
+              <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-xs text-muted">
+                <PauseCircle size={12} />
                 {t("room.autoReplyDisabled")}
               </span>
             )}
             {Boolean(persona.config?.tools_enabled) && (
-              <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-[11px] text-brand">
-                <Wrench size={11} />
+              <span className="inline-flex items-center gap-1 rounded bg-surface px-1.5 py-0.5 text-xs text-brand">
+                <Wrench size={12} />
                 {t("room.toolsEnabled")}
               </span>
             )}

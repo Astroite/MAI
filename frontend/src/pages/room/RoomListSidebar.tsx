@@ -126,7 +126,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
           <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input
             name="room-search"
-            className="input w-full pl-8"
+            className="input w-full pl-9"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder={t("room.searchRooms")}
@@ -267,7 +267,7 @@ function RoomEntry({
         <span
           aria-hidden
           className="absolute inset-y-0 left-0 w-1"
-          style={{ backgroundColor: isFrozen ? "rgb(244 63 94 / 0.6)" : accent }}
+          style={{ backgroundColor: isFrozen ? "rgb(228 82 92 / 0.6)" : accent }}
         />
 
         <div className="px-3 py-2.5 pl-4 text-text">
@@ -279,7 +279,7 @@ function RoomEntry({
             </div>
             {isFrozen && (
               <StatusPill tone="danger">
-                <Snowflake size={10} className="-ml-0.5" />
+                <Snowflake size={12} className="-ml-0.5" />
                 {display("roomStatus", room.status)}
               </StatusPill>
             )}
@@ -306,26 +306,26 @@ function RoomEntry({
                 ))}
                 {memberCount > 4 && (
                   <span
-                    className="grid h-[22px] w-[22px] place-items-center rounded-full bg-surface text-[10px] font-semibold text-muted ring-2 ring-panel"
+                    className="grid h-[22px] w-[22px] place-items-center rounded-full bg-surface text-xs font-semibold text-muted ring-2 ring-panel"
                     title={t("room.membersTitle", { count: memberCount })}
                   >
                     +{memberCount - 4}
                   </span>
                 )}
               </div>
-              <span className="text-[11px] text-muted">{t("room.memberCount", { count: memberCount })}</span>
+              <span className="text-xs text-muted">{t("room.memberCount", { count: memberCount })}</span>
             </div>
           ) : (
-            <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted">
-              <Users size={11} />
+            <div className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+              <Users size={12} />
               {t("room.noMembers")}
             </div>
           )}
 
           {/* Footer: message count + last activity */}
-          <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-muted">
+          <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
             <span className="inline-flex items-center gap-1">
-              <MessageCircle size={11} />
+              <MessageCircle size={12} />
               {t("room.messageCount", { count: messageCount })}
             </span>
             {lastActivityRel && <span className="truncate">{lastActivityRel}</span>}
@@ -335,7 +335,7 @@ function RoomEntry({
 
       <button
         type="button"
-        className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-rose-500/10 hover:text-rose-500"
+        className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/10 hover:text-danger"
         onClick={(event) => {
           event.preventDefault();
           event.stopPropagation();
@@ -344,7 +344,7 @@ function RoomEntry({
         title={t("common.delete")}
         aria-label={`${t("common.delete")} ${room.title}`}
       >
-        <Trash2 size={13} />
+        <Trash2 size={14} />
       </button>
     </div>
   );
