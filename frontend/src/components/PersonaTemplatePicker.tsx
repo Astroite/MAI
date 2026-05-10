@@ -185,7 +185,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                           <div className="flex items-center gap-1">
                             <span className="truncate text-sm font-medium">{tpl.name}</span>
                             {isSelected && (
-                              <span className="text-[10px] uppercase tracking-wide text-brand">
+                              <span className="text-xs uppercase tracking-wide text-brand">
                                 已选
                               </span>
                             )}
@@ -195,7 +195,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                           )}
                         </div>
                         {tpl.is_builtin && (
-                          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-[10px] text-muted">
+                          <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-xs text-muted">
                             内置
                           </span>
                         )}
@@ -229,7 +229,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                       {highlighted.identity && (
                         <div className="text-sm text-muted">{highlighted.identity}</div>
                       )}
-                      <div className="mt-1 flex flex-wrap gap-1.5 text-[10px]">
+                      <div className="mt-1 flex flex-wrap gap-1.5 text-xs">
                         {highlighted.tags?.map((tag) => (
                           <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-muted">
                             {tag}

@@ -178,7 +178,7 @@ function CharacterInspectorBlock({
                 key={memory.id}
                 className="rounded border border-border bg-surface px-2 py-1.5 text-xs"
               >
-                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-muted">
+                <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted">
                   <span>{KIND_LABEL[memory.kind] ?? memory.kind}</span>
                   <span>·</span>
                   <span>salience {memory.salience.toFixed(2)}</span>
@@ -214,7 +214,7 @@ function CharacterInspectorBlock({
                     {target ? (
                       <PersonaIcon icon={target.icon} color={target.color} size={20} />
                     ) : (
-                      <span className="grid h-5 w-5 place-items-center rounded-full bg-panel text-[10px] text-muted">
+                      <span className="grid h-5 w-5 place-items-center rounded-full bg-panel text-xs text-muted">
                         ?
                       </span>
                     )}
@@ -222,11 +222,11 @@ function CharacterInspectorBlock({
                       → {target?.name ?? relation.to_character_id}
                     </span>
                     <span
-                      className={`text-[10px] ${
+                      className={`text-xs ${
                         relation.sentiment > 0
-                          ? "text-emerald-600 dark:text-emerald-400"
+                          ? "text-success"
                           : relation.sentiment < 0
-                            ? "text-rose-600 dark:text-rose-400"
+                            ? "text-danger"
                             : "text-muted"
                       }`}
                     >

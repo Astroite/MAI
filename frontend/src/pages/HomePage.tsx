@@ -142,9 +142,9 @@ export function HomePage() {
 type Tone = "brand" | "violet" | "emerald" | "amber";
 const TONE_BG: Record<Tone, string> = {
   brand: "bg-brand/10 text-brand",
-  violet: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-  emerald: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  amber: "bg-amber-500/10 text-amber-600 dark:text-amber-400"
+  violet: "bg-info/10 text-info",
+  emerald: "bg-success/10 text-success",
+  amber: "bg-warning/10 text-warning"
 };
 
 function StatCard({
@@ -170,7 +170,7 @@ function StatCard({
       <div className="min-w-0 flex-1">
         <div className="text-2xl font-semibold leading-tight tabular-nums">{value}</div>
         <div className="truncate text-xs text-muted">{label}</div>
-        {subValue && <div className="truncate text-[11px] text-muted">{subValue}</div>}
+        {subValue && <div className="truncate text-xs text-muted">{subValue}</div>}
       </div>
     </div>
   );
@@ -260,32 +260,32 @@ function RoomMiniCard({
       <span
         aria-hidden
         className="absolute inset-y-0 left-0 w-1"
-        style={{ backgroundColor: isFrozen ? "rgb(244 63 94 / 0.7)" : accent }}
+        style={{ backgroundColor: isFrozen ? "rgb(228 82 92 / 0.7)" : accent }}
       />
       <div className="ml-1 min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{room.title}</span>
           {isFrozen && (
             <StatusPill tone="danger">
-              <Snowflake size={9} className="-ml-0.5" />
+              <Snowflake size={12} className="-ml-0.5" />
               {display("roomStatus", room.status)}
             </StatusPill>
           )}
         </div>
-        <div className="mt-0.5 flex items-center gap-3 text-[11px] text-muted">
+        <div className="mt-0.5 flex items-center gap-3 text-xs text-muted">
           {members.length > 0 ? (
             <span className="inline-flex items-center gap-1">
-              <Users size={10} />
+              <Users size={12} />
               {t("room.memberCount", { count: memberCount })}
             </span>
           ) : (
             <span className="inline-flex items-center gap-1">
-              <Users size={10} />
+              <Users size={12} />
               {t("room.noMembers")}
             </span>
           )}
           <span className="inline-flex items-center gap-1">
-            <MessageCircle size={10} />
+            <MessageCircle size={12} />
             {t("room.messageCount", { count: messageCount })}
           </span>
           <span className="ml-auto truncate">{formatRelativeTime(lastActivity)}</span>
@@ -338,7 +338,7 @@ function WorldMiniCard({
       </span>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">{world.name}</div>
-        <div className="mt-0.5 flex items-center gap-3 text-[11px] text-muted">
+        <div className="mt-0.5 flex items-center gap-3 text-xs text-muted">
           <span>角色 {world.character_count}</span>
           <span>场景 {world.scene_count}</span>
           <span className="ml-auto truncate">{last}</span>

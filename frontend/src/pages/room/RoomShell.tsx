@@ -215,7 +215,7 @@ export function RoomShell() {
                       className="btn h-7 px-2 text-xs"
                       title={t("room.backToParent")}
                     >
-                      <ArrowLeft size={13} />
+                      <ArrowLeft size={14} />
                       {t("room.parent")}
                     </Link>
                   )}
@@ -244,10 +244,10 @@ export function RoomShell() {
                   {state.room.world_id && (
                     <Link
                       to={`/worlds/${state.room.world_id}`}
-                      className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[11px] text-accent hover:bg-accent/20"
+                      className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-xs text-accent hover:bg-accent/20"
                       title="返回世界"
                     >
-                      <BookOpen size={10} />
+                      <BookOpen size={12} />
                       第 {state.room.scene_index} 幕
                     </Link>
                   )}
@@ -442,7 +442,7 @@ function CollapsiblePhaseOverview(props: {
     <div className="flex-shrink-0 border-b border-border/80 bg-surface">
       <div className="flex items-center justify-between px-5 pt-2 pb-1">
         <div className="flex min-w-0 items-center gap-2 text-xs text-muted">
-          <Layers size={13} className="shrink-0 text-brand" />
+          <Layers size={14} className="shrink-0 text-brand" />
           <span className="truncate font-semibold text-text">{props.currentPhaseName ?? t("room.stepper.empty")}</span>
         </div>
         <button
@@ -451,7 +451,7 @@ function CollapsiblePhaseOverview(props: {
           onClick={() => setCollapsed((v) => !v)}
           title={collapsed ? t("common.expand") : t("common.collapse")}
         >
-          {collapsed ? <ChevronDown size={13} /> : <ChevronUp size={13} />}
+          {collapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
       </div>
       {!collapsed && (
@@ -492,7 +492,7 @@ function RoomPhaseOverview({
           <div className="label">{t("room.phaseProgress")}</div>
         </div>
         <button className="btn h-8 shrink-0 px-2 text-xs" type="button" onClick={onEditPhase}>
-          <Settings2 size={13} />
+          <Settings2 size={14} />
           {t("room.openPhaseSettings")}
         </button>
       </div>
@@ -507,7 +507,7 @@ function RoomPhaseOverview({
 
       <div className="mt-3 flex items-center gap-3 text-xs text-muted max-sm:flex-wrap">
         <div className="flex min-w-[8.5rem] items-center gap-1">
-          <CircleGauge size={13} />
+          <CircleGauge size={14} />
           <span>{t("room.tokenUsage")}</span>
         </div>
         <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-surface max-sm:order-last max-sm:basis-full">
@@ -562,12 +562,12 @@ function RoomBackgroundInline({
     return (
       <div className="mt-3 rounded-md border border-border/80 bg-surface p-3">
         <div className="flex items-center gap-2 text-xs font-semibold text-muted">
-          <Scroll size={13} />
+          <Scroll size={14} />
           <span>{t("room.background")}</span>
         </div>
         <textarea
           name="room-background-edit"
-          className="textarea mt-2 h-32 w-full text-sm"
+          className="textarea mt-2 h-32 w-full"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           placeholder={t("dashboard.backgroundPlaceholder")}
@@ -582,7 +582,7 @@ function RoomBackgroundInline({
             onClick={() => save.mutate()}
             disabled={frozen || save.isPending || draft.trim() === trimmed}
           >
-            <Save size={13} />
+            <Save size={14} />
             {t("common.save")}
           </button>
           <button
@@ -595,7 +595,7 @@ function RoomBackgroundInline({
             }}
             disabled={save.isPending}
           >
-            <X size={13} />
+            <X size={14} />
             {t("common.cancel")}
           </button>
         </div>
@@ -612,7 +612,7 @@ function RoomBackgroundInline({
           onClick={() => setEditing(true)}
           disabled={frozen}
         >
-          <Plus size={13} />
+          <Plus size={14} />
           {t("room.backgroundAdd")}
         </button>
       </div>
@@ -622,10 +622,10 @@ function RoomBackgroundInline({
   const displayText = expanded || !isLong ? trimmed : `${trimmed.slice(0, 100)}...`;
   return (
     <div className="mt-3 flex items-start gap-2 rounded-md border border-info/30 bg-info/5 px-3 py-2">
-      <Scroll size={13} className="mt-0.5 flex-shrink-0 text-info" />
+      <Scroll size={14} className="mt-0.5 flex-shrink-0 text-info" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] font-semibold text-info">{t("room.backgroundPreview")}</span>
+          <span className="text-xs font-semibold text-info">{t("room.backgroundPreview")}</span>
           <div className="flex items-center gap-1">
             {isLong && (
               <button
@@ -664,11 +664,11 @@ function ConnectionBanner() {
     <div
       className={`flex flex-shrink-0 items-center gap-2 border-b px-5 py-1.5 text-xs ${
         isOffline
-          ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-          : "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+          ? "border-danger/30 bg-danger/10 text-danger"
+          : "border-warning/30 bg-warning/10 text-warning"
       }`}
     >
-      {isOffline ? <WifiOff size={13} /> : <Loader2 size={13} className="animate-spin" />}
+      {isOffline ? <WifiOff size={14} /> : <Loader2 size={14} className="animate-spin" />}
       <span>
         {isOffline
           ? t("connection.offline")

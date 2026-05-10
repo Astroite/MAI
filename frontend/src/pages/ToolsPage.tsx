@@ -161,18 +161,18 @@ export function ToolsPage() {
                           </StatusPill>
                           {server.allow_write ? (
                             <StatusPill tone="warning">
-                              <ShieldAlert size={11} />
+                              <ShieldAlert size={12} />
                               {t("tools.write")}
                             </StatusPill>
                           ) : (
                             <StatusPill tone="info">
-                              <ShieldCheck size={11} />
+                              <ShieldCheck size={12} />
                               {t("tools.readOnly")}
                             </StatusPill>
                           )}
                         </div>
-                        <code className="mt-1 block truncate text-[11px] text-muted">{server.url}</code>
-                        <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-muted">
+                        <code className="mt-1 block truncate text-xs text-muted">{server.url}</code>
+                        <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
                           <span>{server.transport}</span>
                           {server.last_synced_at && (
                             <span>
@@ -183,8 +183,8 @@ export function ToolsPage() {
                           )}
                         </div>
                         {server.last_error && (
-                          <div className="mt-2 inline-flex items-start gap-1.5 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-[11px] text-danger">
-                            <AlertTriangle size={11} className="mt-0.5 shrink-0" />
+                          <div className="mt-2 inline-flex items-start gap-1.5 rounded border border-danger/30 bg-danger/10 px-2 py-1 text-xs text-danger">
+                            <AlertTriangle size={12} className="mt-0.5 shrink-0" />
                             <span className="break-all">{server.last_error}</span>
                           </div>
                         )}
@@ -199,7 +199,7 @@ export function ToolsPage() {
                           aria-label={t("tools.sync")}
                         >
                           <RefreshCw
-                            size={13}
+                            size={14}
                             className={
                               syncServer.isPending && syncServer.variables === server.id
                                 ? "animate-spin"
@@ -215,7 +215,7 @@ export function ToolsPage() {
                           title={t("common.delete")}
                           aria-label={t("common.delete")}
                         >
-                          <Trash2 size={13} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
@@ -236,7 +236,7 @@ export function ToolsPage() {
                   <div key={group}>
                     <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted">
                       <span>{group}</span>
-                      <span className="text-[10px] text-muted">· {items.length}</span>
+                      <span className="text-xs text-muted">· {items.length}</span>
                     </div>
                     <div className="grid gap-2 md:grid-cols-2">
                       {items.map((tool) => (
@@ -247,7 +247,7 @@ export function ToolsPage() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="min-w-0">
                               <div className="truncate text-sm font-semibold">{tool.display_name}</div>
-                              <code className="mt-0.5 block truncate text-[11px] text-muted">
+                              <code className="mt-0.5 block truncate text-xs text-muted">
                                 {tool.name}
                               </code>
                             </div>
@@ -319,7 +319,7 @@ export function ToolsPage() {
                 </label>
               </div>
               <button
-                className="btn btn-primary w-full justify-center rounded-full"
+                className="btn btn-primary w-full justify-center rounded-md"
                 type="submit"
                 disabled={!serverName.trim() || !serverUrl.trim() || createServer.isPending}
               >

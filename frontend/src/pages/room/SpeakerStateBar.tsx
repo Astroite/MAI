@@ -82,14 +82,14 @@ export function SpeakerStateBar({
   const accent = speakers[0]?.color || DEFAULT_PERSONA_COLOR;
   const stripStyle =
     state === "speaking"
-      ? { borderColor: `${accent}66`, background: `${accent}0a` }
+      ? { borderColor: accent + '66', background: accent + '0a' }
       : undefined;
 
   return (
     <div
       className={`flex flex-shrink-0 items-center justify-between gap-3 border-y px-5 py-2 text-xs ${
         state === "frozen"
-          ? "border-rose-500/30 bg-rose-500/5"
+          ? "border-danger/30 bg-danger/5"
           : state === "scheduling"
             ? "border-brand/30 bg-brand/5"
             : state === "idle"
@@ -156,14 +156,14 @@ function StateIndicator({ state }: { state: "frozen" | "speaking" | "scheduling"
   if (state === "frozen") {
     return (
       <StatusPill tone="danger" dot>
-        <Snowflake size={11} className="-ml-0.5" />
+        <Snowflake size={12} className="-ml-0.5" />
         {t("speaker.state.frozen")}
       </StatusPill>
     );
   }
   if (state === "speaking") {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-semibold uppercase">
+      <span className="inline-flex items-center gap-1.5 rounded-md px-1.5 py-0.5 text-xs font-semibold uppercase">
         <span
           className="h-1.5 w-1.5 rounded-full bg-current"
           style={{ animation: "pulse-ring 1.4s ease-out infinite" }}
@@ -175,14 +175,14 @@ function StateIndicator({ state }: { state: "frozen" | "speaking" | "scheduling"
   if (state === "scheduling") {
     return (
       <StatusPill tone="brand" dot>
-        <Loader2 size={11} className="animate-spin" />
+        <Loader2 size={12} className="animate-spin" />
         {t("speaker.state.scheduling")}
       </StatusPill>
     );
   }
   return (
     <StatusPill tone="neutral" dot>
-      <Sparkles size={11} className="-ml-0.5" />
+      <Sparkles size={12} className="-ml-0.5" />
       {t("speaker.state.idle")}
     </StatusPill>
   );

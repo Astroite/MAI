@@ -73,7 +73,7 @@ export function TemplatesPage() {
                 }`
               }
             >
-              <Icon size={15} />
+              <Icon size={14} />
               {t(entry.labelKey)}
             </NavLink>
           );
@@ -366,7 +366,7 @@ function PersonasView() {
                           title={t("common.edit")}
                           aria-label={t("common.edit")}
                         >
-                          <Pencil size={15} />
+                          <Pencil size={14} />
                         </button>
                         <button
                           className="btn btn-danger h-8 w-8 px-0"
@@ -376,7 +376,7 @@ function PersonasView() {
                           title={t("common.delete")}
                           aria-label={t("common.delete")}
                         >
-                          <Trash2 size={15} />
+                          <Trash2 size={14} />
                         </button>
                       </div>
                     </div>
@@ -384,7 +384,7 @@ function PersonasView() {
                       <StatusPill tone={persona.kind === "discussant" ? "brand" : "accent"}>
                         {display("personaKind", persona.kind)}
                       </StatusPill>
-                      <span className="truncate text-[11px] text-muted">
+                      <span className="truncate text-xs text-muted">
                         {personaModelLabel(persona, modelById, providerById, t)}
                       </span>
                     </div>
@@ -396,7 +396,7 @@ function PersonasView() {
                     {persona.tags.slice(0, 5).map((tag) => (
                       <span
                         key={tag}
-                        className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted"
+                        className="rounded-md bg-surface px-1.5 py-0.5 text-xs text-muted"
                       >
                         #{tag}
                       </span>
@@ -595,7 +595,7 @@ function PersonasView() {
                         backgroundColor: selected ? `${color}1f` : undefined
                       }}
                     >
-                      <Icon size={15} />
+                      <Icon size={14} />
                     </button>
                   );
                 })}
@@ -874,8 +874,8 @@ function FormatsView() {
                     const phase = phaseById.get(slot.phase_template_id);
                     return (
                       <li key={`${format.id}-${index}-${slot.phase_template_id}`} className="flex shrink-0 items-center gap-1">
-                        <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-0.5 text-[11px] text-muted">
-                          <span className="text-[10px]">{index + 1}</span>
+                        <span className="inline-flex items-center gap-1 rounded-md border border-border bg-surface px-2 py-0.5 text-xs text-muted">
+                          <span className="text-xs">{index + 1}</span>
                           <span className="max-w-[8rem] truncate">{phase?.name ?? slot.phase_template_id}</span>
                         </span>
                         {index < Math.min(format.phase_sequence.length, 8) - 1 && (
@@ -885,7 +885,7 @@ function FormatsView() {
                     );
                   })}
                   {format.phase_sequence.length > 8 && (
-                    <li className="shrink-0 text-[11px] text-muted">
+                    <li className="shrink-0 text-xs text-muted">
                       +{format.phase_sequence.length - 8}
                     </li>
                   )}
@@ -893,7 +893,7 @@ function FormatsView() {
                 {format.tags.length > 0 && (
                   <div className="mt-3 flex flex-wrap gap-2 text-xs">
                     {format.tags.slice(0, 4).map((tag) => (
-                      <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                      <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-xs text-muted">
                         #{tag}
                       </span>
                     ))}
@@ -1009,7 +1009,7 @@ function FormatPhaseCard({
           </div>
         </div>
         <button className="btn btn-danger h-8 w-8 shrink-0 px-0" type="button" aria-label={t("common.delete")} onClick={onRemove}>
-          <Trash2 size={15} />
+          <Trash2 size={14} />
         </button>
       </div>
     </div>
@@ -1271,7 +1271,7 @@ function PhasesView() {
                     </StatusPill>
                   ))}
                   {phase.tags.slice(0, 4).map((tag) => (
-                    <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                    <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-xs text-muted">
                       #{tag}
                     </span>
                   ))}
@@ -1582,7 +1582,7 @@ function RecipesView() {
                     </StatusPill>
                   )}
                   {recipe.tags.slice(0, 4).map((tag) => (
-                    <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                    <span key={tag} className="rounded-md bg-surface px-1.5 py-0.5 text-xs text-muted">
                       #{tag}
                     </span>
                   ))}
@@ -1592,14 +1592,14 @@ function RecipesView() {
                     {personaSample.map((persona) => (
                       <span
                         key={persona!.id}
-                        className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-[10px] font-semibold text-brand"
+                        className="grid h-7 w-7 place-items-center rounded-full bg-brand/10 text-xs font-semibold text-brand"
                         title={persona!.name}
                       >
                         {persona!.name.trim().slice(0, 2) || "?"}
                       </span>
                     ))}
                     {recipe.persona_ids.length > personaSample.length && (
-                      <span className="text-[11px] text-muted">+{recipe.persona_ids.length - personaSample.length}</span>
+                      <span className="text-xs text-muted">+{recipe.persona_ids.length - personaSample.length}</span>
                     )}
                   </div>
                 )}
@@ -1903,7 +1903,7 @@ export function ApiProvidersView() {
             expandedHeader={
               <div className="flex items-center justify-between gap-2 px-4 py-3">
                 <div className="flex items-center gap-2 text-sm font-semibold">
-                  <Plus size={15} className="text-brand" />
+                  <Plus size={14} className="text-brand" />
                   {t("api.newProvider")}
                 </div>
                 <button className="btn h-8 px-2 text-xs" type="button" onClick={resetForm}>
@@ -1941,10 +1941,10 @@ export function ApiProvidersView() {
         {(providers.data ?? []).map((provider) => {
           const tone =
             provider.last_tested_ok === true
-              ? "bg-emerald-500"
+              ? "bg-success"
               : provider.last_tested_ok === false
-                ? "bg-rose-500"
-                : "bg-zinc-400";
+                ? "bg-danger"
+                : "bg-muted";
           const tip =
             provider.last_tested_ok === true
               ? t("api.statusOk", { time: provider.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
@@ -2000,9 +2000,9 @@ export function ApiProvidersView() {
                     {test.isPending && test.variables === provider.id ? (
                       <Wifi size={14} className="animate-pulse" />
                     ) : provider.last_tested_ok === true ? (
-                      <CheckCircle2 size={14} className="text-emerald-500" />
+                      <CheckCircle2 size={14} className="text-success" />
                     ) : provider.last_tested_ok === false ? (
-                      <XCircle size={14} className="text-rose-500" />
+                      <XCircle size={14} className="text-danger" />
                     ) : (
                       <Wifi size={14} />
                     )}
@@ -2299,10 +2299,10 @@ function ProviderModelsPanel({
         {selectedProviderModels.map((model) => {
           const modelTone =
             model.last_tested_ok === true
-              ? "bg-emerald-500"
+              ? "bg-success"
               : model.last_tested_ok === false
-                ? "bg-rose-500"
-                : "bg-zinc-400";
+                ? "bg-danger"
+                : "bg-muted";
           const modelTip =
             model.last_tested_ok === true
               ? t("api.statusOk", { time: model.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
@@ -2328,8 +2328,8 @@ function ProviderModelsPanel({
                   {model.last_tested_at && (
                     <div className={`mt-1 text-xs ${
                       model.last_tested_ok === true
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-rose-600 dark:text-rose-400"
+                        ? "text-success"
+                        : "text-danger"
                     }`}>
                       {model.last_tested_ok === true
                         ? t("api.testedOk", { time: formatRelativeTime(model.last_tested_at) })
@@ -2721,7 +2721,7 @@ function Header({
         {metrics && <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">{metrics}</div>}
       </div>
       {onAction && (
-        <button className="btn btn-primary rounded-full px-4" type="button" onClick={onAction}>
+        <button className="btn btn-primary rounded-md px-4" type="button" onClick={onAction}>
           <Plus size={16} />
           {actionLabel ?? t("common.add")}
         </button>

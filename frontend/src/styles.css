@@ -79,6 +79,10 @@ textarea {
   @apply h-8 rounded-md border-transparent bg-transparent px-2 text-muted shadow-none hover:bg-surface hover:text-text;
 }
 
+.btn-sm {
+  @apply h-7 rounded-md border border-border/90 bg-panel px-2 text-xs font-medium text-text shadow-card transition hover:border-brand hover:bg-brand/5 hover:text-brand disabled:cursor-not-allowed disabled:opacity-45;
+}
+
 .input {
   @apply h-9 rounded-md border border-border/90 bg-panel px-3 text-sm outline-none transition placeholder:text-muted/70 focus:border-brand focus:ring-2 focus:ring-brand/20;
 }

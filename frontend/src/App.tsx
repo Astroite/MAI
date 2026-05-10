@@ -68,7 +68,7 @@ function SetupBanner() {
   const steps = health.data.setup_steps;
   if (!steps) {
     return (
-      <div className="border-b border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-700 dark:text-rose-300">
+      <div className="border-b border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
         <div className="mx-auto flex max-w-[1500px] items-center gap-2">
           <AlertTriangle size={14} />
           <span>{t("setup.missingPrefix")}</span>
@@ -90,7 +90,7 @@ function SetupBanner() {
   const nextItem = items.find((item) => !steps[item.key]);
 
   return (
-    <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-700 dark:text-amber-300">
+    <div className="border-b border-warning/30 bg-warning/10 px-4 py-2 text-sm text-warning">
       <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-x-4 gap-y-1">
         <div className="flex items-center gap-2 font-medium">
           <AlertTriangle size={14} />
@@ -102,9 +102,9 @@ function SetupBanner() {
             return (
               <li key={item.key} className="flex items-center gap-1.5">
                 {done ? (
-                  <Check size={14} className="shrink-0 text-emerald-600 dark:text-emerald-400" />
+                  <Check size={14} className="shrink-0 text-success" />
                 ) : (
-                  <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border border-current text-[9px]">
+                  <span className="grid h-3.5 w-3.5 shrink-0 place-items-center rounded-full border border-current text-xs">
                     {items.indexOf(item) + 1}
                   </span>
                 )}
@@ -116,7 +116,7 @@ function SetupBanner() {
         {nextItem && (
           <NavLink
             to={nextItem.to}
-            className="ml-auto inline-flex items-center gap-1 rounded border border-current px-2 py-0.5 hover:bg-amber-500/10"
+            className="ml-auto inline-flex items-center gap-1 rounded border border-current px-2 py-0.5 hover:bg-warning/10"
           >
             {t("setup.step.go")}
             <ChevronRight size={14} />
@@ -187,8 +187,8 @@ function UpdateBanner() {
 
   const progressPct = total > 0 ? Math.round((downloaded / total) * 100) : 0;
   const tone = status === "error"
-    ? "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
-    : "border-brand/30 bg-brand/10 text-brand dark:text-blue-300";
+    ? "border-danger/30 bg-danger/10 text-danger"
+    : "border-brand/30 bg-brand/10 text-brand";
 
   return (
     <div className={`border-b px-4 py-2 text-sm ${tone}`}>

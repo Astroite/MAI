@@ -8,20 +8,9 @@ import type { Message, PersonaInstance } from "../../types";
 import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
-import { DEFAULT_PERSONA_COLOR, PersonaIcon } from "../../components/PersonaIcon";
+import { PersonaIcon } from "../../components/PersonaIcon";
+import { personaTone } from "../../utils/color";
 import { splitActions } from "./splitActions";
-
-type PersonaLike = { id?: string | null; color?: string | null; icon?: string | null };
-
-function personaTone(persona: PersonaLike | undefined | null, fallbackKey?: string | null): string {
-  if (persona?.color) return persona.color;
-  const key = persona?.id ?? fallbackKey ?? null;
-  if (!key) return DEFAULT_PERSONA_COLOR;
-  let hash = 0;
-  for (let i = 0; i < key.length; i += 1) hash = (hash * 31 + key.charCodeAt(i)) | 0;
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue} 52% 48%)`;
-}
 
 type Avatar =
   | { kind: "icon"; icon?: string | null; color: string }
@@ -217,13 +206,13 @@ function ToolInvocationRow({ message }: { message: Message }) {
               <Wrench size={14} />
               <span className="truncate">{parsed?.display_name || parsed?.tool_name || t("message.tool.unknown")}</span>
             </div>
-            {parsed?.tool_name && <code className="mt-1 block truncate text-[11px] text-muted">{parsed.tool_name}</code>}
+            {parsed?.tool_name && <code className="mt-1 block truncate text-xs text-muted">{parsed.tool_name}</code>}
           </div>
           <StatusPill tone={status === "success" ? "brand" : status === "error" ? "danger" : "neutral"}>
             {status}
           </StatusPill>
         </div>
-        <pre className="mai-scrollbar mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface p-2 text-[11px] text-muted">
+        <pre className="mai-scrollbar mt-2 max-h-40 overflow-auto whitespace-pre-wrap rounded-md bg-surface p-2 text-xs text-muted">
           {parsed?.error || previewValue(parsed?.result, previewValue(parsed?.arguments, message.content))}
         </pre>
       </div>
@@ -358,11 +347,11 @@ function MessageRow({
             onClick={() => revoke.mutate()}
             title={t("message.revokeTitle")}
           >
-            <RotateCcw size={13} />
+            <RotateCcw size={14} />
             {t("message.revoke")}
           </button>
         )}
-        <span className="rounded-md border border-border/80 bg-panel px-1.5 py-0.5 text-[11px] text-muted">
+        <span className="rounded-md border border-border/80 bg-panel px-1.5 py-0.5 text-xs text-muted">
           #{shortMessageId(message.id)}
         </span>
       </div>

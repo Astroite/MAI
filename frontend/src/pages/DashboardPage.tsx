@@ -104,7 +104,7 @@ function DashboardRoomCard({
       <span
         aria-hidden
         className="absolute inset-y-0 left-0 w-1"
-        style={{ backgroundColor: isFrozen ? "rgb(244 63 94 / 0.7)" : accent }}
+        style={{ backgroundColor: isFrozen ? "rgb(228 82 92 / 0.7)" : accent }}
       />
 
       <div className="space-y-3 px-4 py-3 pl-5">
@@ -112,7 +112,7 @@ function DashboardRoomCard({
           <h3 className="line-clamp-2 text-sm font-semibold leading-snug">{room.title}</h3>
           {isFrozen && (
             <StatusPill tone="danger">
-              <Snowflake size={10} className="-ml-0.5" />
+              <Snowflake size={12} className="-ml-0.5" />
               {display("roomStatus", room.status)}
             </StatusPill>
           )}
@@ -138,7 +138,7 @@ function DashboardRoomCard({
               ))}
               {memberCount > 6 && (
                 <span
-                  className="grid h-[26px] w-[26px] place-items-center rounded-full bg-surface text-[11px] font-semibold text-muted ring-2 ring-panel"
+                  className="grid h-[26px] w-[26px] place-items-center rounded-full bg-surface text-xs font-semibold text-muted ring-2 ring-panel"
                   title={t("room.membersTitle", { count: memberCount })}
                 >
                   +{memberCount - 6}
@@ -248,7 +248,7 @@ function StepNode({
   // the row reads as a continuous progress strip rather than three islands.
   const state = step.done ? "done" : isNext ? "next" : "upcoming";
   const tone = {
-    done: "border-emerald-500/40 bg-emerald-500/5",
+    done: "border-success/40 bg-success/5",
     next: "border-brand bg-brand/5 shadow-card",
     upcoming: "border-border bg-surface"
   }[state];
@@ -263,7 +263,7 @@ function StepNode({
         <span
           className={`grid h-12 w-12 place-items-center rounded-full ${
             state === "done"
-              ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              ? "bg-success/10 text-success"
               : state === "next"
                 ? "bg-brand/15 text-brand"
                 : "bg-panel text-muted"
@@ -273,9 +273,9 @@ function StepNode({
         </span>
         <span
           aria-hidden
-          className={`absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full border-2 border-panel text-[10px] font-semibold ${
+          className={`absolute -right-1 -top-1 grid h-5 w-5 place-items-center rounded-full border-2 border-panel text-xs font-semibold ${
             state === "done"
-              ? "bg-emerald-500 text-white"
+              ? "bg-success text-white"
               : state === "next"
                 ? "bg-brand text-white"
                 : "bg-surface text-muted"
@@ -290,7 +290,7 @@ function StepNode({
       </div>
 
       {step.done ? (
-        <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+        <span className="text-xs font-medium text-success">
           {t("common.done")}
         </span>
       ) : (
@@ -316,7 +316,7 @@ function StepConnector({ done }: { done: boolean }) {
       style={{ maxWidth: "3rem" }}
     >
       <span
-        className={`h-[2px] w-full rounded-full ${done ? "bg-emerald-500/50" : "bg-border"}`}
+        className={`h-[2px] w-full rounded-full ${done ? "bg-success/50" : "bg-border"}`}
       />
     </li>
   );

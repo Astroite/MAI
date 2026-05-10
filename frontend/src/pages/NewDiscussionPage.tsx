@@ -250,7 +250,7 @@ export function NewDiscussionPage() {
         </div>
         {draftFlash && (
           <span className="inline-flex items-center gap-1 text-xs text-success">
-            <CheckCircle2 size={13} />
+            <CheckCircle2 size={14} />
             {draftFlash}
           </span>
         )}
@@ -264,7 +264,7 @@ export function NewDiscussionPage() {
         </button>
         <button
           type="submit"
-          className="btn btn-primary h-9 rounded-full px-5"
+          className="btn btn-primary h-9 rounded-md px-5"
           disabled={createRoom.isPending || !canCreate}
         >
           <Plus size={14} />
@@ -311,7 +311,7 @@ export function NewDiscussionPage() {
                     {(scenario.tags ?? []).length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1">
                         {scenario.tags.slice(0, 4).map((tag) => (
-                          <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                          <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-xs text-muted">
                             {tag}
                           </span>
                         ))}
@@ -397,7 +397,7 @@ export function NewDiscussionPage() {
             {formatPhaseSteps.length > 0 && (
               <div className="mt-4 rounded-md border border-border bg-surface px-3 py-3">
                 <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-muted">
-                  <Layers size={13} />
+                  <Layers size={14} />
                   {t("dashboard.preview.phases")}
                 </div>
                 <PhaseStepper steps={formatPhaseSteps} size="sm" />
@@ -423,7 +423,7 @@ export function NewDiscussionPage() {
               <label className="block min-w-[16rem] flex-1">
                 <span className="label">{t("dashboard.personaSearch")}</span>
                 <span className="relative mt-1 block">
-                  <Search className="pointer-events-none absolute left-3 top-2.5 text-muted" size={15} />
+                  <Search className="pointer-events-none absolute left-3 top-2.5 text-muted" size={14} />
                   <input
                     name="persona-search"
                     className="input w-full pl-9"
@@ -491,13 +491,13 @@ export function NewDiscussionPage() {
                             {persona.identity && (
                               <span className="text-xs text-muted">· {persona.identity}</span>
                             )}
-                            {checked && <CheckCircle2 size={13} className="text-brand" />}
+                            {checked && <CheckCircle2 size={14} className="text-brand" />}
                           </span>
                           <span className="mt-1 line-clamp-2 block text-xs text-muted">{persona.description}</span>
                           {(persona.tags ?? []).length > 0 && (
                             <span className="mt-2 flex flex-wrap gap-1">
                               {persona.tags.map((tag) => (
-                                <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-[11px] text-muted">
+                                <span key={tag} className="rounded bg-surface px-1.5 py-0.5 text-xs text-muted">
                                   {tag}
                                 </span>
                               ))}
@@ -551,12 +551,12 @@ export function NewDiscussionPage() {
                         return (
                           <span
                             key={id}
-                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-[11px]"
+                            className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-0.5 text-xs"
                             title={persona ? `${persona.name}${persona.identity ? " · " + persona.identity : ""}` : id}
                           >
                             <span
                               aria-hidden
-                              className="grid h-5 w-5 place-items-center rounded-full bg-brand/15 text-[10px] font-semibold text-brand"
+                              className="grid h-5 w-5 place-items-center rounded-full bg-brand/15 text-xs font-semibold text-brand"
                             >
                               {initial}
                             </span>
@@ -570,7 +570,7 @@ export function NewDiscussionPage() {
                         );
                       })}
                       {effectivePersonaIds.length > 12 && (
-                        <span className="text-[11px] text-muted">
+                        <span className="text-xs text-muted">
                           +{effectivePersonaIds.length - 12}
                         </span>
                       )}
@@ -591,7 +591,7 @@ export function NewDiscussionPage() {
             </div>
             <button
               type="submit"
-              className="btn btn-primary mt-4 w-full justify-center rounded-full px-5"
+              className="btn btn-primary mt-4 w-full justify-center rounded-md px-5"
               disabled={createRoom.isPending || !canCreate}
             >
               <Plus size={14} />

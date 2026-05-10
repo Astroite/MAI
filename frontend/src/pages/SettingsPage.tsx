@@ -43,14 +43,14 @@ export function SettingsPage() {
               {setupReady ? t("settings.setupReady") : t("settings.notReady")}
             </StatusPill>
             <StatusPill tone="info">
-              <Server size={11} />
+              <Server size={12} />
               {t("settings.providerStat", {
                 enabled: verifiedProviders,
                 total: providers.data?.length ?? 0
               })}
             </StatusPill>
             <StatusPill tone="info">
-              <Activity size={11} />
+              <Activity size={12} />
               {t("settings.modelStat", { enabled: enabledModels, total: models.data?.length ?? 0 })}
             </StatusPill>
             <StatusPill tone={health.data?.status === "ok" ? "brand" : "danger"} dot>
@@ -198,7 +198,7 @@ function DefaultApiSection() {
 
   const status = selectedModel?.last_tested_ok;
   const statusColor =
-    status === true ? "bg-emerald-500" : status === false ? "bg-rose-500" : "bg-zinc-400";
+    status === true ? "bg-success" : status === false ? "bg-danger" : "bg-muted";
   const statusLabel =
     status === true
       ? t("api.statusOk", { time: selectedModel?.last_tested_at?.slice(0, 19).replace("T", " ") })
@@ -251,8 +251,8 @@ function DefaultApiSection() {
           <div
             className={`flex items-start gap-2 rounded-md border p-2 text-xs ${
               testResult.ok
-                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                : "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300"
+                ? "border-success/30 bg-success/10 text-success"
+                : "border-danger/30 bg-danger/10 text-danger"
             }`}
           >
             {testResult.ok ? <CheckCircle2 size={14} className="mt-0.5" /> : <XCircle size={14} className="mt-0.5" />}

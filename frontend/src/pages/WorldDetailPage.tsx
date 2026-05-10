@@ -30,23 +30,7 @@ import type {
   WorldCharacterKind,
   SceneRosterEntry
 } from "../types";
-
-const PALETTE = [
-  "#ef4444",
-  "#f97316",
-  "#f59e0b",
-  "#eab308",
-  "#84cc16",
-  "#22c55e",
-  "#14b8a6",
-  "#06b6d4",
-  "#0ea5e9",
-  "#3b82f6",
-  "#6366f1",
-  "#8b5cf6",
-  "#a855f7",
-  "#ec4899"
-];
+import { COVER_PALETTE } from "../constants/colors";
 
 export function WorldDetailPage() {
   const { worldId = "" } = useParams();
@@ -268,8 +252,8 @@ export function WorldDetailPage() {
                           第 {scene.scene_index} 幕
                         </span>
                         {scene.sealed_at && (
-                          <span className="inline-flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
-                            <Lock size={10} />
+                          <span className="inline-flex items-center gap-1 text-xs text-success">
+                            <Lock size={12} />
                             已封幕
                           </span>
                         )}
@@ -354,13 +338,13 @@ function CharacterRow({
             <span className="text-xs text-muted">（{character.identity}）</span>
           )}
           <span
-            className={`text-[10px] uppercase tracking-wide ${
+            className={`text-xs uppercase tracking-wide ${
               character.kind === "user" ? "text-accent" : "text-muted"
             }`}
           >
             {character.kind === "user" ? "USER" : "AI"}
           </span>
-          {dim && <span className="text-[10px] text-muted">（已退场）</span>}
+          {dim && <span className="text-xs text-muted">（已退场）</span>}
         </div>
         {character.brief && (
           <div className="truncate text-xs text-muted">{character.brief}</div>
@@ -424,7 +408,7 @@ function AddCharacterForm({
   const [skillsText, setSkillsText] = useState("");
   const [goalsText, setGoalsText] = useState("");
   const [templateId, setTemplateId] = useState<string | null>(null);
-  const [color, setColor] = useState(PALETTE[9]); // 3b82f6
+  const [color, setColor] = useState(COVER_PALETTE[9]); // 3b82f6
   const [icon, setIcon] = useState<string>("Sparkles");
   const [pickerOpen, setPickerOpen] = useState(false);
   // Track whether the user has hand-edited each field. Picking a template
@@ -615,7 +599,7 @@ function AddCharacterForm({
               hint="角色的底色与性格 / system prompt。选模板后会自动填入模板的 system prompt，可继续追加。"
             >
               <textarea
-                className="input w-full"
+                className="textarea w-full"
                 rows={5}
                 placeholder="例：沉默寡言，对承诺极重；少年时曾被门派遗弃，至今不愿提起。"
                 value={coreIdentity}
@@ -647,7 +631,7 @@ function AddCharacterForm({
 
       <FormSection label="外观色">
         <div className="flex flex-wrap gap-1.5">
-          {PALETTE.map((value) => (
+          {COVER_PALETTE.map((value) => (
             <button
               key={value}
               type="button"
@@ -691,7 +675,7 @@ function FormSection({
     <section className="space-y-2">
       <header>
         <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
-        {hint && <p className="mt-0.5 text-[11px] text-muted">{hint}</p>}
+        {hint && <p className="mt-0.5 text-xs text-muted">{hint}</p>}
       </header>
       {children}
     </section>
@@ -713,10 +697,10 @@ function LabeledField({
     <label className="block text-sm">
       <span className="text-xs text-muted">
         {label}
-        {required && <span className="ml-0.5 text-rose-500">*</span>}
+        {required && <span className="ml-0.5 text-danger">*</span>}
       </span>
       <div className="mt-1">{children}</div>
-      {hint && <span className="mt-1 block text-[11px] text-muted">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-muted">{hint}</span>}
     </label>
   );
 }
@@ -820,7 +804,7 @@ function EditCharacterDialog({
             <div
               className={`flex gap-2 rounded-md border px-3 py-2 text-xs ${
                 worldHasActivity
-                  ? "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+                  ? "border-warning/40 bg-warning/10 text-warning"
                   : "border-border bg-surface text-muted"
               }`}
             >
@@ -872,7 +856,7 @@ function EditCharacterDialog({
                 <div className="space-y-2.5">
                   <LabeledField label="Core identity">
                     <textarea
-                      className="input w-full"
+                      className="textarea w-full"
                       rows={4}
                       value={coreIdentity}
                       onChange={(event) => setCoreIdentity(event.target.value)}
@@ -898,7 +882,7 @@ function EditCharacterDialog({
 
             <FormSection label="外观色">
               <div className="flex flex-wrap gap-1.5">
-                {PALETTE.map((value) => (
+                {COVER_PALETTE.map((value) => (
                   <button
                     key={value}
                     type="button"
@@ -996,7 +980,7 @@ function CreateSceneForm({
         required
       />
       <textarea
-        className="input w-full"
+        className="textarea w-full"
         rows={2}
         placeholder="场景背景（黄昏的酒馆，烛光摇曳…）"
         value={background}
@@ -1039,7 +1023,7 @@ function CreateSceneForm({
                   {character.identity && (
                     <span className="text-xs text-muted">（{character.identity}）</span>
                   )}
-                  <span className="ml-auto text-[10px] text-muted">
+                  <span className="ml-auto text-xs text-muted">
                     {character.kind === "user" ? "USER" : "AI"}
                   </span>
                 </label>
