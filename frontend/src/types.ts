@@ -357,6 +357,12 @@ export interface StreamingEvent {
   persona_id?: string;
   chunk_text?: string;
   chunk_index?: number;
+  // system.error fields
+  kind?: string;
+  detail?: string;
+  error_class?: string;
+  persona_name?: string;
+  traceback?: string;
 }
 
 // --- Story World ---------------------------------------------------------

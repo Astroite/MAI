@@ -1,5 +1,6 @@
 import asyncio
 import random
+import traceback
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -66,6 +67,47 @@ CASUAL_CONTINUATION_BASE = 0.9
 CASUAL_CONTINUATION_DECAY = 0.85
 
 SILENCE_SENTINEL = "<silent/>"
+
+
+def _extract_llm_error_detail(exc: BaseException) -> str:
+    """Build a useful one-line detail string from a LiteLLM/OpenAI exception.
+
+    LiteLLM wraps upstream provider errors in `BadRequestError` etc. and its
+    own `str(exc)` is often just "Provider returned error" — the real body
+    from OpenRouter / OpenAI sits on `.response.text` (httpx response) or
+    `.body` (parsed JSON). We probe both so the SSE event carries something
+    the user can actually act on (e.g. "model not found", "no credits", etc).
+    """
+    base = (str(exc) or repr(exc)).strip()
+    status = getattr(exc, "status_code", None)
+    provider = getattr(exc, "llm_provider", None)
+    model = getattr(exc, "model", None)
+    head_bits: list[str] = []
+    if status:
+        head_bits.append(f"HTTP {status}")
+    if provider:
+        head_bits.append(f"provider={provider}")
+    if model:
+        head_bits.append(f"model={model}")
+    head = f" [{', '.join(head_bits)}]" if head_bits else ""
+
+    body_text = ""
+    body = getattr(exc, "body", None)
+    if body:
+        try:
+            import json as _json
+
+            body_text = _json.dumps(body, ensure_ascii=False)[:800]
+        except Exception:  # noqa: BLE001
+            body_text = str(body)[:800]
+    if not body_text:
+        response = getattr(exc, "response", None)
+        text = getattr(response, "text", None)
+        if isinstance(text, str) and text.strip():
+            body_text = text.strip()[:800]
+    if body_text and body_text not in base:
+        return f"{base}{head}\n\n{body_text}"
+    return f"{base}{head}" if head else base
 
 
 @dataclass
@@ -161,6 +203,8 @@ async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — surface to user, never swallow
+            tb = traceback.format_exc()
+            detail = _extract_llm_error_detail(exc)
             try:
                 async with SessionLocal() as session:
                     await trace_record(
@@ -168,14 +212,20 @@ async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
                         room_id,
                         "autodrive_error",
                         f"autodrive failed: {exc!r}",
-                        {"error": repr(exc)},
+                        {"error": repr(exc), "detail": detail, "traceback": tb},
                     )
                     await session.commit()
             except Exception:  # noqa: BLE001
                 pass
             await event_bus.publish(
                 room_id,
-                {"type": "system.error", "kind": "autodrive", "detail": str(exc)},
+                {
+                    "type": "system.error",
+                    "kind": "autodrive",
+                    "error_class": type(exc).__name__,
+                    "detail": detail,
+                    "traceback": tb,
+                },
             )
     # After chain completes, check if a user message arrived during the chain
     asyncio.create_task(_maybe_handle_pending_user_turn(room_id))
@@ -911,6 +961,38 @@ async def _stream_one_message(
         truncated_reason = "timeout"
     except asyncio.CancelledError:
         truncated_reason = call.cancel_reason or "cancelled"
+    except Exception as exc:  # noqa: BLE001 — surface to UI; never silently drop
+        # Provider errors (litellm/httpx/4xx from overseas/OpenRouter relays)
+        # otherwise propagate up and the user just sees nothing. Publish a
+        # rich system.error event so the frontend can toast the detail, then
+        # re-raise so autodrive's outer handler and FastAPI's /turn path keep
+        # their existing flow.
+        tb = traceback.format_exc()
+        detail = _extract_llm_error_detail(exc)
+        try:
+            await trace_record(
+                session,
+                room.id,
+                "llm_call_error",
+                f"{persona.name} stream failed: {exc!r}",
+                {"persona_id": persona.id, "error": repr(exc), "detail": detail, "traceback": tb},
+            )
+            await session.commit()
+        except Exception:  # noqa: BLE001
+            pass
+        await event_bus.publish(
+            room.id,
+            {
+                "type": "system.error",
+                "kind": "stream",
+                "persona_id": persona.id,
+                "persona_name": persona.name,
+                "error_class": type(exc).__name__,
+                "detail": detail,
+                "traceback": tb,
+            },
+        )
+        raise
     finally:
         _unregister_active_call(call)
 

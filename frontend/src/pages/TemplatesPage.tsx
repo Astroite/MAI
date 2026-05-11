@@ -31,7 +31,7 @@ import { toast } from "../components/Toaster";
 import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedChangesWarning } from "../hooks";
 import { useI18n } from "../i18n";
-import { PROVIDER_KINDS, providerKindLabel } from "../providers";
+import { PROVIDER_KINDS, ROUTABLE_SLUGS, SUGGESTED_MODELS, providerKindLabel } from "../providers";
 import {
   DEFAULT_PERSONA_COLOR,
   DEFAULT_PERSONA_ICON,
@@ -1695,7 +1695,7 @@ export function ApiProvidersView() {
   const [pendingError, setPendingError] = useState<string | null>(null);
   const [editingModelId, setEditingModelId] = useState<string | null>(null);
   const [modelDisplayName, setModelDisplayName] = useState("");
-  const [modelName, setModelName] = useState("openai/gpt-4o-mini");
+  const [modelName, setModelName] = useState("");
   const [modelEnabled, setModelEnabled] = useState(true);
   const [modelIsDefault, setModelIsDefault] = useState(false);
   const [contextWindow, setContextWindow] = useState("");
@@ -1706,10 +1706,12 @@ export function ApiProvidersView() {
     () => (models.data ?? []).filter((model) => model.api_provider_id === editingId),
     [models.data, editingId]
   );
-  const resetModelForm = (slug = providerSlug) => {
+  const resetModelForm = (_slug = providerSlug) => {
     setEditingModelId(null);
     setModelDisplayName("");
-    setModelName(`${slug.trim() || "openai"}/`);
+    // Backend auto-prepends the provider slug at call time, so the input
+    // is left empty — placeholder shows the bare model id to fill in.
+    setModelName("");
     setModelEnabled(true);
     setModelIsDefault(selectedProviderModels.length === 0);
     setContextWindow("");
@@ -1758,7 +1760,7 @@ export function ApiProvidersView() {
       setShowKey(false);
       setEditingModelId(null);
       setModelDisplayName("");
-      setModelName(`${detail.provider_slug || "openai"}/`);
+      setModelName("");
       setModelEnabled(true);
       setModelIsDefault(false);
       setContextWindow("");
@@ -2173,9 +2175,8 @@ function ProviderConfigForm({
           value={providerSlug}
           onChange={(event) => {
             setProviderSlug(event.target.value);
-            if (!editingModelId && (!modelName.trim() || modelName.endsWith("/"))) {
-              setModelName(`${event.target.value}/`);
-            }
+            // Backend now prepends the slug for routable providers; we no
+            // longer pre-fill the model input with `slug/` here.
           }}
         >
           {PROVIDER_KINDS.map((slug) => (
@@ -2393,10 +2394,39 @@ function ProviderModelsPanel({
           <input
             name="api-model-name"
             className="input mt-1 w-full font-mono"
+            list={`api-model-suggestions-${providerSlug || "_"}`}
             value={modelName}
-            onChange={(event) => setModelName(event.target.value)}
-            placeholder={`${providerSlug || "openai"}/gpt-4o-mini`}
+            onChange={(event) => {
+              const next = event.target.value;
+              setModelName(next);
+              // Auto-fill display_name when the user picks (or types) one of
+              // our suggestions and hasn't already named the row. They can
+              // still override after — we only set, never overwrite.
+              // Only auto-fill display_name when the user picks a known
+              // suggestion (exact match). Free-form typing leaves
+              // display_name empty — the backend will derive one from the
+              // model id on save.
+              if (!modelDisplayName.trim()) {
+                const suggestion = (SUGGESTED_MODELS[providerSlug] ?? []).find((m) => m.id === next.trim());
+                if (suggestion) setModelDisplayName(suggestion.label.split(" · ")[0]);
+              }
+            }}
+            placeholder={
+              ROUTABLE_SLUGS.has(providerSlug)
+                ? (SUGGESTED_MODELS[providerSlug]?.[0]?.id ?? "gpt-4o-mini")
+                : `${providerSlug || "openai"}/gpt-4o-mini`
+            }
           />
+          <datalist id={`api-model-suggestions-${providerSlug || "_"}`}>
+            {(SUGGESTED_MODELS[providerSlug] ?? []).map((suggestion) => (
+              <option key={suggestion.id} value={suggestion.id}>
+                {suggestion.label}
+              </option>
+            ))}
+          </datalist>
+          {ROUTABLE_SLUGS.has(providerSlug) && (
+            <p className="mt-1 text-xs text-muted">{t("api.modelNameHelp")}</p>
+          )}
         </label>
         <label className="block">
           <span className="label">{t("api.contextWindow")}</span>

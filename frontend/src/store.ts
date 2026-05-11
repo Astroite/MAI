@@ -17,11 +17,13 @@ interface UIState {
   streaming: Record<string, StreamingMessage>;
   connectionStatus: ConnectionStatus;
   connectionRetries: number;
+  showApiErrorDetail: boolean;
   toggleDark: () => void;
   appendChunk: (roomId: string, messageId: string, personaId: string, text: string, chunkIndex?: number) => void;
   hydrateStream: (roomId: string, messageId: string, personaId: string, text: string, lastChunkIndex: number) => void;
   clearStream: (messageId: string) => void;
   setConnectionStatus: (status: ConnectionStatus, retries?: number) => void;
+  setShowApiErrorDetail: (value: boolean) => void;
 }
 
 export const useUIStore = create<UIState>()(
@@ -31,7 +33,9 @@ export const useUIStore = create<UIState>()(
       streaming: {},
       connectionStatus: "connected",
       connectionRetries: 0,
+      showApiErrorDetail: false,
       toggleDark: () => set((state) => ({ dark: !state.dark })),
+      setShowApiErrorDetail: (value) => set(() => ({ showApiErrorDetail: value })),
       setConnectionStatus: (status, retries) =>
         set(() => ({
           connectionStatus: status,
@@ -79,7 +83,7 @@ export const useUIStore = create<UIState>()(
     }),
     {
       name: "mai-ui",
-      partialize: (state) => ({ dark: state.dark })
+      partialize: (state) => ({ dark: state.dark, showApiErrorDetail: state.showApiErrorDetail })
     }
   )
 );

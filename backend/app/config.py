@@ -13,6 +13,16 @@ def _is_packaged() -> bool:
     return getattr(sys, "frozen", False)  # PyInstaller sets this
 
 
+def is_dev_mode() -> bool:
+    """True when running from source (uvicorn --reload, pytest, scripts/dev).
+
+    Mirrors `_is_packaged()` so dev-only behavior (LiteLLM debug logs,
+    verbose error toasts) can opt in from anywhere without re-checking
+    `sys.frozen` / `MAI_PACKAGED` themselves.
+    """
+    return not _is_packaged()
+
+
 def _user_data_dir(app_name: str = "MAI") -> Path:
     if sys.platform == "win32":
         base = os.environ.get("APPDATA") or str(Path.home() / "AppData" / "Roaming")
