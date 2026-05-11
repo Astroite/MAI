@@ -1,7 +1,52 @@
+import asyncio
 from types import SimpleNamespace
 
+from sqlalchemy import select
+
 from app import engine as engine_module
+from app.db import SessionLocal
 from app.llm import llm_adapter
+from app.models import TraceEvent
+
+
+def _create_provider_and_model(client, suffix: str, model_name: str = "openai/gpt-4o-mini"):
+    provider = client.post(
+        "/templates/api-providers",
+        json={
+            "name": f"pytest model provider {suffix}",
+            "provider_slug": "openai",
+            "api_key": f"sk-model-test-{suffix}",
+        },
+    ).json()
+    model = client.post(
+        "/templates/api-models",
+        json={
+            "api_provider_id": provider["id"],
+            "display_name": f"pytest model {suffix}",
+            "model_name": model_name,
+            "is_default": True,
+            "tags": ["pytest", suffix],
+        },
+    ).json()
+    return provider, model
+
+
+def _api_config_trace_summaries() -> list[str]:
+    async def _load() -> list[str]:
+        async with SessionLocal() as session:
+            rows = (
+                await session.scalars(
+                    select(TraceEvent)
+                    .where(
+                        TraceEvent.room_id == "settings",
+                        TraceEvent.event_type == "api_config_mutation",
+                    )
+                    .order_by(TraceEvent.timestamp)
+                )
+            ).all()
+            return [row.summary for row in rows]
+
+    return asyncio.run(_load())
 
 
 def test_create_debate_format(client):
@@ -195,6 +240,30 @@ def test_api_provider_crud_and_persona_link(client):
     assert persona.status_code == 200
     assert persona.json()["api_provider_id"] == provider_id
 
+    api_model = client.post(
+        "/templates/api-models",
+        json={
+            "api_provider_id": provider_id,
+            "display_name": "provider delete model",
+            "model_name": "openai/gpt-4o-mini",
+        },
+    ).json()
+    api_model_persona = client.post(
+        "/templates/personas",
+        json={
+            "kind": "discussant",
+            "name": "pytest provider-delete api model persona",
+            "description": "",
+            "api_model_id": api_model["id"],
+            "system_prompt": "你是评审者。",
+            "temperature": 0.4,
+            "config": {},
+            "tags": ["pytest"],
+        },
+    )
+    assert api_model_persona.status_code == 200
+    assert api_model_persona.json()["api_model_id"] == api_model["id"]
+
     deleted = client.delete(f"/templates/api-providers/{provider_id}")
     assert deleted.status_code == 200
 
@@ -204,33 +273,20 @@ def test_api_provider_crud_and_persona_link(client):
     assert refreshed["api_provider_id"] is None
     assert refreshed["api_model_id"] is None
     assert refreshed["backing_model"] == ""
+    refreshed_api_model_persona = next(
+        row for row in client.get("/templates/personas").json() if row["id"] == api_model_persona.json()["id"]
+    )
+    assert refreshed_api_model_persona["api_provider_id"] is None
+    assert refreshed_api_model_persona["api_model_id"] is None
+    assert refreshed_api_model_persona["backing_model"] == ""
 
     assert client.get(f"/templates/api-providers/{provider_id}").status_code == 404
+    assert "api provider deleted" in _api_config_trace_summaries()
 
 
-def test_api_models_drive_settings_and_persona_snapshots(client):
-    provider = client.post(
-        "/templates/api-providers",
-        json={
-            "name": "pytest model provider",
-            "provider_slug": "openai",
-            "api_key": "sk-model-test",
-        },
-    ).json()
+def test_api_models_drive_settings_and_persona_model_ids(client, review_format):
+    provider, api_model = _create_provider_and_model(client, "primary")
     provider_id = provider["id"]
-
-    created_model = client.post(
-        "/templates/api-models",
-        json={
-            "api_provider_id": provider_id,
-            "display_name": "GPT 4o mini",
-            "model_name": "openai/gpt-4o-mini",
-            "is_default": True,
-            "tags": ["pytest", "fast"],
-        },
-    )
-    assert created_model.status_code == 200
-    api_model = created_model.json()
     assert api_model["api_provider_id"] == provider_id
     assert api_model["enabled"] is True
 
@@ -238,8 +294,8 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
     assert settings.status_code == 200
     settings_payload = settings.json()
     assert settings_payload["default_api_model_id"] == api_model["id"]
-    assert settings_payload["default_api_provider_id"] == provider_id
-    assert settings_payload["default_backing_model"] == "openai/gpt-4o-mini"
+    assert settings_payload["default_api_provider_id"] is None
+    assert settings_payload["default_backing_model"] is None
 
     persona = client.post(
         "/templates/personas",
@@ -248,7 +304,6 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
             "name": "pytest api model persona",
             "description": "",
             "api_model_id": api_model["id"],
-            "backing_model": "",
             "system_prompt": "test",
             "temperature": 0.4,
             "config": {},
@@ -258,8 +313,21 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
     assert persona.status_code == 200
     persona_payload = persona.json()
     assert persona_payload["api_model_id"] == api_model["id"]
-    assert persona_payload["api_provider_id"] == provider_id
-    assert persona_payload["backing_model"] == "openai/gpt-4o-mini"
+    assert persona_payload["api_provider_id"] is None
+    assert persona_payload["backing_model"] == ""
+
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest api model inheritance",
+            "format_id": review_format["id"],
+            "persona_ids": [persona_payload["id"]],
+        },
+    ).json()
+    instance_payload = next(row for row in room["personas"] if row["template_id"] == persona_payload["id"])
+    assert instance_payload["api_model_id"] == api_model["id"]
+    assert instance_payload["api_provider_id"] is None
+    assert instance_payload["backing_model"] == ""
 
     updated_model = client.patch(
         f"/templates/api-models/{api_model['id']}",
@@ -271,9 +339,13 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
     refreshed_persona = next(
         row for row in client.get("/templates/personas?builtin=false").json() if row["id"] == persona_payload["id"]
     )
-    assert refreshed_persona["backing_model"] == "openai/gpt-4o"
+    assert refreshed_persona["api_model_id"] == api_model["id"]
+    assert refreshed_persona["api_provider_id"] is None
+    assert refreshed_persona["backing_model"] == ""
     refreshed_settings = client.get("/settings").json()
-    assert refreshed_settings["default_backing_model"] == "openai/gpt-4o"
+    assert refreshed_settings["default_api_model_id"] == api_model["id"]
+    assert refreshed_settings["default_api_provider_id"] is None
+    assert refreshed_settings["default_backing_model"] is None
 
     deleted_model = client.delete(f"/templates/api-models/{api_model['id']}")
     assert deleted_model.status_code == 200
@@ -287,33 +359,31 @@ def test_api_models_drive_settings_and_persona_snapshots(client):
     assert cleared_settings["default_api_model_id"] is None
     assert cleared_settings["default_api_provider_id"] is None
     assert cleared_settings["default_backing_model"] is None
+    assert "api model deleted" in _api_config_trace_summaries()
 
 
-def test_api_provider_credentials_reach_llm_adapter(client, review_format, instance_for_template, monkeypatch):
-    """Bound ApiProvider credentials must flow into LLMAdapter.stream."""
+def test_api_model_credentials_reach_llm_adapter(client, review_format, instance_for_template, monkeypatch):
+    """ApiModel-bound personas resolve to provider credentials at call time."""
     captured: dict = {}
 
     async def stream_capture(persona, context, phase, max_tokens, scribe_state=None, api_provider=None, room_background="", **kwargs):
         captured["api_provider"] = api_provider
         captured["persona_id"] = persona.id
+        captured["backing_model"] = persona.backing_model
         captured["room_background"] = room_background
         yield SimpleNamespace(text="ok", index=0)
 
     monkeypatch.setattr(llm_adapter, "stream", stream_capture)
     monkeypatch.setattr(engine_module.llm_adapter, "stream", stream_capture)
 
-    provider = client.post(
-        "/templates/api-providers",
-        json={"name": "credential test", "provider_slug": "openai", "api_key": "sk-credential-test"},
-    ).json()
+    provider, api_model = _create_provider_and_model(client, "credential")
     persona = client.post(
         "/templates/personas",
         json={
             "kind": "discussant",
             "name": "pytest credential carrier",
             "description": "",
-            "backing_model": "openai/gpt-4o-mini",
-            "api_provider_id": provider["id"],
+            "api_model_id": api_model["id"],
             "system_prompt": "test",
             "temperature": 0.4,
             "config": {},
@@ -337,5 +407,6 @@ def test_api_provider_credentials_reach_llm_adapter(client, review_format, insta
     # Engine passes the room-scoped PersonaInstance to llm_adapter, so
     # captured persona.id is the instance id, not the template id.
     assert captured["persona_id"] == persona_instance_id
+    assert captured["backing_model"] == api_model["model_name"]
     assert captured["api_provider"] is not None
-    assert captured["api_provider"].api_key == "sk-credential-test"
+    assert captured["api_provider"].api_key == provider["api_key"]

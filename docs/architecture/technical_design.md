@@ -144,11 +144,11 @@ api_models
 app_settings
   id = 1
   default_api_model_id
-  default_api_provider_id      # legacy mirror / fallback
-  default_backing_model        # legacy mirror / fallback
+  default_api_provider_id      # legacy fallback only
+  default_backing_model        # legacy fallback only
 ```
 
-`api_model_id` 是新 UI 的主路径。为了兼容旧数据，`backing_model` 和 `api_provider_id` 仍保留在 persona template / instance 上，并在选择 `api_model_id` 时同步更新。
+`api_model_id` 是新 UI 的主路径。为了兼容旧数据，`backing_model` 和 `api_provider_id` 仍保留在 persona template / instance 上，但新写入只写 `api_model_id`；legacy 字段只作为旧行读取 fallback，删除 Provider / Model 时会被清理。
 
 模型解析顺序在 `engine.py` 中集中处理：
 
@@ -156,7 +156,6 @@ app_settings
 persona_instance.api_model_id
   -> app_settings.default_api_model_id
   -> legacy backing_model + api_provider_id
-  -> LiteLLM provider 环境变量中的 key（前提是已有 provider 路由配置）
 ```
 
 ### 4.3 房间运行时

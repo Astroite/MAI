@@ -139,16 +139,9 @@ persona_instance.api_model_id
   -> persona_template.api_model_id
   -> app_settings.default_api_model_id
   -> legacy backing_model + api_provider_id（兼容旧数据）
-  -> 环境变量 provider key
 ```
 
-开发时仍可在 `backend/.env` 填环境变量：
-
-```text
-OPENAI_API_KEY=...
-ANTHROPIC_API_KEY=...
-GEMINI_API_KEY=...
-```
+新写入只保存 `api_model_id`。`backing_model` / `api_provider_id` 旧字段保留用于老数据库回退，不再作为新模型选择的镜像。
 
 ## 4. 模板管理
 

@@ -79,7 +79,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - `AppSettings.default_api_model_id`：全局默认模型。
 - persona template / instance 可绑定 `api_model_id`。
 
-旧字段 `backing_model` 和 `api_provider_id` 仍保留为兼容镜像。`migrate_api_models.py` 会把旧数据补成 `api_models`。
+旧字段 `backing_model` 和 `api_provider_id` 仍保留为兼容 fallback；新写入只保存 `api_model_id`。`migrate_api_models.py` 会把旧数据补成 `api_models`。
 
 ### 3.3 国际化
 

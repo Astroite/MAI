@@ -409,7 +409,14 @@ async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) 
         api_model = await session.get(ApiModel, persona.api_model_id)
         if api_model is not None:
             return await session.get(ApiProvider, api_model.api_provider_id)
+    settings_row = await session.get(AppSettings, 1)
+    if settings_row and settings_row.default_api_model_id:
+        api_model = await session.get(ApiModel, settings_row.default_api_model_id)
+        if api_model is not None:
+            return await session.get(ApiProvider, api_model.api_provider_id)
     if not persona.api_provider_id:
+        if settings_row and settings_row.default_api_provider_id:
+            return await session.get(ApiProvider, settings_row.default_api_provider_id)
         return None
     return await session.get(ApiProvider, persona.api_provider_id)
 
@@ -432,8 +439,7 @@ async def resolve_persona_runtime(
     default_model = (settings_row.default_backing_model or "").strip() if settings_row else ""
     default_provider_id = settings_row.default_api_provider_id if settings_row else None
 
-    persona_has_legacy_model = bool((persona.backing_model or "").strip() or persona.api_provider_id)
-    effective_api_model_id = persona.api_model_id or (None if persona_has_legacy_model else default_model_id)
+    effective_api_model_id = persona.api_model_id or default_model_id
     effective_model = (persona.backing_model or "").strip()
     effective_provider_id = persona.api_provider_id
 

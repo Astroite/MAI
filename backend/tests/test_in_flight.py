@@ -36,7 +36,19 @@ def test_room_state_exposes_in_flight_partial(client, review_format, discussant_
         ACTIVE_CALLS.pop(room_id, None)
 
 
-def test_parallel_turn_exposes_multiple_in_flight_partials(client, discussant_personas):
+def test_parallel_turn_exposes_multiple_in_flight_partials(client, discussant_personas, monkeypatch):
+    async def noop_autodrive_after(room_id, message):
+        return None
+
+    async def controlled_stream(persona, context, phase, max_tokens, scribe_state=None, api_provider=None, **kwargs):
+        yield type("Chunk", (), {"text": f"{persona.name} partial", "index": 0})()
+        await asyncio.sleep(0.15)
+        yield type("Chunk", (), {"text": " done", "index": 1})()
+
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", noop_autodrive_after)
+    monkeypatch.setattr(llm_adapter, "stream", controlled_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", controlled_stream)
+
     personas = discussant_personas[:2]
     phase = client.post(
         "/templates/phases",

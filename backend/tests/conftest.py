@@ -49,42 +49,56 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.main import app  # noqa: E402
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _autoconfigure_default_provider():
+def _ensure_default_api_model(c: TestClient) -> None:
     """Engine no longer falls back to env vars at runtime — a real
     ApiProvider must be configured. Bootstrap one from .env.test so the
     test suite can run without each test having to set it up."""
-    with TestClient(app) as c:
-        providers = c.get("/templates/api-providers").json()
-        provider = next(
-            (p for p in providers if p["name"] == "__pytest_default__"), None
-        )
-        if provider is None:
-            created = c.post(
-                "/templates/api-providers",
-                json={
-                    "name": "__pytest_default__",
-                    "provider_slug": "openai",
-                    "api_key": os.environ["OPENAI_API_KEY"],
-                    "api_base": os.environ.get("OPENAI_API_BASE") or None,
-                },
-            )
-            provider = created.json()
-        c.patch(
-            "/settings",
+    providers = c.get("/templates/api-providers").json()
+    provider = next(
+        (p for p in providers if p["name"] == "__pytest_default__"), None
+    )
+    if provider is None:
+        created = c.post(
+            "/templates/api-providers",
             json={
-                "default_api_provider_id": provider["id"],
-                "default_backing_model": os.environ.get(
-                    "OPENAI_TEST_MODEL", "openai/gpt-4o-mini"
-                ),
+                "name": "__pytest_default__",
+                "provider_slug": "openai",
+                "api_key": os.environ["OPENAI_API_KEY"],
+                "api_base": os.environ.get("OPENAI_API_BASE") or None,
             },
         )
+        provider = created.json()
+    model_name = os.environ.get("OPENAI_TEST_MODEL", "openai/gpt-4o-mini")
+    models = c.get(f"/templates/api-models?provider_id={provider['id']}").json()
+    api_model = next((m for m in models if m["model_name"] == model_name), None)
+    if api_model is None:
+        created_model = c.post(
+            "/templates/api-models",
+            json={
+                "api_provider_id": provider["id"],
+                "display_name": model_name.split("/")[-1],
+                "model_name": model_name,
+                "is_default": True,
+            },
+        )
+        api_model = created_model.json()
+    c.patch(
+        "/settings",
+        json={"default_api_model_id": api_model["id"]},
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _autoconfigure_default_provider():
+    with TestClient(app) as c:
+        _ensure_default_api_model(c)
     yield
 
 
 @pytest.fixture
 def client():
     with TestClient(app) as c:
+        _ensure_default_api_model(c)
         yield c
 
 

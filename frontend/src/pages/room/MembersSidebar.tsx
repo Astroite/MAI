@@ -270,8 +270,6 @@ function PersonaInstanceEditor({
       api.updatePersonaInstance(roomId, persona.id, {
         description,
         api_model_id: selectedApiModel?.id ?? null,
-        api_provider_id: selectedApiModel?.api_provider_id ?? null,
-        backing_model: selectedApiModel?.model_name ?? "",
         temperature,
         talkativeness,
         system_prompt: systemPrompt,

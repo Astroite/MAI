@@ -1,10 +1,14 @@
-"""Scribe + facilitator integration. Real LLM means we cannot pin exact
-content; assertions check structural invariants (cadence, cooldown, phase
-boundary triggering) rather than specific tags or strings."""
+"""Scribe + facilitator integration.
+
+LLM calls are patched so these tests assert engine-side invariants: cadence,
+cooldown, phase boundary triggering, and scribe state folding.
+"""
 
 from types import SimpleNamespace
 
+from app import engine as engine_module
 from app.engine import filter_facilitator_signals
+from app.llm import StreamChunk, llm_adapter
 
 
 KNOWN_FACILITATOR_TAGS = {
@@ -18,8 +22,71 @@ KNOWN_FACILITATOR_TAGS = {
 }
 
 
-def test_scribe_folds_verdicts_into_decisions(client, review_format, architect_persona, instance_for_template):
+async def _noop_autodrive_after(room_id, message):
+    return None
+
+
+async def _deterministic_stream(persona, context, phase, max_tokens, scribe_state=None, api_provider=None, **kwargs):
+    yield StreamChunk(text="受控测试回复。", index=0)
+
+
+async def _deterministic_complete_tool(
+    persona,
+    tool_name,
+    tool_description,
+    output_model,
+    payload,
+    max_tokens=1200,
+    api_provider=None,
+):
+    if tool_name == "scribe_update":
+        verdicts = [
+            {"message_id": message["id"], "content": message["content"]}
+            for message in payload.get("messages", [])
+            if message.get("message_type") == "verdict"
+        ]
+        return {
+            "consensus_added": [],
+            "consensus_removed": [],
+            "disagreements_added": [],
+            "disagreements_resolved": [],
+            "open_questions_added": [],
+            "open_questions_answered": [],
+            "decisions_added": verdicts,
+            "artifacts_added": [],
+            "dead_ends_added": [],
+            "reasoning": "deterministic test update",
+        }
+    if tool_name == "facilitator_evaluation":
+        latest_message_id = payload.get("latest_message_id")
+        return {
+            "signals": [
+                {
+                    "tag": "consensus_emerging",
+                    "severity": "info",
+                    "reasoning": "deterministic test signal",
+                    "evidence_message_ids": [latest_message_id] if latest_message_id else [],
+                }
+            ],
+            "overall_health": "productive",
+            "pacing_note": "deterministic test pacing",
+        }
+    raise AssertionError(f"unexpected tool call: {tool_name}")
+
+
+def _patch_system_role_llm(monkeypatch):
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", _noop_autodrive_after)
+    monkeypatch.setattr(llm_adapter, "stream", _deterministic_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", _deterministic_stream)
+    monkeypatch.setattr(llm_adapter, "complete_tool", _deterministic_complete_tool)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", _deterministic_complete_tool)
+
+
+def test_scribe_folds_verdicts_into_decisions(
+    client, review_format, architect_persona, instance_for_template, monkeypatch
+):
     """A verdict must end up in scribe_state.decisions referencing the verdict message id."""
+    _patch_system_role_llm(monkeypatch)
     room = client.post(
         "/rooms",
         json={"title": "pytest scribe decisions", "format_id": review_format["id"], "persona_ids": [architect_persona["id"]]},
@@ -56,7 +123,8 @@ def test_scribe_folds_verdicts_into_decisions(client, review_format, architect_p
     assert payload[0]["author_actual"] == "ai"
 
 
-def test_phase_transition_forces_system_role_updates(client, review_format, architect_persona):
+def test_phase_transition_forces_system_role_updates(client, review_format, architect_persona, monkeypatch):
+    _patch_system_role_llm(monkeypatch)
     room = client.post(
         "/rooms",
         json={"title": "pytest phase boundary", "format_id": review_format["id"], "persona_ids": [architect_persona["id"]]},
@@ -85,9 +153,10 @@ def test_phase_transition_forces_system_role_updates(client, review_format, arch
     assert state["facilitator_signals"], "phase boundary must run facilitator"
 
 
-def test_facilitator_cadence_cooldown_and_manual_request(client, review_format, architect_persona):
+def test_facilitator_cadence_cooldown_and_manual_request(client, review_format, architect_persona, monkeypatch):
     """Cadence is engine-side: every 5 visible msgs triggers facilitator;
     cooldown suppresses repeat batches; manual /facilitator forces a new batch."""
+    _patch_system_role_llm(monkeypatch)
     room = client.post(
         "/rooms",
         json={

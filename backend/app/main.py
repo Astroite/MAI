@@ -287,17 +287,50 @@ async def _api_model_or_404(session: AsyncSession, model_id: str) -> ApiModel:
 
 
 async def _sync_api_model_snapshot(session: AsyncSession, payload: dict) -> dict:
-    """Keep legacy model/provider columns in sync when api_model_id is used."""
+    """Normalize model payloads with `api_model_id` as the canonical write path.
+
+    Legacy `backing_model` / `api_provider_id` remain accepted for old clients
+    and old rows, but new ApiModel-backed writes intentionally leave them empty
+    so the runtime resolves model/provider from `api_models`.
+    """
+    if "api_model_id" not in payload:
+        return payload
     model_id = payload.get("api_model_id")
+    payload = dict(payload)
     if not model_id:
+        if "backing_model" not in payload and "api_provider_id" not in payload:
+            payload["backing_model"] = ""
+            payload["api_provider_id"] = None
         return payload
     api_model = await _api_model_or_404(session, model_id)
     if not api_model.enabled:
         raise HTTPException(400, "api model is disabled")
-    payload = dict(payload)
-    payload["backing_model"] = api_model.model_name
-    payload["api_provider_id"] = api_model.api_provider_id
+    payload["backing_model"] = ""
+    payload["api_provider_id"] = None
     return payload
+
+
+def _api_model_trace_payload(api_model: ApiModel) -> dict:
+    return {
+        "id": api_model.id,
+        "api_provider_id": api_model.api_provider_id,
+        "display_name": api_model.display_name,
+        "model_name": api_model.model_name,
+        "enabled": api_model.enabled,
+        "is_default": api_model.is_default,
+        "context_window": api_model.context_window,
+        "tags": list(api_model.tags or []),
+    }
+
+
+def _api_provider_trace_payload(provider: ApiProvider) -> dict:
+    return {
+        "id": provider.id,
+        "name": provider.name,
+        "provider_slug": provider.provider_slug,
+        "api_base": provider.api_base,
+        "has_api_key": bool(provider.api_key),
+    }
 
 
 async def _set_single_default_api_model(session: AsyncSession, api_model: ApiModel) -> None:
@@ -327,9 +360,16 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
     changes = body.model_dump(mode="json", exclude_unset=True)
     if "default_api_model_id" in changes and changes["default_api_model_id"]:
         api_model = await _api_model_or_404(session, changes["default_api_model_id"])
-        changes["default_api_provider_id"] = api_model.api_provider_id
-        changes["default_backing_model"] = api_model.model_name
-    elif "default_api_model_id" in changes and not changes["default_api_model_id"]:
+        if not api_model.enabled:
+            raise HTTPException(400, "api model is disabled")
+        changes["default_api_provider_id"] = None
+        changes["default_backing_model"] = None
+    elif (
+        "default_api_model_id" in changes
+        and not changes["default_api_model_id"]
+        and "default_api_provider_id" not in changes
+        and "default_backing_model" not in changes
+    ):
         changes["default_api_provider_id"] = None
         changes["default_backing_model"] = None
     if "default_api_provider_id" in changes and changes["default_api_provider_id"]:
@@ -716,9 +756,20 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     provider = await session.get(ApiProvider, provider_id)
     if not provider:
         raise HTTPException(404, "api provider not found")
-    model_ids = (
-        await session.scalars(select(ApiModel.id).where(ApiModel.api_provider_id == provider_id))
+    api_models = (
+        await session.scalars(select(ApiModel).where(ApiModel.api_provider_id == provider_id))
     ).all()
+    model_ids = [row.id for row in api_models]
+    await trace_record(
+        session,
+        "settings",
+        "api_config_mutation",
+        "api provider deleted",
+        {
+            "provider": _api_provider_trace_payload(provider),
+            "api_models": [_api_model_trace_payload(row) for row in api_models],
+        },
+    )
     await session.execute(
         update(PersonaTemplate)
         .where(PersonaTemplate.api_provider_id == provider_id)
@@ -731,13 +782,19 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     )
     if model_ids:
         await session.execute(
-            update(PersonaTemplate).where(PersonaTemplate.api_model_id.in_(model_ids)).values(api_model_id=None)
+            update(PersonaTemplate)
+            .where(PersonaTemplate.api_model_id.in_(model_ids))
+            .values(api_model_id=None, api_provider_id=None, backing_model="")
         )
         await session.execute(
-            update(PersonaInstance).where(PersonaInstance.api_model_id.in_(model_ids)).values(api_model_id=None)
+            update(PersonaInstance)
+            .where(PersonaInstance.api_model_id.in_(model_ids))
+            .values(api_model_id=None, api_provider_id=None, backing_model="")
         )
         await session.execute(
-            update(AppSettings).where(AppSettings.default_api_model_id.in_(model_ids)).values(default_api_model_id=None)
+            update(AppSettings)
+            .where(AppSettings.default_api_model_id.in_(model_ids))
+            .values(default_api_model_id=None, default_api_provider_id=None, default_backing_model=None)
         )
         await session.execute(delete(ApiModel).where(ApiModel.id.in_(model_ids)))
     await session.execute(
@@ -885,21 +942,6 @@ async def update_api_model(model_id: str, body: ApiModelUpdate, session: AsyncSe
         api_model.display_name = _model_display_name(api_model.model_name)
     if api_model.is_default:
         await _set_single_default_api_model(session, api_model)
-    await session.execute(
-        update(PersonaTemplate)
-        .where(PersonaTemplate.api_model_id == model_id)
-        .values(backing_model=api_model.model_name, api_provider_id=api_model.api_provider_id)
-    )
-    await session.execute(
-        update(PersonaInstance)
-        .where(PersonaInstance.api_model_id == model_id)
-        .values(backing_model=api_model.model_name, api_provider_id=api_model.api_provider_id)
-    )
-    await session.execute(
-        update(AppSettings)
-        .where(AppSettings.default_api_model_id == model_id)
-        .values(default_backing_model=api_model.model_name, default_api_provider_id=api_model.api_provider_id)
-    )
     await session.commit()
     await session.refresh(api_model)
     return api_model
@@ -908,6 +950,13 @@ async def update_api_model(model_id: str, body: ApiModelUpdate, session: AsyncSe
 @app.delete("/templates/api-models/{model_id}")
 async def delete_api_model(model_id: str, session: AsyncSession = Depends(get_session)):
     api_model = await _api_model_or_404(session, model_id)
+    await trace_record(
+        session,
+        "settings",
+        "api_config_mutation",
+        "api model deleted",
+        {"api_model": _api_model_trace_payload(api_model)},
+    )
     await session.execute(
         update(PersonaTemplate)
         .where(PersonaTemplate.api_model_id == model_id)

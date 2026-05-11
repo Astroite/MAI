@@ -137,14 +137,10 @@ function PersonasView() {
   const personaModelPayload = () =>
     selectedApiModel
       ? {
-          api_model_id: selectedApiModel.id,
-          api_provider_id: selectedApiModel.api_provider_id,
-          backing_model: selectedApiModel.model_name
+          api_model_id: selectedApiModel.id
         }
       : {
-          api_model_id: null,
-          api_provider_id: null,
-          backing_model: ""
+          api_model_id: null
         };
   const personaPayload = () => ({
     kind,
@@ -268,8 +264,6 @@ function PersonasView() {
         name: editingPersona.name,
         description: editingPersona.description,
         api_model_id: editingPersona.api_model_id ?? null,
-        api_provider_id: editingPersona.api_provider_id ?? null,
-        backing_model: editingPersona.backing_model ?? "",
         system_prompt: editingPersona.system_prompt,
         temperature: editingPersona.temperature,
         talkativeness: editingPersona.talkativeness ?? 1.0,
