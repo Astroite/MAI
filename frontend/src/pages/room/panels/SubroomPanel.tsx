@@ -5,6 +5,7 @@ import { GitBranchPlus, Merge } from "lucide-react";
 import { api } from "../../../api";
 import type { Room } from "../../../types";
 import { useI18n } from "../../../i18n";
+import { queryKeys } from "../../../queryKeys";
 
 export function SubroomPanel({
   roomId,
@@ -43,7 +44,7 @@ export function SubroomPanel({
         persona_ids: recipeId ? [] : personaIds
       }),
     onSuccess: (state) => {
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       navigate(`/rooms/${roomId}/sub/${state.room.id}`);
     }
   });
@@ -65,7 +66,7 @@ export function SubroomPanel({
       }),
     onSuccess: () => {
       if (parentRoomId) {
-        void queryClient.invalidateQueries({ queryKey: ["room", parentRoomId] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.room(parentRoomId) });
         navigate(`/rooms/${parentRoomId}`);
       }
     }

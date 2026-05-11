@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE } from "./api";
 import { toast } from "./components/Toaster";
 import { useI18n } from "./i18n";
+import { queryKeys } from "./queryKeys";
 import { useUIStore } from "./store";
 import type { StreamingEvent } from "./types";
 
@@ -45,7 +46,7 @@ export function useRoomEvents(roomId?: string) {
       if (invalidateTimer != null) return;
       invalidateTimer = setTimeout(() => {
         invalidateTimer = null;
-        void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
       }, 250);
     };
 

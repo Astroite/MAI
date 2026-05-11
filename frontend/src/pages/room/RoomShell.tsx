@@ -42,6 +42,7 @@ import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { useI18n } from "../../i18n";
+import { queryKeys } from "../../queryKeys";
 import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
 
 export function RoomShell() {
@@ -52,12 +53,12 @@ export function RoomShell() {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const room = useQuery({
-    queryKey: ["room", activeRoomId],
+    queryKey: queryKeys.room(activeRoomId),
     queryFn: () => api.roomState(activeRoomId!),
     enabled: Boolean(activeRoomId)
   });
-  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
+  const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
+  const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [showRoomsDrawer, setShowRoomsDrawer] = useState(false);
   const [params, setParams] = useSearchParams();
   const state = room.data;
@@ -89,7 +90,7 @@ export function RoomShell() {
     return () => window.clearInterval(timer);
   }, []);
 
-  const invalidate = () => void queryClient.invalidateQueries({ queryKey: ["room", activeRoomId] });
+  const invalidate = () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(activeRoomId) });
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
   const continuePhase = useMutation({ mutationFn: () => api.continuePhase(activeRoomId!), onSuccess: invalidate });
   const extendPhase = useMutation({ mutationFn: () => api.extendPhase(activeRoomId!), onSuccess: invalidate });
@@ -131,12 +132,12 @@ export function RoomShell() {
   // uses this to offer 旁白 / 扮演 modes with a user-character picker.
   const worldId = state?.room.world_id ?? null;
   const worldQuery = useQuery({
-    queryKey: ["world", worldId],
+    queryKey: queryKeys.world(worldId),
     queryFn: () => api.world(worldId!),
     enabled: Boolean(worldId)
   });
   const sceneMembersQuery = useQuery({
-    queryKey: ["scene-members", activeRoomId],
+    queryKey: queryKeys.sceneMembers(activeRoomId),
     queryFn: () => api.sceneMembers(activeRoomId!),
     enabled: Boolean(worldId && activeRoomId)
   });
@@ -548,7 +549,7 @@ function RoomBackgroundInline({
   const save = useMutation({
     mutationFn: () => api.updateRoomBackground(roomId, draft.trim()),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
       setEditing(false);
       setError(null);
     },

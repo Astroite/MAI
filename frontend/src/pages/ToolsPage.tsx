@@ -18,13 +18,14 @@ import { StatusPill } from "../components/StatusPill";
 import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "../components/Toaster";
 import { useI18n } from "../i18n";
+import { queryKeys } from "../queryKeys";
 
 export function ToolsPage() {
   const { t } = useI18n();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
-  const tools = useQuery({ queryKey: ["tools"], queryFn: api.tools });
-  const servers = useQuery({ queryKey: ["tool-servers"], queryFn: api.toolServers });
+  const tools = useQuery({ queryKey: queryKeys.tools, queryFn: api.tools });
+  const servers = useQuery({ queryKey: queryKeys.toolServers, queryFn: api.toolServers });
   const [serverName, setServerName] = useState("");
   const [serverUrl, setServerUrl] = useState("");
   const [transport, setTransport] = useState<"streamable_http" | "sse">("streamable_http");
@@ -43,23 +44,23 @@ export function ToolsPage() {
       setServerName("");
       setServerUrl("");
       setAllowWrite(false);
-      void queryClient.invalidateQueries({ queryKey: ["tool-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.toolServers });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     }
   });
   const syncServer = useMutation({
     mutationFn: (serverId: string) => api.syncToolServer(serverId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tool-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.toolServers });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : t("tools.syncFailed"))
   });
   const removeServer = useMutation({
     mutationFn: (serverId: string) => api.deleteToolServer(serverId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tool-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.toolServers });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });

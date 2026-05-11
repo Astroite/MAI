@@ -39,7 +39,7 @@ export const useUIStore = create<UIState>()(
       setConnectionStatus: (status, retries) =>
         set(() => ({
           connectionStatus: status,
-          connectionRetries: retries ?? (status === "connected" ? 0 : 0)
+          connectionRetries: retries ?? 0
         })),
       appendChunk: (roomId, messageId, personaId, text, chunkIndex) =>
         set((state) => {

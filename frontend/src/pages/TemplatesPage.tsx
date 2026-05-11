@@ -32,6 +32,8 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { useUnsavedChangesWarning } from "../hooks";
 import { useI18n } from "../i18n";
 import { PROVIDER_KINDS, ROUTABLE_SLUGS, SUGGESTED_MODELS, providerKindLabel } from "../providers";
+import { queryKeys } from "../queryKeys";
+import { personaModelLabel, renderApiModelOptions } from "../utils/modelLabels";
 import {
   DEFAULT_PERSONA_COLOR,
   DEFAULT_PERSONA_ICON,
@@ -100,10 +102,10 @@ function PersonasView() {
   const queryClient = useQueryClient();
   const { t, display } = useI18n();
   const confirm = useConfirm();
-  const personas = useQuery({ queryKey: ["persona-templates", "editable"], queryFn: () => api.personaTemplates(undefined, false) });
-  const builtinPersonas = useQuery({ queryKey: ["persona-templates", "builtin"], queryFn: () => api.personaTemplates(undefined, true) });
-  const apiProviders = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
-  const apiModels = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
+  const personas = useQuery({ queryKey: queryKeys.personaTemplates.editable, queryFn: () => api.personaTemplates(undefined, false) });
+  const builtinPersonas = useQuery({ queryKey: queryKeys.personaTemplates.builtin, queryFn: () => api.personaTemplates(undefined, true) });
+  const apiProviders = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
+  const apiModels = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showLibrary, setShowLibrary] = useState(false);
   const items = filterByTags(personas.data, selectedTags);
@@ -199,7 +201,7 @@ function PersonasView() {
         : api.createPersonaTemplate(personaPayload()),
     onSuccess: (saved) => {
       loadPersona(saved);
-      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
     }
   });
   const draftPersona = useMutation({
@@ -233,14 +235,14 @@ function PersonasView() {
     onSuccess: (copy) => {
       loadPersona(copy);
       setShowLibrary(false);
-      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
     }
   });
   const remove = useMutation({
     mutationFn: (templateId: string) => api.deletePersonaTemplate(templateId),
     onSuccess: () => {
       resetPersonaForm();
-      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
@@ -689,9 +691,9 @@ function FormatsView() {
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const confirm = useConfirm();
-  const formats = useQuery({ queryKey: ["formats", "editable"], queryFn: () => api.formats(false) });
-  const builtinFormats = useQuery({ queryKey: ["formats", "builtin"], queryFn: () => api.formats(true) });
-  const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
+  const formats = useQuery({ queryKey: queryKeys.formats.editable, queryFn: () => api.formats(false) });
+  const builtinFormats = useQuery({ queryKey: queryKeys.formats.builtin, queryFn: () => api.formats(true) });
+  const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showLibrary, setShowLibrary] = useState(false);
   const [name, setName] = useState(() => t("templates.defaultFormatName"));
@@ -739,7 +741,7 @@ function FormatsView() {
       editingFormatId ? api.updateFormat(editingFormatId, formatPayload()) : api.createFormat(formatPayload()),
     onSuccess: (saved) => {
       loadFormat(saved);
-      void queryClient.invalidateQueries({ queryKey: ["formats"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.formats.all });
     }
   });
   const addFromBuiltin = useMutation({
@@ -747,14 +749,14 @@ function FormatsView() {
     onSuccess: (copy) => {
       loadFormat(copy);
       setShowLibrary(false);
-      void queryClient.invalidateQueries({ queryKey: ["formats"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.formats.all });
     }
   });
   const remove = useMutation({
     mutationFn: (formatId: string) => api.deleteFormat(formatId),
     onSuccess: () => {
       resetFormatForm();
-      void queryClient.invalidateQueries({ queryKey: ["formats"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.formats.all });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
@@ -1020,8 +1022,8 @@ function PhasesView() {
   const queryClient = useQueryClient();
   const { t, display } = useI18n();
   const confirm = useConfirm();
-  const phases = useQuery({ queryKey: ["phases", "editable"], queryFn: () => api.phases(false) });
-  const builtinPhases = useQuery({ queryKey: ["phases", "builtin"], queryFn: () => api.phases(true) });
+  const phases = useQuery({ queryKey: queryKeys.phases.editable, queryFn: () => api.phases(false) });
+  const builtinPhases = useQuery({ queryKey: queryKeys.phases.builtin, queryFn: () => api.phases(true) });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [showLibrary, setShowLibrary] = useState(false);
   const items = filterByTags(phases.data, selectedTags);
@@ -1136,7 +1138,7 @@ function PhasesView() {
       editingPhaseId ? api.updatePhase(editingPhaseId, phasePayload()) : api.createPhase(phasePayload()),
     onSuccess: (saved) => {
       loadPhase(saved);
-      void queryClient.invalidateQueries({ queryKey: ["phases"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.phases.all });
     }
   });
   const addFromBuiltin = useMutation({
@@ -1144,14 +1146,14 @@ function PhasesView() {
     onSuccess: (copy) => {
       loadPhase(copy);
       setShowLibrary(false);
-      void queryClient.invalidateQueries({ queryKey: ["phases"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.phases.all });
     }
   });
   const remove = useMutation({
     mutationFn: (phaseId: string) => api.deletePhase(phaseId),
     onSuccess: () => {
       resetPhaseForm();
-      void queryClient.invalidateQueries({ queryKey: ["phases"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.phases.all });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
@@ -1397,11 +1399,11 @@ function RecipesView() {
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const confirm = useConfirm();
-  const recipes = useQuery({ queryKey: ["recipes", "editable"], queryFn: () => api.recipes(false) });
-  const builtinRecipes = useQuery({ queryKey: ["recipes", "builtin"], queryFn: () => api.recipes(true) });
-  const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
+  const recipes = useQuery({ queryKey: queryKeys.recipes.editable, queryFn: () => api.recipes(false) });
+  const builtinRecipes = useQuery({ queryKey: queryKeys.recipes.builtin, queryFn: () => api.recipes(true) });
+  const formats = useQuery({ queryKey: queryKeys.formats.all, queryFn: () => api.formats() });
   const personas = useQuery({
-    queryKey: ["persona-templates", "discussant"],
+    queryKey: queryKeys.personaTemplates.discussant,
     queryFn: () => api.personaTemplates("discussant")
   });
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
@@ -1453,7 +1455,7 @@ function RecipesView() {
     mutationFn: () => (editingRecipeId ? api.updateRecipe(editingRecipeId, recipePayload()) : api.createRecipe(recipePayload())),
     onSuccess: (saved) => {
       loadRecipe(saved);
-      void queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.recipes.all });
     }
   });
   const addFromBuiltin = useMutation({
@@ -1461,14 +1463,14 @@ function RecipesView() {
     onSuccess: (copy) => {
       loadRecipe(copy);
       setShowLibrary(false);
-      void queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.recipes.all });
     }
   });
   const remove = useMutation({
     mutationFn: (recipeId: string) => api.deleteRecipe(recipeId),
     onSuccess: () => {
       resetRecipeForm();
-      void queryClient.invalidateQueries({ queryKey: ["recipes"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.recipes.all });
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
@@ -1684,8 +1686,8 @@ export function ApiProvidersView() {
   const queryClient = useQueryClient();
   const { t, formatRelativeTime } = useI18n();
   const confirm = useConfirm();
-  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
-  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
+  const providers = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
+  const models = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
   const [editingId, setEditingId] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [providerSlug, setProviderSlug] = useState("openai");
@@ -1783,9 +1785,9 @@ export function ApiProvidersView() {
         : api.createApiProvider({ ...body, api_key: apiKey });
     },
     onSuccess: (saved) => {
-      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
-      void queryClient.invalidateQueries({ queryKey: ["api-models"] });
-      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiProviders });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiModels });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
       setEditingId(saved.id);
       setName(saved.name);
       setProviderSlug(saved.provider_slug);
@@ -1799,18 +1801,18 @@ export function ApiProvidersView() {
   const remove = useMutation({
     mutationFn: (id: string) => api.deleteApiProvider(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["api-providers"] });
-      void queryClient.invalidateQueries({ queryKey: ["api-models"] });
-      void queryClient.invalidateQueries({ queryKey: ["app-settings"] });
-      void queryClient.invalidateQueries({ queryKey: ["health"] });
-      void queryClient.invalidateQueries({ queryKey: ["personas"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiProviders });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiModels });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.appSettings });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.health });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
       resetForm();
     },
     onError: (err) => setPendingError(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
   const test = useMutation({
     mutationFn: (id: string) => api.testApiProvider(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-providers"] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.apiProviders })
   });
   const handleDelete = async (id: string) => {
     if (await confirm({
@@ -1846,10 +1848,10 @@ export function ApiProvidersView() {
       return editingModelId ? api.updateApiModel(editingModelId, body) : api.createApiModel(body);
     },
     onSuccess: (saved) => {
-      void queryClient.invalidateQueries({ queryKey: ["api-models"] });
-      void queryClient.invalidateQueries({ queryKey: ["app-settings"] });
-      void queryClient.invalidateQueries({ queryKey: ["health"] });
-      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiModels });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.appSettings });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.health });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
       loadModel(saved);
     },
     onError: (err) => setModelError(err instanceof Error ? err.message : t("api.saveFailed"))
@@ -1857,17 +1859,17 @@ export function ApiProvidersView() {
   const removeModel = useMutation({
     mutationFn: (id: string) => api.deleteApiModel(id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["api-models"] });
-      void queryClient.invalidateQueries({ queryKey: ["app-settings"] });
-      void queryClient.invalidateQueries({ queryKey: ["health"] });
-      void queryClient.invalidateQueries({ queryKey: ["persona-templates"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiModels });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.appSettings });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.health });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.personaTemplates.all });
       resetModelForm();
     },
     onError: (err) => setModelError(err instanceof Error ? err.message : t("api.deleteFailed"))
   });
   const testModel = useMutation({
     mutationFn: (id: string) => api.testApiModel(id),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["api-models"] }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.apiModels }),
     onError: (err) => setModelError(err instanceof Error ? err.message : t("api.testFailed"))
   });
   const handleDeleteModel = async (model: ApiModel) => {
@@ -2532,63 +2534,6 @@ function filterByTags<T extends { tags?: string[] }>(items: T[] | undefined, sel
   if (!items) return [];
   if (!selected.length) return items;
   return items.filter((item) => selected.every((tag) => (item.tags ?? []).includes(tag)));
-}
-
-function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
-  if (!provider) return t("room.noProvider");
-  return `${provider.name} · ${providerKindLabel(provider.provider_slug, t)}`;
-}
-
-function apiModelOptionLabel(model: ApiModel, t: (key: string) => string): string {
-  const name =
-    model.display_name && model.display_name !== model.model_name
-      ? `${model.display_name} · ${model.model_name}`
-      : model.model_name;
-  const markers = [
-    model.is_default ? t("common.default") : "",
-    model.enabled ? "" : t("common.disabled")
-  ].filter(Boolean);
-  return markers.length ? `${name} (${markers.join(", ")})` : name;
-}
-
-function apiModelFullLabel(model: ApiModel, provider: ApiProvider | undefined, t: (key: string) => string): string {
-  return `${providerDisplayName(provider, t)} · ${apiModelOptionLabel(model, t)}`;
-}
-
-function personaModelLabel(
-  persona: { api_model_id?: string | null; backing_model?: string | null },
-  modelById: Map<string, ApiModel>,
-  providerById: Map<string, ApiProvider>,
-  t: (key: string) => string
-): string {
-  if (persona.api_model_id) {
-    const model = modelById.get(persona.api_model_id);
-    if (model) return apiModelFullLabel(model, providerById.get(model.api_provider_id), t);
-  }
-  return persona.backing_model?.trim() || t("room.defaultModel");
-}
-
-function renderApiModelOptions(models: ApiModel[], providerById: Map<string, ApiProvider>, t: (key: string) => string): ReactNode {
-  const groups = new Map<string, ApiModel[]>();
-  for (const model of models) {
-    groups.set(model.api_provider_id, [...(groups.get(model.api_provider_id) ?? []), model]);
-  }
-  return Array.from(groups.entries())
-    .sort(([left], [right]) =>
-      providerDisplayName(providerById.get(left), t).localeCompare(providerDisplayName(providerById.get(right), t))
-    )
-    .map(([providerId, group]) => (
-      <optgroup key={providerId} label={providerDisplayName(providerById.get(providerId), t)}>
-        {group
-          .slice()
-          .sort((left, right) => Number(right.is_default) - Number(left.is_default) || left.display_name.localeCompare(right.display_name))
-          .map((model) => (
-            <option key={model.id} value={model.id} disabled={!model.enabled}>
-              {apiModelOptionLabel(model, t)}
-            </option>
-          ))}
-      </optgroup>
-    ));
 }
 
 function TagFilterBar<T extends { tags?: string[] }>({

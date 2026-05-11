@@ -7,9 +7,10 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "../components/Toaster";
 import type { WorldSummary } from "../types";
 import { COVER_PALETTE } from "../constants/colors";
+import { queryKeys } from "../queryKeys";
 
 export function WorldListPage() {
-  const worlds = useQuery({ queryKey: ["worlds"], queryFn: api.worlds });
+  const worlds = useQuery({ queryKey: queryKeys.worlds, queryFn: api.worlds });
   const [creating, setCreating] = useState(false);
 
   return (
@@ -70,7 +71,7 @@ function WorldCard({ world }: { world: WorldSummary }) {
   const remove = useMutation({
     mutationFn: () => api.deleteWorld(world.id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["worlds"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.worlds });
       toast.message(`已删除世界「${world.name}」。`);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -146,9 +147,9 @@ function CreateWorldForm({ onDone }: { onDone: () => void }) {
         synopsis: synopsis.trim(),
         calendar_hint: calendarHint.trim(),
         cover_color: coverColor
-      }),
+    }),
     onSuccess: (world) => {
-      void queryClient.invalidateQueries({ queryKey: ["worlds"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.worlds });
       toast.success(`已创建世界「${world.name}」。`);
       setName("");
       setSynopsis("");

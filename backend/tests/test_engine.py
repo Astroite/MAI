@@ -2,6 +2,7 @@ import asyncio
 import time
 
 from app.db import SessionLocal
+from app import engine as engine_module
 from app.engine import ACTIVE_CALLS, pick_next_speaker
 from app.models import Message, PersonaInstance, Room, RoomRuntimeState
 
@@ -277,6 +278,94 @@ def test_autodrive_short_circuits_when_frozen(
         if m["author_actual"] == "ai"
     ]
     assert len(ai_messages) == before, "frozen room must not produce any persona reply"
+
+
+def test_resume_autodrive_reports_frozen_reason(client, roundtable_format, discussant_personas):
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive frozen reason",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    assert client.post(f"/rooms/{room_id}/freeze").status_code == 200
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "skipped"
+    assert resume.json()["reason"] == "frozen"
+
+
+def test_resume_autodrive_reports_no_available_speaker(client, discussant_personas):
+    room = _make_ordering_room(
+        client,
+        discussant_personas,
+        "user_picks",
+        suffix="resume-skip",
+        count=1,
+    )
+    room_id = room["room"]["id"]
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "skipped"
+    assert resume.json()["reason"] == "no_available_speaker"
+
+
+def test_resume_autodrive_reports_in_flight_reason(
+    client, roundtable_format, discussant_personas, instance_for_template
+):
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive in-flight reason",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, discussant_personas[0]["id"])
+    ACTIVE_CALLS.setdefault(room_id, {})["msg-in-flight"] = engine_module.InFlightCall(
+        room_id=room_id,
+        message_id="msg-in-flight",
+        persona_id=speaker_instance_id,
+        task=object(),
+    )
+    try:
+        resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+        assert resume.status_code == 200
+        assert resume.json()["status"] == "skipped"
+        assert resume.json()["reason"] == "in_flight"
+    finally:
+        ACTIVE_CALLS.pop(room_id, None)
+
+
+def test_resume_autodrive_reports_scheduled_without_running_llm(
+    client, roundtable_format, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_runner(room_id, lock):
+        if lock.locked():
+            return
+        async with lock:
+            return
+
+    monkeypatch.setattr(engine_module, "_autodrive_runner", noop_autodrive_runner)
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive scheduled reason",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "scheduled"
+    assert resume.json().get("reason") is None
 
 
 def _make_ordering_room(client, discussant_personas, ordering: str, *, suffix: str, count: int = 2):

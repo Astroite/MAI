@@ -19,15 +19,15 @@ import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { toast } from "../components/Toaster";
 import { ApiProvidersView } from "./TemplatesPage";
-import type { ApiModel, ApiProvider } from "../types";
 import { useI18n } from "../i18n";
-import { providerKindLabel } from "../providers";
+import { queryKeys } from "../queryKeys";
 import { useUIStore } from "../store";
+import { apiModelFullLabel, renderApiModelOptions } from "../utils/modelLabels";
 
 export function SettingsPage() {
-  const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 10000 });
-  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
-  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
+  const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, refetchInterval: 10000 });
+  const providers = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
+  const models = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
   const { t } = useI18n();
 
   const verifiedProviders = (providers.data ?? []).filter((p) => p.last_tested_ok === true).length;
@@ -147,9 +147,9 @@ function UpdaterSection() {
 function DefaultApiSection() {
   const queryClient = useQueryClient();
   const { t } = useI18n();
-  const settings = useQuery({ queryKey: ["app-settings"], queryFn: api.appSettings });
-  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
-  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
+  const settings = useQuery({ queryKey: queryKeys.appSettings, queryFn: api.appSettings });
+  const providers = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
+  const models = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
   const [apiModelId, setApiModelId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -175,8 +175,8 @@ function DefaultApiSection() {
         default_api_model_id: apiModelId || null
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["app-settings"] });
-      void queryClient.invalidateQueries({ queryKey: ["health"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.appSettings });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.health });
       setError(null);
     },
     onError: (err) => setError(err instanceof Error ? err.message : t("api.saveFailed"))
@@ -185,7 +185,7 @@ function DefaultApiSection() {
   const testConfig = useMutation({
     mutationFn: () => api.testApiModel(apiModelId),
     onSuccess: (result) => {
-      void queryClient.invalidateQueries({ queryKey: ["api-models"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.apiModels });
       setTestResult({
         ok: result.ok,
         message: result.ok
@@ -230,7 +230,9 @@ function DefaultApiSection() {
             }}
           >
             <option value="">{t("common.unset")}</option>
-            {renderSettingsModelOptions(models.data ?? [], providerById, t)}
+            {renderApiModelOptions(models.data ?? [], providerById, t, {
+              defaultLabelKey: "api.providerDefault"
+            })}
           </select>
           {(models.data?.length ?? 0) === 0 && (
             <p className="mt-1 text-xs text-muted">
@@ -246,7 +248,11 @@ function DefaultApiSection() {
         </label>
         {selectedModel && (
           <div className="rounded-md border border-border bg-surface p-3 text-xs text-muted">
-            <div className="font-medium text-text">{settingsModelLabel(selectedModel, providerById.get(selectedModel.api_provider_id), t)}</div>
+            <div className="font-medium text-text">
+              {apiModelFullLabel(selectedModel, providerById.get(selectedModel.api_provider_id), t, {
+                defaultLabelKey: "api.providerDefault"
+              })}
+            </div>
             <div className="mt-1 font-mono">{selectedModel.model_name}</div>
           </div>
         )}
@@ -286,54 +292,6 @@ function DefaultApiSection() {
       </div>
     </SectionCard>
   );
-}
-
-function settingsProviderName(provider: ApiProvider | undefined, t: (key: string) => string): string {
-  if (!provider) return t("room.noProvider");
-  return `${provider.name} · ${providerKindLabel(provider.provider_slug, t)}`;
-}
-
-function settingsModelOptionLabel(model: ApiModel, t: (key: string) => string): string {
-  const label =
-    model.display_name && model.display_name !== model.model_name
-      ? `${model.display_name} · ${model.model_name}`
-      : model.model_name;
-  const markers = [
-    model.is_default ? t("api.providerDefault") : "",
-    model.enabled ? "" : t("common.disabled")
-  ].filter(Boolean);
-  return markers.length ? `${label} (${markers.join(", ")})` : label;
-}
-
-function settingsModelLabel(model: ApiModel, provider: ApiProvider | undefined, t: (key: string) => string): string {
-  return `${settingsProviderName(provider, t)} · ${settingsModelOptionLabel(model, t)}`;
-}
-
-function renderSettingsModelOptions(
-  models: ApiModel[],
-  providerById: Map<string, ApiProvider>,
-  t: (key: string) => string
-) {
-  const groups = new Map<string, ApiModel[]>();
-  for (const model of models) {
-    groups.set(model.api_provider_id, [...(groups.get(model.api_provider_id) ?? []), model]);
-  }
-  return Array.from(groups.entries())
-    .sort(([left], [right]) =>
-      settingsProviderName(providerById.get(left), t).localeCompare(settingsProviderName(providerById.get(right), t))
-    )
-    .map(([providerId, group]) => (
-      <optgroup key={providerId} label={settingsProviderName(providerById.get(providerId), t)}>
-        {group
-          .slice()
-          .sort((left, right) => Number(right.is_default) - Number(left.is_default) || left.display_name.localeCompare(right.display_name))
-          .map((model) => (
-            <option key={model.id} value={model.id} disabled={!model.enabled}>
-              {settingsModelOptionLabel(model, t)}
-            </option>
-          ))}
-      </optgroup>
-    ));
 }
 
 function DebugSection() {

@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { api } from "../../api";
 import { useI18n } from "../../i18n";
+import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
 import type { PersonaInstance, WorldCharacter } from "../../types";
 
@@ -90,7 +91,7 @@ export function Composer({
     },
     onSuccess: () => {
       setContent("");
-      void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
       // Reset back to the default mode after special-mode submissions so the
       // next message is a normal one (matches QQ-like ergonomics).
       if (!story) setDiscussionMode("normal");

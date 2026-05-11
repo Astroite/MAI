@@ -31,16 +31,17 @@ import type {
   SceneRosterEntry
 } from "../types";
 import { COVER_PALETTE } from "../constants/colors";
+import { queryKeys } from "../queryKeys";
 
 export function WorldDetailPage() {
   const { worldId = "" } = useParams();
   const world = useQuery({
-    queryKey: ["world", worldId],
+    queryKey: queryKeys.world(worldId),
     queryFn: () => api.world(worldId),
     enabled: Boolean(worldId)
   });
   const timeline = useQuery({
-    queryKey: ["world-timeline", worldId],
+    queryKey: queryKeys.worldTimeline(worldId),
     queryFn: () => api.worldTimeline(worldId),
     enabled: Boolean(worldId)
   });
@@ -49,7 +50,7 @@ export function WorldDetailPage() {
     // templates (架构师, 性能批评者 …) are written for discussion rooms and
     // their identities don't make sense as story characters — the user should
     // duplicate-then-edit a built-in if they want to derive from one.
-    queryKey: ["persona-templates", "discussant", "user"],
+    queryKey: queryKeys.personaTemplates.discussantUser,
     queryFn: () => api.personaTemplates("discussant", false)
   });
 
@@ -59,7 +60,7 @@ export function WorldDetailPage() {
   const [inspectingScene, setInspectingScene] = useState<SceneTimelineEntry | null>(null);
 
   const inspectorMembers = useQuery({
-    queryKey: ["scene-members", inspectingScene?.id],
+    queryKey: queryKeys.sceneMembers(inspectingScene?.id),
     queryFn: () => api.sceneMembers(inspectingScene!.id),
     enabled: Boolean(inspectingScene)
   });
@@ -101,7 +102,7 @@ export function WorldDetailPage() {
       return created;
     },
     onSuccess: (created) => {
-      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
       toast.success(`已批量添加 ${created.length} 个角色，可点击编辑细节。`);
       setBatchPickerOpen(false);
     },
@@ -322,7 +323,7 @@ function CharacterRow({
   const remove = useMutation({
     mutationFn: () => api.deleteWorldCharacter(worldId, character.id),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
       toast.message(`已退场角色「${character.name}」（保留历史记忆）。`);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -453,9 +454,9 @@ function AddCharacterForm({
         goals_text: goalsText.trim(),
         color,
         icon
-      }),
+    }),
     onSuccess: (character) => {
-      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
       toast.success(`已添加角色「${character.name}」。`);
       setName("");
       setIdentity("");
@@ -750,9 +751,9 @@ function EditCharacterDialog({
         skills_text: skillsText.trim(),
         goals_text: goalsText.trim(),
         color
-      }),
+    }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
       toast.success(`已更新角色「${name.trim() || character.name}」。`);
       onOpenChange(false);
     },
@@ -952,8 +953,8 @@ function CreateSceneForm({
       });
     },
     onSuccess: (state) => {
-      void queryClient.invalidateQueries({ queryKey: ["world", worldId] });
-      void queryClient.invalidateQueries({ queryKey: ["world-timeline", worldId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(worldId) });
       // Story-world scenes intentionally don't yank the user into the
       // discussion-room shell — the timeline is the source of truth and the
       // user can pick when to drop into the scene from the new card.

@@ -225,7 +225,7 @@ const zh: Record<string, string> = {
   "templates.defaultPersonaName": "自定义专家",
   "templates.defaultPersonaDescription": "从模板页创建的人设。",
   "templates.defaultPersonaPrompt": "你是参辩者。请基于事实和当前讨论上下文，给出清晰、可检验的观点。",
-  "templates.readonlyBuiltin": "内置模板只读。请使用“添加”从内置库创建可编辑副本。",
+  "templates.readonlyBuiltin": "内置模板只读。请使用「添加」从内置库创建可编辑副本。",
   "templates.assistant": "AI 起草",
   "templates.personaDraftPlaceholder": "例如：帮我做一个会从用户增长角度质疑方案的数据产品经理",
   "templates.applyDraft": "填入草稿",
@@ -496,6 +496,14 @@ const zh: Record<string, string> = {
   "speaker.resume": "让 AI 继续",
   "speaker.resumeTitle": "让 AI 自动接力（直到喊停或达上限）",
   "speaker.resumeFailed": "无法继续，请稍后重试。",
+  "speaker.resumeSkipped.locked": "AI 接力已经在进行。",
+  "speaker.resumeSkipped.frozen": "房间已冻结，解冻后才能继续。",
+  "speaker.resumeSkipped.inFlight": "已有角色正在发言。",
+  "speaker.resumeSkipped.noSpeaker": "当前没有可自动发言的角色。",
+  "speaker.resumeSkipped.phaseNotAuto": "当前阶段不能自动接力。",
+  "speaker.resumeSkipped.exitCondition": "当前阶段已满足退出条件。",
+  "speaker.resumeSkipped.tokenBudget": "已达到 token 限额。",
+  "speaker.resumeSkipped.default": "暂时无法继续。",
   "speaker.pause": "暂停",
   "speaker.pauseTitle": "冻结房间，停止当前发言",
   "speaker.unfreeze": "解冻",
@@ -1057,6 +1065,14 @@ const en: Record<string, string> = {
   "speaker.resume": "Let AI continue",
   "speaker.resumeTitle": "Let AI auto-relay (until you stop it or the cap hits)",
   "speaker.resumeFailed": "Couldn't resume, try again.",
+  "speaker.resumeSkipped.locked": "AI relay is already running.",
+  "speaker.resumeSkipped.frozen": "Room is frozen. Unfreeze to continue.",
+  "speaker.resumeSkipped.inFlight": "A persona is already speaking.",
+  "speaker.resumeSkipped.noSpeaker": "No persona is available to auto-reply.",
+  "speaker.resumeSkipped.phaseNotAuto": "This phase cannot auto-relay.",
+  "speaker.resumeSkipped.exitCondition": "This phase already meets its exit conditions.",
+  "speaker.resumeSkipped.tokenBudget": "The token budget has been reached.",
+  "speaker.resumeSkipped.default": "Cannot continue right now.",
   "speaker.pause": "Pause",
   "speaker.pauseTitle": "Freeze the room and stop the current turn",
   "speaker.unfreeze": "Unfreeze",
@@ -1408,7 +1424,7 @@ export function LanguageToggle({ compact = false }: { compact?: boolean }) {
       aria-label={t("language.toggle")}
     >
       <Languages size={16} />
-      {!compact && <span>{locale === "zh-CN" ? "中文" : "EN"}</span>}
+      {!compact && <span>{t(locale === "zh-CN" ? "language.zh" : "language.en")}</span>}
     </button>
   );
 }

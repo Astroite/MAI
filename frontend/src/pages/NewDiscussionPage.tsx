@@ -20,6 +20,7 @@ import { PhaseStepper, type PhaseStep } from "../components/PhaseStepper";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { useI18n } from "../i18n";
+import { queryKeys } from "../queryKeys";
 import type { DebateFormat, PersonaTemplate, Recipe, Scenario } from "../types";
 
 const DEFAULT_RECIPE = "__default__";
@@ -42,12 +43,12 @@ export function NewDiscussionPage() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { t } = useI18n();
-  const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
-  const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
-  const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
-  const scenarios = useQuery({ queryKey: ["scenarios"], queryFn: api.scenarios });
+  const formats = useQuery({ queryKey: queryKeys.formats.all, queryFn: () => api.formats() });
+  const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
+  const recipes = useQuery({ queryKey: queryKeys.recipes.all, queryFn: () => api.recipes() });
+  const scenarios = useQuery({ queryKey: queryKeys.scenarios, queryFn: api.scenarios });
   const personas = useQuery({
-    queryKey: ["persona-templates", "discussant", "editable"],
+    queryKey: queryKeys.personaTemplates.discussantEditable,
     queryFn: () => api.personaTemplates("discussant", false)
   });
 
@@ -156,7 +157,7 @@ export function NewDiscussionPage() {
       });
     },
     onSuccess: (state) => {
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       clearDraft();
       navigate(`/rooms/${state.room.id}`);
     }

@@ -15,6 +15,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { WorldListPage } from "./pages/WorldListPage";
 import { WorldDetailPage } from "./pages/WorldDetailPage";
 import { useI18n } from "./i18n";
+import { queryKeys } from "./queryKeys";
 
 export function App() {
   const dark = useUIStore((state) => state.dark);
@@ -59,7 +60,7 @@ export function App() {
 }
 
 function SetupBanner() {
-  const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
+  const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, refetchInterval: 30000 });
   const { t } = useI18n();
   if (!health.data || health.data.setup_complete) return null;
 

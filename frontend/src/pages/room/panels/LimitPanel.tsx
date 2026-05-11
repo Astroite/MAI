@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../../../api";
 import type { Runtime } from "../../../types";
 import { useI18n } from "../../../i18n";
+import { queryKeys } from "../../../queryKeys";
 
 export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
   const queryClient = useQueryClient();
@@ -34,7 +35,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
         max_consecutive_ai_turns: maxConsecutiveAiTurns,
         auto_transition: autoTransition
       }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
   return (
     <section>

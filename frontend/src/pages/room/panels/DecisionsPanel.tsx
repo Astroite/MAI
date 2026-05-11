@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronUp, Gavel, Lock, LockOpen } from "lucide-react";
 import { api } from "../../../api";
 import { StatusPill } from "../../../components/StatusPill";
+import { queryKeys } from "../../../queryKeys";
 import type { Decision } from "../../../types";
 import { useI18n } from "../../../i18n";
 
@@ -25,7 +26,7 @@ export function DecisionsPanel({
 
   const toggleLock = useMutation({
     mutationFn: ({ id, lock }: { id: string; lock: boolean }) => api.lockDecision(roomId, id, lock),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
 
   const { active, revoked } = useMemo(() => {

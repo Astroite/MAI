@@ -8,6 +8,7 @@ import { useConfirm } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toaster";
 import type { Room } from "../../types";
 import { useI18n } from "../../i18n";
+import { queryKeys } from "../../queryKeys";
 import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../../components/PersonaIcon";
 
 export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
@@ -15,11 +16,11 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const navigate = useNavigate();
   const { t } = useI18n();
   const confirm = useConfirm();
-  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
-  const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
+  const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
+  const formats = useQuery({ queryKey: queryKeys.formats.all, queryFn: () => api.formats() });
+  const recipes = useQuery({ queryKey: queryKeys.recipes.all, queryFn: () => api.recipes() });
   const personas = useQuery({
-    queryKey: ["persona-templates", "discussant"],
+    queryKey: queryKeys.personaTemplates.discussant,
     queryFn: () => api.personaTemplates("discussant")
   });
   const [creating, setCreating] = useState(false);
@@ -43,9 +44,9 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
         recipe_id: defaultRecipeId,
         format_id: defaultRecipeId ? undefined : fallbackFormatId,
         persona_ids: defaultRecipeId ? [] : fallbackPersonaIds
-      }),
+    }),
     onSuccess: (state) => {
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       setCreating(false);
       setTitle(t("room.newDiscussion"));
       navigate(`/rooms/${state.room.id}`);
@@ -55,7 +56,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const remove = useMutation({
     mutationFn: (roomId: string) => api.deleteRoom(roomId),
     onSuccess: (_data, roomId) => {
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       // If we just deleted the room we're viewing, kick back to the list.
       if (roomId === activeRoomId) navigate("/");
     },

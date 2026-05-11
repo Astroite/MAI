@@ -22,14 +22,15 @@ import {
 } from "../components/PersonaIcon";
 import { StatusPill, type PillTone } from "../components/StatusPill";
 import { useI18n } from "../i18n";
+import { queryKeys } from "../queryKeys";
 import type { Room, World, WorldCharacter, WorldDetail, WorldSummary } from "../types";
 
 type SceneStatus = "active" | "sealed" | "frozen" | "none";
 
 export function HomePage() {
   const { t, formatRelativeTime } = useI18n();
-  const worlds = useQuery({ queryKey: ["worlds"], queryFn: api.worlds });
-  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
+  const worlds = useQuery({ queryKey: queryKeys.worlds, queryFn: api.worlds });
+  const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
 
   const sortedWorlds = useMemo<WorldSummary[]>(
     () =>
@@ -78,7 +79,7 @@ export function HomePage() {
   const latestScene: Room | null = sceneRooms[0] ?? null;
 
   const currentWorldDetail = useQuery({
-    queryKey: ["worlds", currentWorld?.id],
+    queryKey: queryKeys.world(currentWorld?.id),
     queryFn: () => api.world(currentWorld!.id),
     enabled: Boolean(currentWorld?.id)
   });

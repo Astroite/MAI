@@ -32,6 +32,8 @@ window.__MAI_API_BASE__ -> VITE_API_BASE -> /api
 
 当前设计刻意保持单进程。房间运行时、in-flight 调用和 SSE event bus 都在进程内管理。多进程、多用户协作、Redis Pub/Sub 等只有在真实需求出现后再引入。
 
+Autodrive lock 也是进程内状态：`_AUTODRIVE_LOCKS` 只负责单进程内避免同一 room 重复调度。删除 Room 和封幕 Scene 时会主动清理对应 lock；横向扩容前需要把该锁迁移到跨进程协调层，当前版本不承诺多进程一致性。
+
 ### 2.2 append-only
 
 消息历史不编辑、不删除。以下行为都追加新消息：
@@ -396,6 +398,8 @@ chunk 空闲超时默认 30 秒，记录为 `truncated_reason="timeout"`。
 5. 发布 `room.frozen`。
 
 `InFlightCall.cancel()` 只是 fire-and-forget 给 task 发 `CancelledError`；信号要等 task 走到下一个 await（通常是 LLM 流的下一个 chunk）才生效。所以 `delete_room` 在调用 cancel 之后会 `asyncio.gather(*tasks, return_exceptions=True)` 等所有被取消的 task 真正退出，再开始 DELETE，避免和后台任务的写事务抢 SQLite 写锁。
+
+`freeze_room` 和 `delete_room` 共用 `engine.drain_active_calls(room_id, reason)`：先取消并等待当前 room 的所有 in-flight task 完成，让 partial/truncated message 语义保持 append-only，再继续写冻结状态或删除数据。用户消息只会触发一轮自动回复，避免 AI 回复继续自触发；`POST /rooms/{id}/autodrive/resume` 才会按 `auto_discuss` 连续推进。resume 返回 `scheduled` 或 `skipped`，skipped 会带 `locked`、`frozen`、`in_flight`、`no_available_speaker`、`phase_not_auto`、`exit_condition_met`、`token_budget_exceeded` 等原因。
 
 ### 6.6 LLM 调用兼容性
 

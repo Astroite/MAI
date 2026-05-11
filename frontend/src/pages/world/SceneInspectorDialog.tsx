@@ -4,6 +4,7 @@ import { useQueries } from "@tanstack/react-query";
 import { Heart, ScrollText, X } from "lucide-react";
 import { api } from "../../api";
 import { PersonaIcon } from "../../components/PersonaIcon";
+import { queryKeys } from "../../queryKeys";
 import type { SceneTimelineEntry, WorldCharacter, WorldCharacterMemory, WorldCharacterRelation } from "../../types";
 
 /**
@@ -39,14 +40,14 @@ export function SceneInspectorDialog({
   // hits the cache.
   const memoryQueries = useQueries({
     queries: aiRoster.map((character) => ({
-      queryKey: ["character-memories", worldId, character.id],
+      queryKey: queryKeys.characterMemories(worldId, character.id),
       queryFn: () => api.characterMemories(worldId, character.id),
       enabled: open && Boolean(sceneId)
     }))
   });
   const relationQueries = useQueries({
     queries: aiRoster.map((character) => ({
-      queryKey: ["character-relations", worldId, character.id],
+      queryKey: queryKeys.characterRelations(worldId, character.id),
       queryFn: () => api.characterRelations(worldId, character.id),
       enabled: open && Boolean(sceneId)
     }))

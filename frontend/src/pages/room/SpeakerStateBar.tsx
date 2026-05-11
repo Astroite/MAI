@@ -6,6 +6,7 @@ import type { PersonaInstance, Runtime } from "../../types";
 import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../../components/PersonaIcon";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
+import { queryKeys } from "../../queryKeys";
 import { toast } from "../../components/Toaster";
 
 /**
@@ -51,9 +52,8 @@ export function SpeakerStateBar({
     mutationFn: () => api.resumeAutodrive(roomId),
     onSuccess: (res) => {
       if (res.status === "skipped") {
-        // Either already running or a stream is in flight — both fine; the
-        // SSE update will catch it. Still nudge the cache to be safe.
-        void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+        toast.message(t(resumeSkipReasonKey(res.reason)));
+        void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
       }
     },
     onError: (err) =>
@@ -61,11 +61,11 @@ export function SpeakerStateBar({
   });
   const freeze = useMutation({
     mutationFn: () => api.freeze(roomId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
   const unfreeze = useMutation({
     mutationFn: () => api.unfreeze(roomId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
 
   // Resolve the displayed state once so styling and labels stay aligned.
@@ -149,6 +149,27 @@ export function SpeakerStateBar({
       </div>
     </div>
   );
+}
+
+function resumeSkipReasonKey(reason?: string | null) {
+  switch (reason) {
+    case "locked":
+      return "speaker.resumeSkipped.locked";
+    case "frozen":
+      return "speaker.resumeSkipped.frozen";
+    case "in_flight":
+      return "speaker.resumeSkipped.inFlight";
+    case "no_available_speaker":
+      return "speaker.resumeSkipped.noSpeaker";
+    case "phase_not_auto":
+      return "speaker.resumeSkipped.phaseNotAuto";
+    case "exit_condition_met":
+      return "speaker.resumeSkipped.exitCondition";
+    case "token_budget_exceeded":
+      return "speaker.resumeSkipped.tokenBudget";
+    default:
+      return "speaker.resumeSkipped.default";
+  }
 }
 
 function StateIndicator({ state }: { state: "frozen" | "speaking" | "scheduling" | "idle" }) {

@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import sys
@@ -25,8 +24,10 @@ from .engine import (
     active_calls_for_room,
     after_message_appended,
     append_verdict,
+    clear_autodrive_lock,
     continue_current_phase,
     decay_unused_memories,
+    drain_active_calls,
     enforce_memory_cap,
     estimate_tokens,
     extend_current_phase,
@@ -232,10 +233,7 @@ async def health(session: AsyncSession = Depends(get_session)) -> dict:
     settings_row = await _get_or_create_app_settings(session)
     provider_count = await session.scalar(select(func.count(ApiProvider.id))) or 0
     model_count = await session.scalar(select(func.count(ApiModel.id))) or 0
-    has_default_model = bool(
-        settings_row.default_api_model_id
-        or (settings_row.default_backing_model and settings_row.default_api_provider_id)
-    )
+    has_default_model = _setup_complete(settings_row)
     setup_steps = {
         "providers": provider_count > 0,
         "models": model_count > 0,
@@ -258,6 +256,10 @@ async def _get_or_create_app_settings(session: AsyncSession) -> AppSettings:
         await session.commit()
         await session.refresh(row)
     return row
+
+
+def _setup_complete(row: AppSettings) -> bool:
+    return bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id))
 
 
 def _template_copy_name(source) -> str:
@@ -313,7 +315,7 @@ async def get_app_settings(session: AsyncSession = Depends(get_session)):
         default_backing_model=row.default_backing_model,
         default_api_provider_id=row.default_api_provider_id,
         default_api_model_id=row.default_api_model_id,
-        setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
+        setup_complete=_setup_complete(row),
         updated_at=row.updated_at,
     )
 
@@ -341,7 +343,7 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
         default_backing_model=row.default_backing_model,
         default_api_provider_id=row.default_api_provider_id,
         default_api_model_id=row.default_api_model_id,
-        setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
+        setup_complete=_setup_complete(row),
         updated_at=row.updated_at,
     )
 
@@ -1695,13 +1697,18 @@ async def run_turn(room_id: str, body: TurnRequest, session: AsyncSession = Depe
 async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_session)):
     """Manually kick the autodrive chain.
 
-    Lets the user "let the AI keep talking" without typing anything. No-op if
-    the chain is already running or any persona stream is in flight.
+    Lets the user "let the AI keep talking" without typing anything. Returns
+    skipped + reason when the chain cannot be scheduled.
     """
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
-    started = schedule_autodrive(room_id)
-    return {"status": "started" if started else "skipped", "active": is_autodrive_active(room_id)}
+    try:
+        result = await schedule_autodrive(session, room_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {
+        "status": result.status,
+        "reason": result.reason,
+        "active": is_autodrive_active(room_id),
+    }
 
 
 @app.post("/rooms/{room_id}/phase/next", response_model=RoomState)
@@ -1816,18 +1823,10 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     if not room:
         raise HTTPException(404, "room not found")
     # Cancel any in-flight LLM streams AND wait for them to actually unwind
-    # before issuing DELETEs. `task.cancel()` only schedules a CancelledError
-    # at the next await point — the task may still be holding a DB session
-    # (and a SQLite write lock) when this function continues. Without the
-    # await below, DELETE races the still-running task and trips
-    # `database is locked`.
-    in_flight = active_calls_for_room(room_id)
-    for active_call in in_flight:
-        active_call.cancel("room_deleted")
-    if in_flight:
-        await asyncio.gather(
-            *(call.task for call in in_flight), return_exceptions=True
-        )
+    # before issuing DELETEs. This lets background tasks release DB sessions
+    # and avoids racing SQLite write locks.
+    await drain_active_calls(room_id, "room_deleted")
+    clear_autodrive_lock(room_id)
     # Order matters: clear children before parents to satisfy FKs even when
     # ON DELETE CASCADE isn't declared.
     from .models import (
@@ -3077,6 +3076,8 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
         return scene
+    await drain_active_calls(room_id, "scene_sealed")
+    clear_autodrive_lock(room_id)
     scene.sealed_at = datetime.now(timezone.utc)
     await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
     # Hold the sealed_at write so even if the scribe crashes, the seal sticks.
