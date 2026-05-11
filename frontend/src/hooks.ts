@@ -2,6 +2,8 @@ import { useEffect } from "react";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
 import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE } from "./api";
+import { toast } from "./components/Toaster";
+import { useI18n } from "./i18n";
 import { useUIStore } from "./store";
 import type { StreamingEvent } from "./types";
 
@@ -26,6 +28,7 @@ export function useRoomEvents(roomId?: string) {
   const appendChunk = useUIStore((state) => state.appendChunk);
   const clearStream = useUIStore((state) => state.clearStream);
   const setConnectionStatus = useUIStore((state) => state.setConnectionStatus);
+  const { t } = useI18n();
 
   useEffect(() => {
     if (!roomId) {
@@ -94,6 +97,27 @@ export function useRoomEvents(roomId?: string) {
         ) {
           scheduleInvalidate();
         }
+        if (payload.type === "system.error") {
+          // Always log so devs can inspect regardless of toast verbosity.
+          // eslint-disable-next-line no-console
+          console.error("[MAI system.error]", payload);
+          const showDetail = useUIStore.getState().showApiErrorDetail;
+          const who = payload.persona_name ? `「${payload.persona_name}」 ` : "";
+          const title = `${who}${t("error.aiCallFailed")}`;
+          if (showDetail) {
+            const head = `${payload.error_class ?? "Error"}: ${payload.detail ?? ""}`.trim();
+            const tail = payload.traceback
+              ? payload.traceback.split("\n").slice(-6).join("\n")
+              : "";
+            const description = [head, tail].filter(Boolean).join("\n\n");
+            toast.error(title, { description, duration: 12000 });
+          } else {
+            toast.error(title, {
+              description: t("error.enableDebugHint"),
+              duration: 6000
+            });
+          }
+        }
       },
       onerror(err) {
         // Permanent errors thrown above (4xx, deleted room) reach here as the
@@ -119,5 +143,5 @@ export function useRoomEvents(roomId?: string) {
       if (invalidateTimer != null) clearTimeout(invalidateTimer);
       setConnectionStatus("connected", 0);
     };
-  }, [appendChunk, clearStream, queryClient, roomId, setConnectionStatus]);
+  }, [appendChunk, clearStream, queryClient, roomId, setConnectionStatus, t]);
 }

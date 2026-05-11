@@ -9,6 +9,14 @@ from pydantic import BaseModel
 from .models import ApiProvider, Message, Persona, PhaseTemplate
 
 
+# Slugs LiteLLM accepts as the leading segment of `model="slug/name"`. When a
+# user types a bare model id (e.g. `gpt-4o-mini`) and picks one of these slugs
+# on the provider, we prepend it so LiteLLM can route the call. `custom` and
+# any unknown slug are left alone — the user is presumed to know the full
+# model string for OpenAI-compatible proxies, vLLM, etc.
+LITELLM_ROUTABLE_SLUGS = frozenset({"openai", "anthropic", "gemini", "openrouter", "azure"})
+
+
 @dataclass
 class StreamChunk:
     text: str
@@ -39,12 +47,12 @@ class LLMAdapter:
         )
 
         response = await acompletion(
-            model=persona.backing_model,
+            model=self._resolve_model_string(persona, api_provider),
             messages=messages,
             max_tokens=max_tokens,
             temperature=persona.temperature,
             stream=True,
-            **self._build_extra_params(persona),
+            **self._build_extra_params(persona, api_provider),
             **self._build_provider_params(api_provider),
         )
         index = 0
@@ -75,12 +83,12 @@ class LLMAdapter:
         tool_call_count = 0
         for _ in range(max_tool_rounds + 1):
             response = await acompletion(
-                model=persona.backing_model,
+                model=self._resolve_model_string(persona, api_provider),
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=persona.temperature,
                 tools=tools or None,
-                **self._build_extra_params(persona),
+                **self._build_extra_params(persona, api_provider),
                 **self._build_provider_params(api_provider),
             )
             message = response.choices[0].message
@@ -136,10 +144,10 @@ class LLMAdapter:
             },
         ]
         base_kwargs: dict[str, Any] = dict(
-            model=persona.backing_model,
+            model=self._resolve_model_string(persona, api_provider),
             max_tokens=max_tokens,
             temperature=persona.temperature,
-            **self._build_extra_params(persona),
+            **self._build_extra_params(persona, api_provider),
             **self._build_provider_params(api_provider),
         )
         tool_def = [
@@ -272,13 +280,59 @@ class LLMAdapter:
                     pass
         return value
 
-    def _build_extra_params(self, persona: Persona) -> dict[str, Any]:
+    def _resolve_model_string(
+        self, persona: Persona, provider: ApiProvider | None
+    ) -> str:
+        """Compose the `model=` string passed to litellm.acompletion.
+
+        LiteLLM routes by the leading `provider/` segment of the model id. We
+        used to require users to hand-write it (`openai/gpt-4o-mini`); now if
+        they pick a routable provider slug AND type a bare id, we prepend
+        automatically so `gpt-4o-mini` works too.
+
+        Any existing `/` in the model string is treated as "the user already
+        specified routing" and left alone — this matters for OpenAI-compat
+        proxies (slug=openai + api_base=openrouter.ai + model=
+        `openrouter/anthropic/...`), where naively prepending would produce
+        the nonsensical `openai/openrouter/anthropic/...`.
+
+        For genuine OpenRouter routing the user types `openrouter/vendor/model`
+        themselves — the frontend datalist suggests pre-prefixed ids.
+        """
+        model = (persona.backing_model or "").strip()
+        slug = (provider.provider_slug or "").strip() if provider else ""
+        if not model or not slug or slug not in LITELLM_ROUTABLE_SLUGS:
+            return model
+        if "/" in model:
+            return model
+        return f"{slug}/{model}"
+
+    def _resolved_provider_kind(
+        self, persona: Persona, provider: ApiProvider | None
+    ) -> str:
+        """Best-effort guess of the LiteLLM provider family for a persona+provider.
+
+        Used by `_build_extra_params` to pick the right deep-thinking flag.
+        Prefers the provider slug (canonical) over sniffing the model string,
+        but falls back to the prefix in legacy rows where the slug is missing.
+        """
+        slug = (provider.provider_slug or "").strip() if provider else ""
+        if slug and slug in LITELLM_ROUTABLE_SLUGS:
+            return slug
+        model = persona.backing_model or ""
+        prefix = model.split("/", 1)[0] if "/" in model else ""
+        return prefix
+
+    def _build_extra_params(
+        self, persona: Persona, provider: ApiProvider | None = None
+    ) -> dict[str, Any]:
         deep = bool((persona.config or {}).get("deep_thinking"))
         if not deep:
             return {}
-        if persona.backing_model.startswith("anthropic/"):
+        kind = self._resolved_provider_kind(persona, provider)
+        if kind == "anthropic":
             return {"thinking": {"type": "enabled", "budget_tokens": 10000}}
-        if persona.backing_model.startswith("openai/"):
+        if kind == "openai":
             return {"reasoning_effort": "high"}
         return {}
 

@@ -9,7 +9,6 @@ from types import SimpleNamespace
 
 logger = logging.getLogger(__name__)
 
-import httpx
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
@@ -19,7 +18,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from .config import get_settings
+from .config import get_settings, is_dev_mode
 from .db import create_schema, get_session
 from .engine import (
     DEFAULT_SCRIBE_STATE,
@@ -152,7 +151,7 @@ from .schemas import (
     WorldSummaryOut,
     WorldUpdate,
 )
-from .llm import llm_adapter
+from .llm import LITELLM_ROUTABLE_SLUGS, llm_adapter
 from .seed import seed_builtins
 from .tools import execute_tool, list_tool_schemas, sync_mcp_server
 from .trace import trace_record
@@ -163,6 +162,7 @@ settings = get_settings()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _maybe_enable_litellm_debug()
     await create_schema()
     async for session in get_session():
         await seed_builtins(session)
@@ -172,6 +172,29 @@ async def lifespan(app: FastAPI):
     from .db import engine
 
     await engine.dispose()
+
+
+def _maybe_enable_litellm_debug() -> None:
+    """Turn on LiteLLM's verbose stdout logging in dev mode.
+
+    Default ON when running from source (so the terminal shows the request
+    body / provider URL / response body when a call fails), default OFF in
+    packaged builds. Override either way with `MAI_DEBUG_LLM=1` / `=0`.
+    """
+    override = os.environ.get("MAI_DEBUG_LLM")
+    if override is not None:
+        enabled = override.strip().lower() in {"1", "true", "yes", "on"}
+    else:
+        enabled = is_dev_mode()
+    if not enabled:
+        return
+    try:
+        import litellm
+
+        litellm._turn_on_debug()
+        logger.info("LiteLLM debug logging enabled (dev mode)")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("failed to enable LiteLLM debug: %r", exc)
 
 
 app = FastAPI(title=settings.app_name, version="0.5.0", lifespan=lifespan)
@@ -274,43 +297,6 @@ async def _sync_api_model_snapshot(session: AsyncSession, payload: dict) -> dict
     return payload
 
 
-async def _ensure_api_model_for_legacy(
-    session: AsyncSession,
-    provider_id: str | None,
-    model_name: str | None,
-    *,
-    is_default: bool = False,
-) -> ApiModel | None:
-    model_name = (model_name or "").strip()
-    if not provider_id or not model_name:
-        return None
-    provider = await session.get(ApiProvider, provider_id)
-    if not provider:
-        raise HTTPException(404, "api provider not found")
-    api_model = await session.scalar(
-        select(ApiModel).where(
-            ApiModel.api_provider_id == provider_id,
-            ApiModel.model_name == model_name,
-        )
-    )
-    if api_model is None:
-        api_model = ApiModel(
-            id=new_id(),
-            api_provider_id=provider_id,
-            display_name=_model_display_name(model_name),
-            model_name=model_name,
-            enabled=True,
-            is_default=is_default,
-            tags=[],
-        )
-        session.add(api_model)
-        await session.flush()
-    elif is_default and not api_model.is_default:
-        api_model.is_default = True
-        await session.flush()
-    return api_model
-
-
 async def _set_single_default_api_model(session: AsyncSession, api_model: ApiModel) -> None:
     await session.execute(
         update(ApiModel)
@@ -347,15 +333,6 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
         provider = await session.get(ApiProvider, changes["default_api_provider_id"])
         if not provider:
             raise HTTPException(404, "api provider not found")
-    if "default_api_model_id" not in changes:
-        api_model = await _ensure_api_model_for_legacy(
-            session,
-            changes.get("default_api_provider_id", row.default_api_provider_id),
-            changes.get("default_backing_model", row.default_backing_model),
-            is_default=True,
-        )
-        if api_model is not None:
-            changes["default_api_model_id"] = api_model.id
     for key, value in changes.items():
         setattr(row, key, value or None)
     await session.commit()
@@ -595,12 +572,6 @@ async def list_persona_templates(
 @app.post("/templates/personas", response_model=PersonaTemplateOut)
 async def create_persona_template(body: PersonaTemplateCreate, session: AsyncSession = Depends(get_session)):
     payload = await _sync_api_model_snapshot(session, body.model_dump(mode="json"))
-    if not payload.get("api_model_id"):
-        api_model = await _ensure_api_model_for_legacy(
-            session, payload.get("api_provider_id"), payload.get("backing_model")
-        )
-        if api_model is not None:
-            payload["api_model_id"] = api_model.id
     template = PersonaTemplate(
         id=new_id(),
         version=1,
@@ -628,14 +599,6 @@ async def update_persona_template(
     if not changes:
         return template
     changes = await _sync_api_model_snapshot(session, changes)
-    if "api_model_id" not in changes:
-        api_model = await _ensure_api_model_for_legacy(
-            session,
-            changes.get("api_provider_id", template.api_provider_id),
-            changes.get("backing_model", template.backing_model),
-        )
-        if api_model is not None:
-            changes["api_model_id"] = api_model.id
     _apply_template_changes(template, changes)
     await session.commit()
     await session.refresh(template)
@@ -784,78 +747,78 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     return {"status": "deleted"}
 
 
+async def _litellm_ping(provider: ApiProvider, raw_model_name: str) -> tuple[bool, str | None]:
+    """Issue a tiny `acompletion` against `provider` using `raw_model_name`.
+
+    Goes through exactly the same code path as a real chat turn (model-string
+    resolution via provider_slug, api_key, api_base) so a green dot here
+    means "ready to chat". We previously had a side-channel `GET /models`
+    probe that 401'd against Anthropic/Gemini (different auth headers) even
+    when chat worked — that's gone.
+    """
+    from litellm import acompletion
+
+    model_string = raw_model_name.strip()
+    slug = (provider.provider_slug or "").strip()
+    if model_string and slug and slug in LITELLM_ROUTABLE_SLUGS and not model_string.startswith(f"{slug}/"):
+        model_string = f"{slug}/{model_string}"
+    try:
+        response = await acompletion(
+            model=model_string,
+            messages=[{"role": "user", "content": "ping"}],
+            # 1 token blows up reasoning models (need `max_completion_tokens`)
+            # and Anthropic thinking (budget must be >= 1024). 16 is small
+            # enough to be ~free, big enough to land inside all routes.
+            max_tokens=16,
+            temperature=0,
+            api_key=provider.api_key,
+            api_base=provider.api_base or None,
+        )
+        if response and getattr(response, "choices", None):
+            return True, None
+        return False, "litellm 返回空响应"
+    except Exception as exc:  # noqa: BLE001 — surface to user
+        return False, _summarize_litellm_error(exc)
+
+
 @app.post("/templates/api-providers/{provider_id}/test", response_model=ApiProviderTestResult)
 async def test_api_provider(
     provider_id: str,
     model: str | None = None,
     session: AsyncSession = Depends(get_session),
 ):
-    """Test an API provider. Two modes:
+    """Test an ApiProvider end-to-end via litellm.
 
-    - Without `?model=`: cheap GET `{base}/models` ping. Validates that the
-      key + base URL reach a server that exposes the OpenAI-compat surface,
-      no token spend.
-    - With `?model=`: real `litellm.acompletion(max_tokens=1)`. Validates the
-      full path including litellm's provider routing, so a green dot here
-      truly means "ready to use". Costs ~1 token.
+    If `?model=` is given, that model name is pinged. Otherwise we pick the
+    provider's default ApiModel (or the first enabled one), since "test a
+    provider" without a model is undefined under litellm routing.
 
-    Persists the result on the ApiProvider row so the UI can show a status
-    dot.
+    Result is persisted on the ApiProvider row for the UI status dot.
     """
     provider = await session.get(ApiProvider, provider_id)
     if not provider:
         raise HTTPException(404, "api provider not found")
+    if not provider.api_key:
+        raise HTTPException(400, "请先填写 API Key")
+
+    raw_model_name: str | None = (model or "").strip() or None
+    if not raw_model_name:
+        chosen = await session.scalar(
+            select(ApiModel)
+            .where(ApiModel.api_provider_id == provider_id, ApiModel.enabled == True)  # noqa: E712
+            .order_by(ApiModel.is_default.desc(), ApiModel.created_at)
+        )
+        if chosen is None:
+            raise HTTPException(400, "请先在此 Provider 下添加至少一个可用模型")
+        raw_model_name = chosen.model_name
+
     tested_at = datetime.now(timezone.utc)
-    ok = False
-    status_code: int | None = None
-    error: str | None = None
-
-    if model:
-        from litellm import acompletion
-
-        try:
-            response = await acompletion(
-                model=model,
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1,
-                api_key=provider.api_key,
-                api_base=provider.api_base or None,
-            )
-            # Any well-formed completion counts as success.
-            if response and getattr(response, "choices", None):
-                ok = True
-            else:
-                error = "litellm 返回空响应"
-        except Exception as exc:  # noqa: BLE001 — surface to user
-            error = _summarize_litellm_error(exc)
-    else:
-        base = (provider.api_base or "https://api.openai.com/v1").rstrip("/")
-        url = f"{base}/models"
-        headers = {"Authorization": f"Bearer {provider.api_key}"}
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as http:
-                response = await http.get(url, headers=headers)
-            status_code = response.status_code
-            if response.status_code == 200:
-                ok = True
-            elif response.status_code in (401, 403):
-                error = "鉴权失败：API Key 无效或权限不足"
-            elif response.status_code == 404:
-                error = "地址不通：请检查 API Base 是否正确（应包含 /v1）"
-            else:
-                error = f"HTTP {response.status_code}: {response.text[:200]}"
-        except httpx.ConnectError as exc:
-            error = f"无法连接：{exc}"
-        except httpx.TimeoutException:
-            error = "请求超时（10s）"
-        except Exception as exc:  # noqa: BLE001 — surface message
-            error = f"请求失败：{type(exc).__name__}: {exc}"
-
+    ok, error = await _litellm_ping(provider, raw_model_name)
     provider.last_tested_ok = ok
     provider.last_tested_at = tested_at
     provider.last_tested_error = None if ok else error
     await session.commit()
-    return ApiProviderTestResult(ok=ok, status_code=status_code, error=error, tested_at=tested_at)
+    return ApiProviderTestResult(ok=ok, status_code=None, error=error, tested_at=tested_at)
 
 
 @app.get("/templates/api-models", response_model=list[ApiModelOut])
@@ -968,26 +931,10 @@ async def test_api_model(model_id: str, session: AsyncSession = Depends(get_sess
     provider = await session.get(ApiProvider, api_model.api_provider_id)
     if not provider:
         raise HTTPException(404, "api provider not found")
+    if not provider.api_key:
+        raise HTTPException(400, "请先填写 API Key")
     tested_at = datetime.now(timezone.utc)
-    ok = False
-    error: str | None = None
-    from litellm import acompletion
-
-    try:
-        response = await acompletion(
-            model=api_model.model_name,
-            messages=[{"role": "user", "content": "ping"}],
-            max_tokens=1,
-            api_key=provider.api_key,
-            api_base=provider.api_base or None,
-        )
-        if response and getattr(response, "choices", None):
-            ok = True
-        else:
-            error = "litellm 返回空响应"
-    except Exception as exc:  # noqa: BLE001 — surface to user
-        error = _summarize_litellm_error(exc)
-
+    ok, error = await _litellm_ping(provider, api_model.model_name)
     api_model.last_tested_ok = ok
     api_model.last_tested_at = tested_at
     api_model.last_tested_error = None if ok else error
@@ -1513,14 +1460,6 @@ async def update_persona_instance(
         raise HTTPException(404, "persona instance not found")
     changes = body.model_dump(mode="json", exclude_unset=True)
     changes = await _sync_api_model_snapshot(session, changes)
-    if "api_model_id" not in changes:
-        api_model = await _ensure_api_model_for_legacy(
-            session,
-            changes.get("api_provider_id", instance.api_provider_id),
-            changes.get("backing_model", instance.backing_model),
-        )
-        if api_model is not None:
-            changes["api_model_id"] = api_model.id
     for key, value in changes.items():
         setattr(instance, key, value)
     await trace_record(

@@ -2,11 +2,30 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .ids import builtin_id
-from .models import DebateFormat, PersonaTemplate, PhaseTemplate, Recipe
+from .models import ApiProvider, DebateFormat, PersonaTemplate, PhaseTemplate, Recipe
 
 
 def _transition() -> list[dict]:
     return [{"condition": "always", "target": "next"}]
+
+
+# Stub providers shipped so first-run users only have to paste an API key —
+# previously the empty list meant "go read the docs, fill 4 fields". Keys
+# are blank so a fresh row is inert until edited; the user can still delete
+# any they don't want. `api_base` is left blank for built-in clouds (litellm
+# picks the right default per slug) and pre-filled for OpenRouter where the
+# URL is non-obvious.
+BUILTIN_API_PROVIDERS: list[dict] = [
+    {"key": "openai", "name": "OpenAI", "provider_slug": "openai", "api_base": None},
+    {"key": "anthropic", "name": "Anthropic", "provider_slug": "anthropic", "api_base": None},
+    {"key": "gemini", "name": "Google Gemini", "provider_slug": "gemini", "api_base": None},
+    {
+        "key": "openrouter",
+        "name": "OpenRouter",
+        "provider_slug": "openrouter",
+        "api_base": "https://openrouter.ai/api/v1",
+    },
+]
 
 
 BUILTIN_PERSONAS: list[dict] = [
@@ -666,6 +685,22 @@ async def seed_builtins(session: AsyncSession) -> None:
                 description=data["description"],
                 phase_sequence=phase_sequence,
                 tags=data["tags"],
+            )
+        )
+
+    provider_ids = [builtin_id("api_provider", item["key"]) for item in BUILTIN_API_PROVIDERS]
+    have_providers = await _existing_builtin_ids(session, ApiProvider, provider_ids)
+    for data in BUILTIN_API_PROVIDERS:
+        pid = builtin_id("api_provider", data["key"])
+        if pid in have_providers:
+            continue
+        session.add(
+            ApiProvider(
+                id=pid,
+                name=data["name"],
+                provider_slug=data["provider_slug"],
+                api_key="",
+                api_base=data["api_base"],
             )
         )
 

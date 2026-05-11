@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { NavLink } from "react-router-dom";
 import {
   Activity,
+  Bug,
   CheckCircle2,
   Database,
   Download,
@@ -21,6 +22,7 @@ import { ApiProvidersView } from "./TemplatesPage";
 import type { ApiModel, ApiProvider } from "../types";
 import { useI18n } from "../i18n";
 import { providerKindLabel } from "../providers";
+import { useUIStore } from "../store";
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 10000 });
@@ -70,6 +72,8 @@ export function SettingsPage() {
         <DefaultApiSection />
         <UpdaterSection />
       </div>
+
+      <DebugSection />
 
       <ApiProvidersView />
     </div>
@@ -330,4 +334,27 @@ function renderSettingsModelOptions(
           ))}
       </optgroup>
     ));
+}
+
+function DebugSection() {
+  const { t } = useI18n();
+  const showApiErrorDetail = useUIStore((s) => s.showApiErrorDetail);
+  const setShowApiErrorDetail = useUIStore((s) => s.setShowApiErrorDetail);
+  return (
+    <SectionCard title={t("settings.debug")} icon={<Bug size={14} />} tone="info">
+      <p className="text-xs text-muted">{t("settings.debugHelp")}</p>
+      <label className="mt-3 flex cursor-pointer items-start gap-2">
+        <input
+          type="checkbox"
+          className="mt-1 h-4 w-4 cursor-pointer accent-brand"
+          checked={showApiErrorDetail}
+          onChange={(event) => setShowApiErrorDetail(event.target.checked)}
+        />
+        <span className="flex-1">
+          <span className="block text-sm text-text">{t("settings.showApiErrorDetail")}</span>
+          <span className="block text-xs text-muted">{t("settings.showApiErrorDetailHelp")}</span>
+        </span>
+      </label>
+    </SectionCard>
+  );
 }
