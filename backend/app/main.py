@@ -33,6 +33,7 @@ from .engine import (
     extend_current_phase,
     freeze_room,
     is_autodrive_active,
+    is_scene_room,
     run_manual_facilitator_eval,
     run_room_turn,
     run_scene_memory_scribe,
@@ -1508,7 +1509,7 @@ async def append_user_message(room_id: str, body: MessageCreate, session: AsyncS
         # roster and is a user-kind slot the human controls. AI characters are
         # excluded — the engine drives those, the user can't take over.
         room = await session.get(Room, room_id)
-        if room is None or room.world_id is None:
+        if room is None or not is_scene_room(room):
             raise HTTPException(409, "as_character_id only valid in Story World scenes")
         member = await session.get(
             WorldSceneMember,
@@ -2920,7 +2921,7 @@ async def _scene_or_404(session: AsyncSession, room_id: str) -> Room:
     room = await session.get(Room, room_id)
     if room is None:
         raise HTTPException(404, "room not found")
-    if not room.world_id:
+    if not is_scene_room(room):
         raise HTTPException(409, "room is not a scene of any world")
     return room
 

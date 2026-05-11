@@ -44,6 +44,7 @@ import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { useI18n } from "../../i18n";
 import { queryKeys } from "../../queryKeys";
 import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
+import { isSceneRoom } from "../../utils/scene";
 
 export function RoomShell() {
   const { roomId, subId } = useParams();
@@ -100,7 +101,7 @@ export function RoomShell() {
     mutationFn: () => api.sealScene(activeRoomId!),
     onSuccess: () => {
       invalidate();
-      toast.success("已封幕。每个 AI 角色的记忆和关系卡已生成。");
+      toast.success(t("room.scene.sealSuccess"));
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
@@ -130,6 +131,7 @@ export function RoomShell() {
   // Story World scene context: when this room is a scene, fetch the world
   // (for character details) and roster (for who's on stage). The composer
   // uses this to offer 旁白 / 扮演 modes with a user-character picker.
+  const isScene = isSceneRoom(state?.room);
   const worldId = state?.room.world_id ?? null;
   const worldQuery = useQuery({
     queryKey: queryKeys.world(worldId),
@@ -242,19 +244,19 @@ export function RoomShell() {
                   )}
                   <span>{t("room.members", { count: state.personas.filter((p) => p.kind === "discussant").length })}</span>
                   {state.room.parent_room_id && <StatusPill tone="accent">{t("room.childRoom")}</StatusPill>}
-                  {state.room.world_id && (
+                  {isScene && (
                     <Link
-                      to={`/worlds/${state.room.world_id}`}
+                      to={`/worlds/${worldId}`}
                       className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-xs text-accent hover:bg-accent/20"
-                      title="返回世界"
+                      title={t("room.scene.backToWorld")}
                     >
                       <BookOpen size={12} />
-                      第 {state.room.scene_index} 幕
+                      {t("room.scene.act", { n: state.room.scene_index })}
                     </Link>
                   )}
                   {state.room.sealed_at && (
                     <StatusPill tone="success" dot>
-                      已封幕
+                      {t("room.scene.sealed")}
                     </StatusPill>
                   )}
                 </div>
@@ -294,25 +296,24 @@ export function RoomShell() {
                     {t("room.freeze")}
                   </button>
                 )}
-                {state.room.world_id && !state.room.sealed_at && (
+                {isScene && !state.room.sealed_at && (
                   <button
                     className="btn"
                     type="button"
                     onClick={async () => {
                       const ok = await confirm({
-                        title: `封幕第 ${state.room.scene_index} 幕？`,
-                        description:
-                          "会触发每个 AI 角色的记忆与关系卡 LLM 提炼，并锁定本幕（不能再加/移角色或继续发言）。此操作不可逆。",
-                        confirmLabel: "封幕",
+                        title: t("room.scene.sealConfirmTitle", { n: state.room.scene_index }),
+                        description: t("room.scene.sealConfirmDescription"),
+                        confirmLabel: t("room.scene.sealConfirmLabel"),
                         danger: true
                       });
                       if (ok) sealScene.mutate();
                     }}
                     disabled={sealScene.isPending}
-                    title="封幕：触发记忆 + 关系 scribe"
+                    title={t("room.scene.sealTitle")}
                   >
                     <Lock size={16} />
-                    {sealScene.isPending ? "封幕中..." : "封幕"}
+                    {sealScene.isPending ? t("room.scene.sealing") : t("room.scene.sealConfirmLabel")}
                   </button>
                 )}
                 <button

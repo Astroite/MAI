@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Check, Search, X } from "lucide-react";
 import { PersonaIcon } from "./PersonaIcon";
 import type { PersonaTemplate } from "../types";
+import { useI18n } from "../i18n";
 
 /**
  * Modal picker for PersonaTemplate. Two-column layout:
@@ -47,13 +48,16 @@ type PickerProps = {
 );
 
 export function PersonaTemplatePicker(props: PickerProps) {
+  const { t } = useI18n();
   const {
     open,
     onOpenChange,
     templates,
-    title = "选择 Persona 模板",
-    description = "模板决定模型 + 基础人设；选定后可以再编辑角色细节。"
+    title,
+    description
   } = props;
+  const dialogTitle = title ?? t("personaPicker.defaultTitle");
+  const dialogDescription = description ?? t("personaPicker.defaultDescription");
   const mode: PickerMode = props.mode ?? "single";
   const selectedId: string | null = mode === "single" ? props.selectedId ?? null : null;
   // Pull the callbacks out so TS doesn't lose narrowing inside JSX handlers.
@@ -112,16 +116,16 @@ export function PersonaTemplatePicker(props: PickerProps) {
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex h-[80vh] w-[92vw] max-w-4xl -translate-x-1/2 -translate-y-1/2 flex-col rounded-lg border border-border bg-panel shadow-soft">
           <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
             <div>
-              <Dialog.Title className="text-base font-semibold text-text">{title}</Dialog.Title>
+              <Dialog.Title className="text-base font-semibold text-text">{dialogTitle}</Dialog.Title>
               <Dialog.Description className="mt-0.5 text-xs text-muted">
-                {description}
+                {dialogDescription}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
               <button
                 type="button"
                 className="grid h-8 w-8 place-items-center rounded text-muted hover:bg-surface hover:text-text"
-                aria-label="关闭"
+                aria-label={t("common.close")}
               >
                 <X size={16} />
               </button>
@@ -140,7 +144,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                   <input
                     ref={searchRef}
                     className="input w-full pl-9"
-                    placeholder="搜索名字 / 身份 / 描述 / 标签"
+                    placeholder={t("personaPicker.searchPlaceholder")}
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
                   />
@@ -186,7 +190,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                             <span className="truncate text-sm font-medium">{tpl.name}</span>
                             {isSelected && (
                               <span className="text-xs uppercase tracking-wide text-brand">
-                                已选
+                                {t("personaPicker.selected")}
                               </span>
                             )}
                           </div>
@@ -196,7 +200,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                         </div>
                         {tpl.is_builtin && (
                           <span className="shrink-0 rounded bg-surface px-1.5 py-0.5 text-xs text-muted">
-                            内置
+                            {t("personaPicker.builtin")}
                           </span>
                         )}
                       </button>
@@ -207,11 +211,11 @@ export function PersonaTemplatePicker(props: PickerProps) {
                   <li className="space-y-2 px-3 py-6 text-center text-xs text-muted">
                     {templates.length === 0 ? (
                       <>
-                        <div>还没有可用的人设模板。</div>
-                        <div>到「模板 → 智能体」复制一个内置模板再回来选。</div>
+                        <div>{t("personaPicker.emptyTemplates")}</div>
+                        <div>{t("personaPicker.emptyTemplatesHelp")}</div>
                       </>
                     ) : (
-                      <div>没有匹配的模板。</div>
+                      <div>{t("personaPicker.noMatches")}</div>
                     )}
                   </li>
                 )}
@@ -241,7 +245,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
 
                   {highlighted.description && (
                     <section>
-                      <div className="text-xs font-medium text-muted">描述</div>
+                      <div className="text-xs font-medium text-muted">{t("personaPicker.description")}</div>
                       <p className="mt-0.5 whitespace-pre-wrap text-sm text-text">
                         {highlighted.description}
                       </p>
@@ -250,7 +254,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
 
                   {highlighted.system_prompt && (
                     <section>
-                      <div className="text-xs font-medium text-muted">System prompt</div>
+                      <div className="text-xs font-medium text-muted">{t("personaPicker.systemPrompt")}</div>
                       <pre className="mai-scrollbar mt-0.5 max-h-48 overflow-auto whitespace-pre-wrap rounded border border-border bg-surface p-2 text-xs text-text">
                         {highlighted.system_prompt}
                       </pre>
@@ -259,18 +263,18 @@ export function PersonaTemplatePicker(props: PickerProps) {
 
                   <section className="grid grid-cols-2 gap-2 text-xs text-muted">
                     <div>
-                      <div className="font-medium">模型</div>
-                      <div className="text-text">{highlighted.backing_model || "（默认）"}</div>
+                      <div className="font-medium">{t("personaPicker.model")}</div>
+                      <div className="text-text">{highlighted.backing_model || t("personaPicker.defaultModel")}</div>
                     </div>
                     <div>
-                      <div className="font-medium">温度</div>
+                      <div className="font-medium">{t("personaPicker.temperature")}</div>
                       <div className="text-text">{highlighted.temperature.toFixed(2)}</div>
                     </div>
                   </section>
                 </div>
               ) : (
                 <div className="grid h-full place-items-center text-sm text-muted">
-                  选择左侧任意模板查看详情
+                  {t("personaPicker.previewPrompt")}
                 </div>
               )}
             </div>
@@ -279,7 +283,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
           <div className="flex items-center justify-between gap-2 border-t border-border px-4 py-3">
             {mode === "multi" ? (
               <span className="text-xs text-muted">
-                已勾选 {multiSelected.size} 个
+                {t("personaPicker.selectedCount", { count: multiSelected.size })}
               </span>
             ) : (
               <span />
@@ -287,7 +291,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
             <div className="flex gap-2">
               <Dialog.Close asChild>
                 <button type="button" className="btn">
-                  取消
+                  {t("common.cancel")}
                 </button>
               </Dialog.Close>
               {mode === "multi" ? (
@@ -300,7 +304,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                     onPickMany?.(picked);
                   }}
                 >
-                  添加 {multiSelected.size > 0 ? multiSelected.size : ""} 个角色
+                  {t("personaPicker.addCharacters", { count: multiSelected.size })}
                 </button>
               ) : (
                 <button
@@ -309,7 +313,7 @@ export function PersonaTemplatePicker(props: PickerProps) {
                   disabled={!highlighted}
                   onClick={() => highlighted && onPickSingle?.(highlighted)}
                 >
-                  选中此模板
+                  {t("personaPicker.selectTemplate")}
                 </button>
               )}
             </div>

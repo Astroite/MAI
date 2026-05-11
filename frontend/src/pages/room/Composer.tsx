@@ -202,10 +202,10 @@ export function Composer({
                 }`}
                 onClick={() => setStoryMode("narration")}
                 disabled={frozen}
-                title="背景陈述：以旁白身份推进故事，AI 角色会把它当成场景变化来反应"
+                title={t("composer.story.narrationTitle")}
               >
                 <BookOpen size={14} />
-                <span>旁白</span>
+                <span>{t("composer.story.narration")}</span>
               </button>
               <button
                 type="button"
@@ -220,12 +220,12 @@ export function Composer({
                 disabled={frozen || !canActAs}
                 title={
                   canActAs
-                    ? "扮演发言：以你某个 user 角色的身份说话/做动作"
-                    : "本幕没有可扮演的 user 角色（需要先在世界里加 user 角色并放进名册）"
+                    ? t("composer.story.actAsTitle")
+                    : t("composer.story.actAsUnavailableTitle")
                 }
               >
                 <Drama size={14} />
-                <span>扮演</span>
+                <span>{t("composer.story.actAs")}</span>
               </button>
               {storyMode === "act_as" && story && story.userCharacters.length > 0 && (
                 <div className="ml-1 flex items-center gap-1 border-l border-border/80 pl-2">

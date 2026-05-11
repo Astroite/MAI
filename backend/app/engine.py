@@ -69,6 +69,10 @@ CASUAL_CONTINUATION_DECAY = 0.85
 SILENCE_SENTINEL = "<silent/>"
 
 
+def is_scene_room(room: Room) -> bool:
+    return room.world_id is not None
+
+
 def _extract_llm_error_detail(exc: BaseException) -> str:
     """Build a useful one-line detail string from a LiteLLM/OpenAI exception.
 
@@ -1189,7 +1193,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
     # consensus / decisions / etc. that don't make sense for a story scene, so
     # short-circuit here when this room is a scene.
     room = await session.get(Room, room_id)
-    if room is not None and room.world_id is not None:
+    if room is not None and is_scene_room(room):
         return
     state = await session.get(ScribeState, room_id)
     if state is None:
@@ -1498,7 +1502,7 @@ async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[st
     Returns a {character_id: rows_written} dict for telemetry. Rooms that
     aren't scenes (world_id IS NULL) are no-ops.
     """
-    if scene.world_id is None:
+    if not is_scene_room(scene):
         return {}
     members = list(
         (
@@ -1562,7 +1566,7 @@ async def decay_unused_memories(
     Runs at scene seal so decay is bounded (one pass per scene, deterministic).
     Returns {character_id: rows_decayed}.
     """
-    if scene.world_id is None or scene.scene_index is None:
+    if not is_scene_room(scene) or scene.scene_index is None:
         return {}
     threshold_index = scene.scene_index - MEMORY_DECAY_GRACE_SCENES
     # Limit to characters in this world (rather than the entire DB).
@@ -1617,7 +1621,7 @@ async def enforce_memory_cap(
     summarisation drift is hard to debug and the cap mostly bounds memory
     bloat in long-running worlds rather than something users will hit fast.
     """
-    if scene.world_id is None:
+    if not is_scene_room(scene):
         return {}
     char_ids = list(
         (
@@ -1678,7 +1682,7 @@ async def run_facilitator_eval(
     # for the rare case the user explicitly asks via /facilitator.
     if not force:
         room = await session.get(Room, room_id)
-        if room is not None and room.world_id is not None:
+        if room is not None and is_scene_room(room):
             return None
     facilitator = await get_room_system_persona(session, room_id, "facilitator")
     config = facilitator.config or {}

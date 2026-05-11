@@ -8,10 +8,12 @@ import { toast } from "../components/Toaster";
 import type { WorldSummary } from "../types";
 import { COVER_PALETTE } from "../constants/colors";
 import { queryKeys } from "../queryKeys";
+import { useI18n } from "../i18n";
 
 export function WorldListPage() {
   const worlds = useQuery({ queryKey: queryKeys.worlds, queryFn: api.worlds });
   const [creating, setCreating] = useState(false);
+  const { t } = useI18n();
 
   return (
     <div className="space-y-4">
@@ -20,10 +22,10 @@ export function WorldListPage() {
           <div>
             <h1 className="flex items-center gap-2 text-xl font-semibold">
               <Globe size={20} className="text-brand" />
-              故事世界
+              {t("worldList.title")}
             </h1>
             <p className="mt-1 text-sm text-muted">
-              在世界里编排时间线、角色和场景。每幕结束后角色保留记忆。
+              {t("worldList.subtitle")}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -34,7 +36,7 @@ export function WorldListPage() {
               disabled={worlds.isFetching}
             >
               <RefreshCw size={16} className={worlds.isFetching ? "animate-spin" : ""} />
-              刷新
+              {t("common.refresh")}
             </button>
             <button
               className="btn btn-primary px-4"
@@ -42,7 +44,7 @@ export function WorldListPage() {
               onClick={() => setCreating((value) => !value)}
             >
               <Plus size={16} />
-              新建世界
+              {t("worldList.newWorld")}
             </button>
           </div>
         </div>
@@ -51,7 +53,7 @@ export function WorldListPage() {
 
         {worlds.data && worlds.data.length === 0 && !creating ? (
           <div className="panel px-6 py-10 text-center text-sm text-muted">
-            <p>还没有世界。点击右上角「新建世界」开始。</p>
+            <p>{t("worldList.empty")}</p>
           </div>
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -68,18 +70,19 @@ export function WorldListPage() {
 function WorldCard({ world }: { world: WorldSummary }) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  const { t } = useI18n();
   const remove = useMutation({
     mutationFn: () => api.deleteWorld(world.id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.worlds });
-      toast.message(`已删除世界「${world.name}」。`);
+      toast.message(t("worldList.deleted", { name: world.name }));
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
 
   const last = world.last_activity_at
     ? new Date(world.last_activity_at).toLocaleString()
-    : "尚无场景";
+    : t("worldList.noScenes");
 
   return (
     <div className="group relative overflow-hidden rounded-lg border border-border bg-panel shadow-card transition hover:border-brand/60 hover:shadow-soft">
@@ -100,33 +103,33 @@ function WorldCard({ world }: { world: WorldSummary }) {
           <div className="min-w-0 flex-1">
             <h3 className="line-clamp-1 text-sm font-semibold leading-snug">{world.name}</h3>
             <p className="mt-1 line-clamp-2 text-xs text-muted">
-              {world.synopsis || "（暂无简介）"}
+              {world.synopsis || t("worldList.noSynopsis")}
             </p>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-          <span>角色 {world.character_count}</span>
-          <span>场景 {world.scene_count}</span>
+          <span>{t("worldList.characterCount", { count: world.character_count })}</span>
+          <span>{t("worldList.sceneCount", { count: world.scene_count })}</span>
           <span className="ml-auto truncate">{last}</span>
         </div>
       </Link>
       <button
         className="absolute right-1.5 top-1.5 rounded p-1 text-muted opacity-0 transition group-hover:opacity-100 hover:bg-danger/10 hover:text-danger"
         type="button"
-        title="删除世界"
+        title={t("worldList.deleteTitle")}
         onClick={async (event) => {
           event.preventDefault();
           event.stopPropagation();
           const ok = await confirm({
-            title: `删除世界「${world.name}」？`,
-            description: "会级联删除所有角色和场景，包括所有积累的记忆和关系卡。此操作不可逆。",
-            confirmLabel: "删除",
+            title: t("worldList.deleteConfirmTitle", { name: world.name }),
+            description: t("worldList.deleteConfirmDescription"),
+            confirmLabel: t("common.delete"),
             danger: true
           });
           if (ok) remove.mutate();
         }}
         disabled={remove.isPending}
-        aria-label={`删除世界 ${world.name}`}
+        aria-label={t("worldList.deleteAria", { name: world.name })}
       >
         <Trash2 size={14} />
       </button>
@@ -136,6 +139,7 @@ function WorldCard({ world }: { world: WorldSummary }) {
 
 function CreateWorldForm({ onDone }: { onDone: () => void }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const [name, setName] = useState("");
   const [synopsis, setSynopsis] = useState("");
   const [calendarHint, setCalendarHint] = useState("");
@@ -150,7 +154,7 @@ function CreateWorldForm({ onDone }: { onDone: () => void }) {
     }),
     onSuccess: (world) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.worlds });
-      toast.success(`已创建世界「${world.name}」。`);
+      toast.success(t("worldList.created", { name: world.name }));
       setName("");
       setSynopsis("");
       setCalendarHint("");
@@ -169,37 +173,37 @@ function CreateWorldForm({ onDone }: { onDone: () => void }) {
       }}
     >
       <div>
-        <label className="text-xs font-medium text-muted">世界名</label>
+        <label className="text-xs font-medium text-muted">{t("worldList.name")}</label>
         <input
           className="input mt-1 w-full"
           value={name}
           onChange={(event) => setName(event.target.value)}
-          placeholder="例：玄苍纪元"
+          placeholder={t("worldList.namePlaceholder")}
           required
           maxLength={200}
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted">简介（每场都会进角色 prompt）</label>
+        <label className="text-xs font-medium text-muted">{t("worldList.synopsis")}</label>
         <textarea
           className="input mt-1 w-full"
           value={synopsis}
           onChange={(event) => setSynopsis(event.target.value)}
-          placeholder="一段话描述这个世界的核心氛围、时代、关键设定。"
+          placeholder={t("worldList.synopsisPlaceholder")}
           rows={3}
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted">纪年法（可选）</label>
+        <label className="text-xs font-medium text-muted">{t("worldList.calendarHint")}</label>
         <input
           className="input mt-1 w-full"
           value={calendarHint}
           onChange={(event) => setCalendarHint(event.target.value)}
-          placeholder="例：玄苍纪元，一年三百日，每日十二时辰"
+          placeholder={t("worldList.calendarHintPlaceholder")}
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted">封面色</label>
+        <label className="text-xs font-medium text-muted">{t("worldList.coverColor")}</label>
         <div className="mt-1 flex flex-wrap gap-1.5">
           {COVER_PALETTE.map((color) => (
             <button
@@ -217,10 +221,10 @@ function CreateWorldForm({ onDone }: { onDone: () => void }) {
       </div>
       <div className="flex justify-end gap-2">
         <button type="button" className="btn" onClick={onDone}>
-          取消
+          {t("common.cancel")}
         </button>
         <button type="submit" className="btn btn-primary" disabled={!name.trim() || create.isPending}>
-          {create.isPending ? "创建中..." : "创建世界"}
+          {create.isPending ? t("worldList.creating") : t("worldList.createWorld")}
         </button>
       </div>
     </form>

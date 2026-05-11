@@ -23,6 +23,7 @@ import {
 import { StatusPill, type PillTone } from "../components/StatusPill";
 import { useI18n } from "../i18n";
 import { queryKeys } from "../queryKeys";
+import { isSceneRoom } from "../utils/scene";
 import type { Room, World, WorldCharacter, WorldDetail, WorldSummary } from "../types";
 
 type SceneStatus = "active" | "sealed" | "frozen" | "none";
@@ -46,7 +47,7 @@ export function HomePage() {
   const sceneRooms = useMemo<Room[]>(
     () =>
       [...(rooms.data ?? [])]
-        .filter((room) => Boolean(room.world_id))
+        .filter((room) => isSceneRoom(room))
         .sort((a, b) => {
           const aT = a.last_activity_at ?? a.created_at;
           const bT = b.last_activity_at ?? b.created_at;

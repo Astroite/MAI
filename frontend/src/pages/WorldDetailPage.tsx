@@ -32,9 +32,11 @@ import type {
 } from "../types";
 import { COVER_PALETTE } from "../constants/colors";
 import { queryKeys } from "../queryKeys";
+import { useI18n } from "../i18n";
 
 export function WorldDetailPage() {
   const { worldId = "" } = useParams();
+  const { t } = useI18n();
   const world = useQuery({
     queryKey: queryKeys.world(worldId),
     queryFn: () => api.world(worldId),
@@ -103,7 +105,7 @@ export function WorldDetailPage() {
     },
     onSuccess: (created) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
-      toast.success(`已批量添加 ${created.length} 个角色，可点击编辑细节。`);
+      toast.success(t("worldDetail.batchAdded", { count: created.length }));
       setBatchPickerOpen(false);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -112,7 +114,7 @@ export function WorldDetailPage() {
   if (world.isLoading || !world.data) {
     return (
       <div className="px-6 py-10 text-center text-sm text-muted">
-        {world.isError ? "找不到这个世界。" : "加载中…"}
+        {world.isError ? t("worldDetail.loadError") : t("common.loading")}
       </div>
     );
   }
@@ -126,7 +128,7 @@ export function WorldDetailPage() {
       <div>
         <Link to="/worlds" className="inline-flex items-center gap-1 text-xs text-muted hover:text-text">
           <ArrowLeft size={12} />
-          返回世界列表
+          {t("worldDetail.backToWorlds")}
         </Link>
       </div>
 
@@ -143,8 +145,8 @@ export function WorldDetailPage() {
             <h1 className="truncate text-xl font-semibold">{data.name}</h1>
             {data.synopsis && <p className="mt-1 text-sm text-text">{data.synopsis}</p>}
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-              {data.calendar_hint && <span>纪年法：{data.calendar_hint}</span>}
-              {data.setting && <span>设定：{data.setting}</span>}
+              {data.calendar_hint && <span>{t("worldDetail.calendar", { value: data.calendar_hint })}</span>}
+              {data.setting && <span>{t("worldDetail.setting", { value: data.setting })}</span>}
             </div>
           </div>
         </div>
@@ -155,7 +157,7 @@ export function WorldDetailPage() {
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               <Users size={16} className="text-muted" />
-              角色（{activeCharacters.length}）
+              {t("worldDetail.charactersTitle", { count: activeCharacters.length })}
             </h2>
             <div className="flex items-center gap-1.5">
               <button
@@ -163,10 +165,10 @@ export function WorldDetailPage() {
                 className="btn h-8 px-3 text-xs"
                 onClick={() => setBatchPickerOpen(true)}
                 disabled={batchAdd.isPending}
-                title="一次从多个 Persona 模板批量添加角色"
+                title={t("worldDetail.batchAddTitle")}
               >
                 <Layers size={14} />
-                批量添加
+                {t("worldDetail.batchAdd")}
               </button>
               <button
                 type="button"
@@ -174,7 +176,7 @@ export function WorldDetailPage() {
                 onClick={() => setAddingCharacter((value) => !value)}
               >
                 <UserPlus size={14} />
-                {addingCharacter ? "收起" : "添加角色"}
+                {addingCharacter ? t("common.collapse") : t("worldDetail.addCharacter")}
               </button>
             </div>
           </div>
@@ -187,7 +189,7 @@ export function WorldDetailPage() {
           )}
           <ul className="divide-y divide-border">
             {characters.length === 0 && (
-              <li className="py-4 text-center text-xs text-muted">还没有角色。</li>
+              <li className="py-4 text-center text-xs text-muted">{t("worldDetail.noCharacters")}</li>
             )}
             {characters.map((character) => (
               <CharacterRow
@@ -203,8 +205,8 @@ export function WorldDetailPage() {
             open={batchPickerOpen}
             onOpenChange={setBatchPickerOpen}
             templates={aiTemplates.data ?? []}
-            title="批量从模板添加角色"
-            description="勾选多个 Persona 模板，每个会创建一个新角色（名字默认 = 模板名，可在角色卡上编辑）。"
+            title={t("worldDetail.batchPickerTitle")}
+            description={t("worldDetail.batchPickerDescription")}
             onPickMany={(picked) => batchAdd.mutate(picked)}
           />
         </section>
@@ -213,17 +215,17 @@ export function WorldDetailPage() {
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-sm font-semibold">
               <ChevronRight size={16} className="text-muted" />
-              时间线（{timeline.data?.length ?? 0} 幕）
+              {t("worldDetail.timelineTitle", { count: timeline.data?.length ?? 0 })}
             </h2>
             <button
               type="button"
               className="btn h-8 px-3 text-xs"
               onClick={() => setCreatingScene((value) => !value)}
               disabled={activeCharacters.length === 0}
-              title={activeCharacters.length === 0 ? "先添加至少一个角色" : ""}
+              title={activeCharacters.length === 0 ? t("worldDetail.needCharacterTitle") : ""}
             >
               <Plus size={14} />
-              {creatingScene ? "收起" : "新建场景"}
+              {creatingScene ? t("common.collapse") : t("worldDetail.newScene")}
             </button>
           </div>
           {creatingScene && (
@@ -235,7 +237,7 @@ export function WorldDetailPage() {
           )}
           <ul className="space-y-2">
             {(timeline.data ?? []).length === 0 && (
-              <li className="py-4 text-center text-xs text-muted">还没有场景。</li>
+              <li className="py-4 text-center text-xs text-muted">{t("worldDetail.noScenes")}</li>
             )}
             {(timeline.data ?? []).map((scene) => (
               <li
@@ -250,23 +252,23 @@ export function WorldDetailPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-medium text-muted">
-                          第 {scene.scene_index} 幕
+                          {t("worldDetail.sceneAct", { n: scene.scene_index })}
                         </span>
                         {scene.sealed_at && (
                           <span className="inline-flex items-center gap-1 text-xs text-success">
                             <Lock size={12} />
-                            已封幕
+                            {t("worldDetail.sceneSealed")}
                           </span>
                         )}
                         {scene.status === "frozen" && (
-                          <span className="text-xs text-danger">已冻结</span>
+                          <span className="text-xs text-danger">{t("worldDetail.sceneFrozen")}</span>
                         )}
                       </div>
                       <div className="mt-0.5 truncate text-sm font-medium">{scene.title}</div>
                       <div className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted">
                         {scene.in_world_time_start && <span>{scene.in_world_time_start}</span>}
-                        <span>角色 {scene.member_count}</span>
-                        <span>消息 {scene.message_count}</span>
+                        <span>{t("worldDetail.sceneCharacters", { count: scene.member_count })}</span>
+                        <span>{t("worldDetail.sceneMessages", { count: scene.message_count })}</span>
                       </div>
                     </div>
                     <ChevronRight size={16} className="text-muted" />
@@ -276,10 +278,10 @@ export function WorldDetailPage() {
                       type="button"
                       className="flex items-center gap-1 border-l border-border px-3 text-xs text-muted hover:bg-surface hover:text-text"
                       onClick={() => setInspectingScene(scene)}
-                      title="查看本幕产出的记忆与关系"
+                      title={t("worldDetail.sceneOutputTitle")}
                     >
                       <Eye size={14} />
-                      产出
+                      {t("worldDetail.sceneOutput")}
                     </button>
                   )}
                 </div>
@@ -319,12 +321,13 @@ function CharacterRow({
 }) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  const { t } = useI18n();
   const [editing, setEditing] = useState(false);
   const remove = useMutation({
     mutationFn: () => api.deleteWorldCharacter(worldId, character.id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
-      toast.message(`已退场角色「${character.name}」（保留历史记忆）。`);
+      toast.message(t("worldDetail.characterRetiredToast", { name: character.name }));
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
@@ -343,9 +346,9 @@ function CharacterRow({
               character.kind === "user" ? "text-accent" : "text-muted"
             }`}
           >
-            {character.kind === "user" ? "USER" : "AI"}
+            {character.kind === "user" ? t("worldDetail.kindUser") : t("worldDetail.kindAi")}
           </span>
-          {dim && <span className="text-xs text-muted">（已退场）</span>}
+          {dim && <span className="text-xs text-muted">{t("worldDetail.characterRetired")}</span>}
         </div>
         {character.brief && (
           <div className="truncate text-xs text-muted">{character.brief}</div>
@@ -356,7 +359,7 @@ function CharacterRow({
           <button
             type="button"
             className="btn h-9 w-9 px-0 text-muted hover:text-brand"
-            title="编辑角色档案"
+            title={t("worldDetail.characterEditTitle")}
             onClick={() => setEditing(true)}
           >
             <Pencil size={16} />
@@ -364,12 +367,12 @@ function CharacterRow({
           <button
             type="button"
             className="btn h-9 w-9 px-0 text-muted hover:text-danger"
-            title="退场（保留历史）"
+            title={t("worldDetail.characterRetireTitle")}
             onClick={async () => {
               const ok = await confirm({
-                title: `让「${character.name}」退场？`,
-                description: "角色被标记为 retired，不再出现在新场景的可选名册里，但已存在的记忆和关系卡完整保留。",
-                confirmLabel: "退场",
+                title: t("worldDetail.retireConfirmTitle", { name: character.name }),
+                description: t("worldDetail.retireConfirmDescription"),
+                confirmLabel: t("worldDetail.retireConfirmLabel"),
                 danger: true
               });
               if (ok) remove.mutate();
@@ -401,6 +404,7 @@ function AddCharacterForm({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const [kind, setKind] = useState<WorldCharacterKind>("ai");
   const [name, setName] = useState("");
   const [identity, setIdentity] = useState("");
@@ -457,7 +461,7 @@ function AddCharacterForm({
     }),
     onSuccess: (character) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
-      toast.success(`已添加角色「${character.name}」。`);
+      toast.success(t("worldDetail.characterAdded", { name: character.name }));
       setName("");
       setIdentity("");
       setBrief("");
@@ -481,7 +485,7 @@ function AddCharacterForm({
         create.mutate();
       }}
     >
-      <FormSection label="角色类型">
+      <FormSection label={t("worldDetail.characterType")}>
         <div className="flex gap-1.5 text-xs">
           <button
             type="button"
@@ -490,7 +494,7 @@ function AddCharacterForm({
             }`}
             onClick={() => setKind("ai")}
           >
-            AI 角色
+            {t("worldDetail.aiCharacter")}
           </button>
           <button
             type="button"
@@ -499,15 +503,15 @@ function AddCharacterForm({
             }`}
             onClick={() => setKind("user")}
           >
-            User 角色（玩家驱动）
+            {t("worldDetail.userCharacter")}
           </button>
         </div>
       </FormSection>
 
       {kind === "ai" && (
         <FormSection
-          label="绑定 Persona 模板"
-          hint="模板决定模型 + 基础 prompt；点击下方卡片可换模板。"
+          label={t("worldDetail.personaTemplate")}
+          hint={t("worldDetail.personaTemplateHint")}
         >
           <button
             type="button"
@@ -527,14 +531,14 @@ function AddCharacterForm({
                     <div className="truncate text-xs text-muted">{selectedTemplate.identity}</div>
                   )}
                 </div>
-                <span className="text-xs text-muted">更换</span>
+                <span className="text-xs text-muted">{t("worldDetail.changeTemplate")}</span>
               </>
             ) : (
               <>
                 <span className="grid h-8 w-8 place-items-center rounded-full bg-panel text-muted">
                   ?
                 </span>
-                <span className="text-sm text-muted">点击选择模板…</span>
+                <span className="text-sm text-muted">{t("worldDetail.pickTemplate")}</span>
               </>
             )}
           </button>
@@ -548,12 +552,12 @@ function AddCharacterForm({
         </FormSection>
       )}
 
-      <FormSection label="基础信息">
+      <FormSection label={t("worldDetail.basics")}>
         <div className="space-y-2.5">
-          <LabeledField label="角色名" required>
+          <LabeledField label={t("worldDetail.characterName")} required>
             <input
               className="input w-full"
-              placeholder="例：苏离"
+              placeholder={t("worldDetail.characterNamePlaceholder")}
               value={name}
               onChange={(event) => {
                 userEdited.current.name = true;
@@ -563,10 +567,10 @@ function AddCharacterForm({
               required
             />
           </LabeledField>
-          <LabeledField label="身份 / 称谓">
+          <LabeledField label={t("worldDetail.identity")}>
             <input
               className="input w-full"
-              placeholder="例：剑客 / 客栈老板 / 玄苍门掌门"
+              placeholder={t("worldDetail.identityPlaceholder")}
               value={identity}
               onChange={(event) => {
                 userEdited.current.identity = true;
@@ -575,10 +579,10 @@ function AddCharacterForm({
               maxLength={120}
             />
           </LabeledField>
-          <LabeledField label="简介" hint="一句话描述，每场都会进 prompt。">
+          <LabeledField label={t("worldDetail.brief")} hint={t("worldDetail.briefHint")}>
             <input
               className="input w-full"
-              placeholder="例：常年游走江湖，言语不多，剑下少有活口"
+              placeholder={t("worldDetail.briefPlaceholder")}
               value={brief}
               onChange={(event) => {
                 userEdited.current.brief = true;
@@ -591,18 +595,18 @@ function AddCharacterForm({
 
       {kind === "ai" && (
         <FormSection
-          label="内核档案"
-          hint="只对 AI 角色生效，每场都进 prompt 引导发言风格。"
+          label={t("worldDetail.coreProfile")}
+          hint={t("worldDetail.coreProfileHint")}
         >
           <div className="space-y-2.5">
             <LabeledField
-              label="Core identity"
-              hint="角色的底色与性格 / system prompt。选模板后会自动填入模板的 system prompt，可继续追加。"
+              label={t("worldDetail.coreIdentity")}
+              hint={t("worldDetail.coreIdentityHint")}
             >
               <textarea
                 className="textarea w-full"
                 rows={5}
-                placeholder="例：沉默寡言，对承诺极重；少年时曾被门派遗弃，至今不愿提起。"
+                placeholder={t("worldDetail.coreIdentityPlaceholder")}
                 value={coreIdentity}
                 onChange={(event) => {
                   userEdited.current.coreIdentity = true;
@@ -610,18 +614,18 @@ function AddCharacterForm({
                 }}
               />
             </LabeledField>
-            <LabeledField label="技能">
+            <LabeledField label={t("worldDetail.skills")}>
               <input
                 className="input w-full"
-                placeholder="例：一手「断风式」，可以一击两丈"
+                placeholder={t("worldDetail.skillsPlaceholder")}
                 value={skillsText}
                 onChange={(event) => setSkillsText(event.target.value)}
               />
             </LabeledField>
-            <LabeledField label="当前目标">
+            <LabeledField label={t("worldDetail.currentGoal")}>
               <input
                 className="input w-full"
-                placeholder="例：寻找当年仇家，但不愿牵连客栈众人"
+                placeholder={t("worldDetail.currentGoalPlaceholder")}
                 value={goalsText}
                 onChange={(event) => setGoalsText(event.target.value)}
               />
@@ -630,7 +634,7 @@ function AddCharacterForm({
         </FormSection>
       )}
 
-      <FormSection label="外观色">
+      <FormSection label={t("worldDetail.appearanceColor")}>
         <div className="flex flex-wrap gap-1.5">
           {COVER_PALETTE.map((value) => (
             <button
@@ -649,14 +653,14 @@ function AddCharacterForm({
 
       <div className="flex justify-end gap-2 border-t border-border pt-3">
         <button type="button" className="btn" onClick={onDone}>
-          取消
+          {t("common.cancel")}
         </button>
         <button
           type="submit"
           className="btn btn-primary"
           disabled={!canSubmit || create.isPending}
         >
-          {create.isPending ? "添加中..." : "添加角色"}
+          {create.isPending ? t("worldDetail.adding") : t("worldDetail.addCharacter")}
         </button>
       </div>
     </form>
@@ -720,6 +724,7 @@ function EditCharacterDialog({
   worldHasActivity: boolean;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const [name, setName] = useState(character.name);
   const [identity, setIdentity] = useState(character.identity);
   const [brief, setBrief] = useState(character.brief);
@@ -754,7 +759,7 @@ function EditCharacterDialog({
     }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.world(worldId) });
-      toast.success(`已更新角色「${name.trim() || character.name}」。`);
+      toast.success(t("worldDetail.characterUpdated", { name: name.trim() || character.name }));
       onOpenChange(false);
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -773,7 +778,7 @@ function EditCharacterDialog({
               <PersonaIcon icon={character.icon} color={color} size={36} />
               <div className="min-w-0">
                 <Dialog.Title className="truncate text-base font-semibold text-text">
-                  编辑角色档案
+                  {t("worldDetail.editCharacterProfile")}
                 </Dialog.Title>
                 <Dialog.Description className="truncate text-xs text-muted">
                   {character.name}
@@ -785,7 +790,7 @@ function EditCharacterDialog({
               <button
                 type="button"
                 className="grid h-8 w-8 place-items-center rounded text-muted hover:bg-surface hover:text-text"
-                aria-label="关闭"
+                aria-label={t("common.close")}
               >
                 <X size={16} />
               </button>
@@ -812,17 +817,17 @@ function EditCharacterDialog({
               <AlertTriangle size={14} className="mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <div className="font-medium">
-                  {worldHasActivity ? "本世界已有活跃 / 封幕场景，请慎重" : "修改后立即生效"}
+                  {worldHasActivity ? t("worldDetail.editRiskActiveTitle") : t("worldDetail.editRiskSafeTitle")}
                 </div>
                 <div className="mt-0.5 leading-relaxed">
-                  改动只影响**下一幕**的 prompt，不会回写已经写入的 episodic / 关系卡。已封幕的场景里，AI 留下的记忆是基于旧的角色档案产出的——大幅修改 core identity 可能让前后剧情变得不连贯。
+                  {t("worldDetail.editRiskDescription")}
                 </div>
               </div>
             </div>
 
-            <FormSection label="基础信息">
+            <FormSection label={t("worldDetail.basics")}>
               <div className="space-y-2.5">
-                <LabeledField label="角色名" required>
+                <LabeledField label={t("worldDetail.characterName")} required>
                   <input
                     className="input w-full"
                     value={name}
@@ -831,7 +836,7 @@ function EditCharacterDialog({
                     required
                   />
                 </LabeledField>
-                <LabeledField label="身份 / 称谓">
+                <LabeledField label={t("worldDetail.identity")}>
                   <input
                     className="input w-full"
                     value={identity}
@@ -839,7 +844,7 @@ function EditCharacterDialog({
                     maxLength={120}
                   />
                 </LabeledField>
-                <LabeledField label="简介" hint="一句话描述，每场都会进 prompt。">
+                <LabeledField label={t("worldDetail.brief")} hint={t("worldDetail.briefHint")}>
                   <input
                     className="input w-full"
                     value={brief}
@@ -851,11 +856,11 @@ function EditCharacterDialog({
 
             {isAi && (
               <FormSection
-                label="内核档案"
-                hint="改动 core identity 是影响最大的字段——AI 后续发言风格会以新版本为准。"
+                label={t("worldDetail.coreProfile")}
+                hint={t("worldDetail.coreProfileEditHint")}
               >
                 <div className="space-y-2.5">
-                  <LabeledField label="Core identity">
+                  <LabeledField label={t("worldDetail.coreIdentity")}>
                     <textarea
                       className="textarea w-full"
                       rows={4}
@@ -863,14 +868,14 @@ function EditCharacterDialog({
                       onChange={(event) => setCoreIdentity(event.target.value)}
                     />
                   </LabeledField>
-                  <LabeledField label="技能">
+                  <LabeledField label={t("worldDetail.skills")}>
                     <input
                       className="input w-full"
                       value={skillsText}
                       onChange={(event) => setSkillsText(event.target.value)}
                     />
                   </LabeledField>
-                  <LabeledField label="当前目标">
+                  <LabeledField label={t("worldDetail.currentGoal")}>
                     <input
                       className="input w-full"
                       value={goalsText}
@@ -881,7 +886,7 @@ function EditCharacterDialog({
               </FormSection>
             )}
 
-            <FormSection label="外观色">
+            <FormSection label={t("worldDetail.appearanceColor")}>
               <div className="flex flex-wrap gap-1.5">
                 {COVER_PALETTE.map((value) => (
                   <button
@@ -902,7 +907,7 @@ function EditCharacterDialog({
           <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
             <Dialog.Close asChild>
               <button type="button" className="btn">
-                取消
+                {t("common.cancel")}
               </button>
             </Dialog.Close>
             <button
@@ -911,7 +916,7 @@ function EditCharacterDialog({
               disabled={!canSubmit || update.isPending}
               onClick={() => update.mutate()}
             >
-              {update.isPending ? "保存中..." : "保存"}
+              {update.isPending ? t("worldDetail.saving") : t("common.save")}
             </button>
           </div>
         </Dialog.Content>
@@ -930,6 +935,7 @@ function CreateSceneForm({
   onDone: () => void;
 }) {
   const queryClient = useQueryClient();
+  const { t } = useI18n();
   const [title, setTitle] = useState("");
   const [background, setBackground] = useState("");
   const [timeStart, setTimeStart] = useState("");
@@ -958,7 +964,7 @@ function CreateSceneForm({
       // Story-world scenes intentionally don't yank the user into the
       // discussion-room shell — the timeline is the source of truth and the
       // user can pick when to drop into the scene from the new card.
-      toast.success(`已创建第 ${state.room.scene_index} 幕，可在时间线点击进入。`);
+      toast.success(t("worldDetail.sceneCreated", { n: state.room.scene_index }));
       onDone();
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -975,7 +981,7 @@ function CreateSceneForm({
     >
       <input
         className="input w-full"
-        placeholder="标题（如：第一幕：相遇）"
+        placeholder={t("worldDetail.sceneTitlePlaceholder")}
         value={title}
         onChange={(event) => setTitle(event.target.value)}
         required
@@ -983,26 +989,26 @@ function CreateSceneForm({
       <textarea
         className="textarea w-full"
         rows={2}
-        placeholder="场景背景（黄昏的酒馆，烛光摇曳…）"
+        placeholder={t("worldDetail.sceneBackgroundPlaceholder")}
         value={background}
         onChange={(event) => setBackground(event.target.value)}
       />
       <div className="grid gap-2 sm:grid-cols-2">
         <input
           className="input"
-          placeholder="故事内时间（如：第七日 黄昏）"
+          placeholder={t("worldDetail.sceneTimePlaceholder")}
           value={timeStart}
           onChange={(event) => setTimeStart(event.target.value)}
         />
         <input
           className="input"
-          placeholder="时长（如：约一个时辰）"
+          placeholder={t("worldDetail.sceneDurationPlaceholder")}
           value={duration}
           onChange={(event) => setDuration(event.target.value)}
         />
       </div>
       <div>
-        <label className="text-xs font-medium text-muted">在场角色（至少 1 个）</label>
+        <label className="text-xs font-medium text-muted">{t("worldDetail.sceneRoster")}</label>
         <ul className="mt-1 space-y-1">
           {characters.map((character) => {
             const checked = selected.has(character.id);
@@ -1025,7 +1031,7 @@ function CreateSceneForm({
                     <span className="text-xs text-muted">（{character.identity}）</span>
                   )}
                   <span className="ml-auto text-xs text-muted">
-                    {character.kind === "user" ? "USER" : "AI"}
+                    {character.kind === "user" ? t("worldDetail.kindUser") : t("worldDetail.kindAi")}
                   </span>
                 </label>
               </li>
@@ -1035,14 +1041,14 @@ function CreateSceneForm({
       </div>
       <div className="flex justify-end gap-2">
         <button type="button" className="btn h-8 text-xs" onClick={onDone}>
-          取消
+          {t("common.cancel")}
         </button>
         <button
           type="submit"
           className="btn btn-primary h-8 text-xs"
           disabled={!canSubmit || create.isPending}
         >
-          {create.isPending ? "创建中..." : "创建并进入"}
+          {create.isPending ? t("worldDetail.creating") : t("worldDetail.createAndEnter")}
         </button>
       </div>
     </form>
