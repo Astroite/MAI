@@ -16,6 +16,14 @@ import { WorldListPage } from "./pages/WorldListPage";
 import { WorldDetailPage } from "./pages/WorldDetailPage";
 import { useI18n } from "./i18n";
 import { queryKeys } from "./queryKeys";
+import { toast } from "./components/Toaster";
+import {
+  installFrontendLogHooks,
+  isTauriRuntime,
+  openDesktopLogDir,
+  writeFrontendLog,
+  type BackendErrorPayload
+} from "./utils/desktopDiagnostics";
 
 export function App() {
   const dark = useUIStore((state) => state.dark);
@@ -30,6 +38,7 @@ export function App() {
       <AppRail />
       <div className="flex min-w-0 flex-1 flex-col">
         <UpdateBanner />
+        <DesktopDiagnosticsBanner />
         <SetupBanner />
         {inRoomView ? (
           <main className="flex min-h-0 flex-1 flex-col">
@@ -54,6 +63,66 @@ export function App() {
             </div>
           </main>
         )}
+      </div>
+    </div>
+  );
+}
+
+function DesktopDiagnosticsBanner() {
+  const { t } = useI18n();
+  const [backendError, setBackendError] = useState<BackendErrorPayload | null>(null);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    installFrontendLogHooks();
+
+    const startupError = window.__MAI_BACKEND_STARTUP_ERROR__;
+    if (startupError) {
+      setBackendError({ message: startupError, log_dir: window.__MAI_LOG_DIR__ });
+      toast.error(t("desktop.backendStartupFailed"));
+    }
+
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void import("@tauri-apps/api/event").then(({ listen }) =>
+      listen<BackendErrorPayload>("mai://backend-terminated", (event) => {
+        if (cancelled) return;
+        setBackendError(event.payload);
+        toast.error(t("desktop.backendTerminated"));
+      }).then((fn) => {
+        if (cancelled) fn();
+        else unlisten = fn;
+      })
+    ).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      void writeFrontendLog(`backend termination listener failed: ${message}`).catch(() => undefined);
+    });
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [t]);
+
+  const handleOpenLogs = useCallback(async () => {
+    try {
+      await openDesktopLogDir();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("desktop.openLogsFailed"));
+    }
+  }, [t]);
+
+  if (!backendError) return null;
+
+  return (
+    <div className="border-b border-danger/30 bg-danger/10 px-4 py-2 text-sm text-danger">
+      <div className="mx-auto flex max-w-[1500px] flex-wrap items-center gap-3">
+        <AlertTriangle size={14} className="shrink-0" />
+        <span className="min-w-0 flex-1 break-words">
+          {t("desktop.backendError", { message: backendError.message })}
+        </span>
+        <button className="btn btn-sm shrink-0" type="button" onClick={handleOpenLogs}>
+          {t("desktop.openLogs")}
+        </button>
       </div>
     </div>
   );

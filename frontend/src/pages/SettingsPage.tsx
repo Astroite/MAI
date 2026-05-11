@@ -7,6 +7,7 @@ import {
   CheckCircle2,
   Database,
   Download,
+  FolderOpen,
   RefreshCw,
   Save,
   Server,
@@ -23,6 +24,7 @@ import { useI18n } from "../i18n";
 import { queryKeys } from "../queryKeys";
 import { useUIStore } from "../store";
 import { apiModelFullLabel, renderApiModelOptions } from "../utils/modelLabels";
+import { getDesktopLogDir, isTauriRuntime, openDesktopLogDir } from "../utils/desktopDiagnostics";
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, refetchInterval: 10000 });
@@ -298,6 +300,26 @@ function DebugSection() {
   const { t } = useI18n();
   const showApiErrorDetail = useUIStore((s) => s.showApiErrorDetail);
   const setShowApiErrorDetail = useUIStore((s) => s.setShowApiErrorDetail);
+  const isTauri = isTauriRuntime();
+  const [logDir, setLogDir] = useState<string | null>(null);
+  const [openingLogs, setOpeningLogs] = useState(false);
+
+  useEffect(() => {
+    if (!isTauri) return;
+    void getDesktopLogDir().then(setLogDir).catch(() => setLogDir(null));
+  }, [isTauri]);
+
+  const handleOpenLogs = async () => {
+    setOpeningLogs(true);
+    try {
+      await openDesktopLogDir();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t("desktop.openLogsFailed"));
+    } finally {
+      setOpeningLogs(false);
+    }
+  };
+
   return (
     <SectionCard title={t("settings.debug")} icon={<Bug size={14} />} tone="info">
       <p className="text-xs text-muted">{t("settings.debugHelp")}</p>
@@ -313,6 +335,26 @@ function DebugSection() {
           <span className="block text-xs text-muted">{t("settings.showApiErrorDetailHelp")}</span>
         </span>
       </label>
+      {isTauri && (
+        <div className="mt-4 rounded-md border border-border bg-surface p-3">
+          <div className="text-sm font-medium text-text">{t("desktop.logs")}</div>
+          <p className="mt-1 text-xs text-muted">{t("desktop.logsHelp")}</p>
+          {logDir && (
+            <p className="mt-2 break-all text-xs text-muted">
+              {t("desktop.logDir", { path: logDir })}
+            </p>
+          )}
+          <button
+            type="button"
+            className="btn mt-3 h-8 px-3 text-xs"
+            onClick={handleOpenLogs}
+            disabled={openingLogs}
+          >
+            {openingLogs ? <RefreshCw size={14} className="animate-spin" /> : <FolderOpen size={14} />}
+            {t("desktop.openLogs")}
+          </button>
+        </div>
+      )}
     </SectionCard>
   );
 }
