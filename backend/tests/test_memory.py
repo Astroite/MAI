@@ -2,7 +2,7 @@
 
 The LLM-driven scene-end memory scribe is exercised manually with the paid
 test model — these tests cover the deterministic parts: manual writes,
-listing order, deletion, and the `_compose_scene_persona_prompt` injection
+listing order, deletion, and the `compose_scene_persona_prompt` injection
 path that pulls top-K memories into a fresh scene.
 """
 
