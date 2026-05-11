@@ -1,6 +1,6 @@
 # MAI 文档地图
 
-> 当前文档结构整理于 2026-05-11。阅读顺序：产品语义先看 `product/`，实现约束再看 `architecture/`，运行发布看 `ops/`。
+> 当前文档结构整理于 2026-05-12。阅读顺序：产品语义先看 `product/`，实现约束再看 `architecture/`，运行发布看 `ops/`。
 
 ## 现行文档
 
@@ -10,11 +10,13 @@
 | `product/story_world.md` | Story World / Scene / Character / Memory 子系统 | 改世界、场景、角色记忆时必须同步 |
 | `product/personas.md` | 内置 persona taxonomy 与扩展规则 | 改 `seed.py` 内置人设时同步 |
 | `architecture/technical_design.md` | 后端/前端契约、引擎不变量、schema 迁移策略 | 改 runtime、API contract、schema 时必须同步 |
+| `architecture/append_only_boundaries.md` | 数据模型 append-only 与 mutable 边界定义 | 改表的只读/可写属性时同步 |
+| `architecture/known_provider_quirks.md` | LLM provider 兼容性 workaround 清单 | 改 LLM 调用降级逻辑时同步 |
+| `architecture/schema_history.md` | 迁移历史、_ADDED_COLUMNS 清单、迁移删除规则 | 新增/删除迁移或自愈列时同步 |
 | `ops/usage.md` | 本地运行、配置、常用流程、验证命令 | 改启动、配置、常用操作时同步 |
 | `ops/desktop_tauri.md` | Tauri 桌面壳打包与诊断 | 改桌面打包、sidecar、日志策略时同步 |
 | `design/ui_brief.md` | 当前视觉方向约束 | 改设计系统、页面视觉语言时同步 |
 | `status.md` | 模块状态快照 | 每个阶段性合入后刷新 |
-| `engineering/` | 重构复盘、工程问题清单、决策记录 | 用于记录跨模块风险和后续约束 |
 
 ## 归档文档
 
@@ -24,6 +26,14 @@
 
 - `archive/design-concepts/room-workspace/`：早期讨论室 UI 概念图。
 - `archive/design-concepts/storyworld-home/`：Story World 首页改造 prompt 和概念图。
+- `archive/mai_next_phase_iteration_plan.md`：下一阶段产品与工程迭代规划，已执行完毕。
+- `archive/engineering/refactor_issues_2026-05-11.md`：2026-05-11 重构复盘，问题已落地。
+
+## 审计快照
+
+`review/` 下按日期存放架构审计报告，是某一时间点的系统健康快照，不作为持续维护的 source-of-truth。
+
+- `review/2026-05-12/`：五部分架构审计（架构地图、胶水兼容、契约一致性、状态机、Story World 边界）+ 执行计划。
 
 ## 维护规则
 
