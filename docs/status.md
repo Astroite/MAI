@@ -122,6 +122,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 同标签 phase 改写 silent 提示：原 casual_chat 的"没话就 silent"换成"用一句台词或动作维持存在感"，避免一房间全部 `<silent/>`。
 - `llm.py::_build_messages` 加入多 AI peer 路由：当前发言人之外的角色历史发言改写成 `user` + `「Name」: ` 前缀，并向 system prompt 注入"你只是 X 一个人"硬约束，根治"剑客代写刀客台词"那种全知叙述者退化。
 - `engine.py` 新增 `is_autodrive_active` / `schedule_autodrive`；`POST /rooms/{id}/autodrive/resume` 端点让用户不发消息也能让 AI 接力。
+- `POST /rooms/{id}/pause` 提供 graceful pause：故事模式里等当前角色说完再冻结；顶部 Freeze 仍是强制截断当前 in-flight。
 - `RoomRuntimeOut` 暴露 `autodrive_active` 和 `current_speakers`，前端 `SpeakerStateBar` 据此显示 4 态。
 
 ### 3.6 人设主题色与视觉一致性

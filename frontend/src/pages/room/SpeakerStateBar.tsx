@@ -21,6 +21,9 @@ import { toast } from "../../components/Toaster";
  *                  speaker — between turns, lock held)
  *   - idle       : muted dot + "等待中" + a "▶ 让 AI 继续" button so the
  *                  user can nudge without typing
+ *
+ * The Pause action is graceful: it lets the active persona finish, then
+ * freezes the room so autodrive cannot schedule the next speaker.
  */
 export function SpeakerStateBar({
   roomId,
@@ -59,8 +62,8 @@ export function SpeakerStateBar({
     onError: (err) =>
       toast.error(err instanceof Error ? err.message : t("speaker.resumeFailed"))
   });
-  const freeze = useMutation({
-    mutationFn: () => api.freeze(roomId),
+  const pause = useMutation({
+    mutationFn: () => api.pause(roomId),
     onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
   const unfreeze = useMutation({
@@ -127,8 +130,8 @@ export function SpeakerStateBar({
           <button
             className="btn h-7 px-2"
             type="button"
-            onClick={() => freeze.mutate()}
-            disabled={freeze.isPending}
+            onClick={() => pause.mutate()}
+            disabled={pause.isPending}
             title={t("speaker.pauseTitle")}
           >
             <Pause size={12} />

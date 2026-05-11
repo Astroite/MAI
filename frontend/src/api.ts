@@ -298,6 +298,7 @@ export const api = {
       body: JSON.stringify({ is_locked })
     }),
   freeze: (roomId: string) => request<RoomState>(`/rooms/${roomId}/freeze`, { method: "POST" }),
+  pause: (roomId: string) => request<RoomState>(`/rooms/${roomId}/pause`, { method: "POST" }),
   unfreeze: (roomId: string) => request<RoomState>(`/rooms/${roomId}/unfreeze`, { method: "POST" }),
   resumeAutodrive: (roomId: string) =>
     request<{ status: "scheduled" | "skipped"; reason?: string | null; active: boolean }>(

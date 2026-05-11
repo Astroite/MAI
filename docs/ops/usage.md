@@ -172,20 +172,20 @@ persona_instance.api_model_id
 2. 在房间中发送用户消息，或上传 MD/TXT/PDF 文档。
 3. 后端根据当前阶段规则选择下一位 AI 发言者。
 4. `parallel` 阶段会同时启动多个模型调用；普通阶段每次只有一个 in-flight 调用。
-5. 消息列表上方的**发言状态条**会实时显示运行时状态（frozen / speaking / scheduling / idle）和当前发言人。idle 时点 「让 AI 继续」 即可不发消息也让 AI 接力（背后调 `POST /rooms/{id}/autodrive/resume`）。
+5. 消息列表上方的**发言状态条**会实时显示运行时状态（frozen / speaking / scheduling / idle）和当前发言人。idle 时点 「让 AI 继续」 即可不发消息也让 AI 接力（背后调 `POST /rooms/{id}/autodrive/resume`）。状态条里的「暂停」会等当前角色说完后冻结房间；顶部「冻结」会立即截断当前发言。
 6. 右侧面板可查看阶段、书记官状态、主持信号、裁决、限额、上传和子讨论。
 7. 阶段满足退出条件后，横幅会提示进入下一阶段、继续讨论或再来一回合。
 8. Judge 模式可写入裁决或标记死路；撤销裁决也是追加消息，不会修改历史。
 9. 群友发言模式可用临时昵称投放观点，必要时再揭示。
 10. 子讨论可隔离争议点，结束后合并回父讨论。
-11. Freeze 会取消当前 in-flight 调用并冻结房间，Unfreeze 后可继续。
+11. Freeze 会取消当前 in-flight 调用并冻结房间，Unfreeze 后可继续；Pause 会先停止后续 autodrive，等当前角色自然完成后再进入冻结态。
 
 ### 5.1 故事模式
 
 新建房间时格式选 「故事模式」（内置 `story_format`），加几个想看演的角色（可以用 AI 起草做剧本人物）。
 
 特点：
-- 单 phase 永不自动结束，由用户喊停（freeze）。
+- 单 phase 永不自动结束，由用户喊停（pause 或 freeze）。
 - AI 持续接力到 `max_consecutive_ai_turns`（默认 10，可在右侧「限额」面板拉到 30–100）、token 上限或冻结。
 - 每个角色只演自己一个，不替别人写台词。多 AI 房间下后端会自动重写历史角色消息为 `user + 「Name」: `，避免一个 AI 把整段故事都讲完。
 - 想让某角色更主动开口，调高他人设的「健谈度」滑块。

@@ -34,6 +34,7 @@ from .engine import (
     freeze_room,
     is_autodrive_active,
     is_scene_room,
+    pause_room,
     run_manual_facilitator_eval,
     run_room_turn,
     run_scene_memory_scribe,
@@ -1866,6 +1867,13 @@ async def freeze(room_id: str, session: AsyncSession = Depends(get_session)):
     return await _room_state(session, room_id)
 
 
+@app.post("/rooms/{room_id}/pause", response_model=RoomState)
+async def pause(room_id: str, session: AsyncSession = Depends(get_session)):
+    await pause_room(session, room_id)
+    await session.commit()
+    return await _room_state(session, room_id)
+
+
 @app.delete("/rooms/{room_id}")
 async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)):
     """Hard-delete a room and all of its dependents. Cancels any in-flight
@@ -1877,7 +1885,7 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     # before issuing DELETEs. This lets background tasks release DB sessions
     # and avoids racing SQLite write locks.
     await drain_active_calls(room_id, "room_deleted")
-    clear_autodrive_lock(room_id)
+    clear_autodrive_lock(room_id, clear_stop=True)
     # Order matters: clear children before parents to satisfy FKs even when
     # ON DELETE CASCADE isn't declared.
     from .models import (
@@ -3015,7 +3023,7 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     if scene.sealed_at is not None:
         return scene
     await drain_active_calls(room_id, "scene_sealed")
-    clear_autodrive_lock(room_id)
+    clear_autodrive_lock(room_id, clear_stop=True)
     scene.sealed_at = datetime.now(timezone.utc)
     await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
     # Hold the sealed_at write so even if the scribe crashes, the seal sticks.

@@ -54,7 +54,7 @@ Autodrive lock 也是进程内状态：`_AUTODRIVE_LOCKS` 只负责单进程内�
 dict[room_id, dict[message_id, InFlightCall]]
 ```
 
-普通阶段同一房间只允许一个 in-flight 调用；`parallel` 阶段可以注册多个 message-scoped 调用。`freeze_room` 会取消该房间所有 active calls，并把 partial 保存为 truncated message。
+普通阶段同一房间只允许一个 in-flight 调用；`parallel` 阶段可以注册多个 message-scoped 调用。`freeze_room` 会取消该房间所有 active calls，并把 partial 保存为 truncated message；`pause_room` 不取消 active calls，而是阻止 autodrive 续排并等待当前调用自然完成。
 
 ### 2.4 说话人由调度器选择
 
@@ -189,7 +189,7 @@ persona_instance.api_model_id
 - account daily/monthly budget
 - phase exit suggestion 状态
 - consecutive AI turn 计数
-- `autodrive_active`：autodrive 链是否正在跑（由 `is_autodrive_active(room_id)` 实时填充，不持久化）
+- `autodrive_active`：autodrive 链是否正在跑（由 `is_autodrive_active(room_id)` 实时填充，不持久化；pause / freeze 会请求当前 runner 停在本轮之后）
 - `current_speakers`：当前 in-flight 调用的 persona id 列表（包括 LLM 已调用但还没产出第一个 chunk 的瞬间）
 
 `PersonaTemplate` / `PersonaInstance` 上额外携带 `color`（`#rrggbb`）和 `icon`（lucide 图标名，必须从 `schemas.PERSONA_ICON_NAMES` 枚举里挑），用于前端 `PersonaIcon` 组件渲染头像和状态条着色。
@@ -404,7 +404,7 @@ chunk 空闲超时默认 30 秒，记录为 `truncated_reason="timeout"`。
 
 `InFlightCall.cancel()` 只是 fire-and-forget 给 task 发 `CancelledError`；信号要等 task 走到下一个 await（通常是 LLM 流的下一个 chunk）才生效。所以 `delete_room` 在调用 cancel 之后会 `asyncio.gather(*tasks, return_exceptions=True)` 等所有被取消的 task 真正退出，再开始 DELETE，避免和后台任务的写事务抢 SQLite 写锁。
 
-`freeze_room` 和 `delete_room` 共用 `engine.drain_active_calls(room_id, reason)`：先取消并等待当前 room 的所有 in-flight task 完成，让 partial/truncated message 语义保持 append-only，再继续写冻结状态或删除数据。用户消息只会触发一轮自动回复，避免 AI 回复继续自触发；`POST /rooms/{id}/autodrive/resume` 才会按 `auto_discuss` 连续推进。resume 返回 `scheduled` 或 `skipped`，skipped 会带 `locked`、`frozen`、`in_flight`、`no_available_speaker`、`phase_not_auto`、`exit_condition_met`、`token_budget_exceeded` 等原因。
+`freeze_room` 会先请求 autodrive runner 停止并取消/等待当前 room 的所有 in-flight task 完成，让 partial/truncated message 语义保持 append-only，再继续写冻结状态。`pause_room` 只请求 runner 停止，不取消 active call；它等待当前角色自然完成并追加完整消息后，再把房间置为 frozen。`delete_room` 仍会取消 in-flight task 后再删除数据。用户消息只会触发一轮自动回复，避免 AI 回复继续自触发；`POST /rooms/{id}/autodrive/resume` 才会按 `auto_discuss` 连续推进。resume 返回 `scheduled` 或 `skipped`，skipped 会带 `locked`、`frozen`、`in_flight`、`no_available_speaker`、`phase_not_auto`、`exit_condition_met`、`token_budget_exceeded` 等原因。
 
 ### 6.6 LLM 调用兼容性
 
@@ -552,6 +552,7 @@ UI 文案和内部枚举显示应使用 i18n；用户内容和模板数据本身
 房间运行时与发言状态：
 
 - `POST /rooms/{room_id}/autodrive/resume`：手动启动 autodrive 链（已在跑或有 in-flight 调用时 no-op）
+- `POST /rooms/{room_id}/pause`：graceful pause，等当前角色说完后冻结房间；不同于 `freeze`，不会截断当前发言
 - `RoomRuntimeOut.autodrive_active` / `current_speakers`
 - `RoomCreate.initial_message`
 - `MessageOut.tool_invocation`
