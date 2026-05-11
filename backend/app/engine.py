@@ -349,6 +349,9 @@ async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
     runtime = await session.get(RoomRuntimeState, room_id)
     if runtime is None or runtime.frozen:
         return False
+    room = await session.get(Room, room_id)
+    if room is None or room.sealed_at is not None:
+        return False
     phase = await get_current_phase(session, runtime)
     template = await get_phase_template(session, phase)
     if template is None or not template.auto_discuss:
@@ -366,7 +369,6 @@ async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
         p = CASUAL_CONTINUATION_BASE * (CASUAL_CONTINUATION_DECAY ** runtime.consecutive_ai_turns)
         if random.random() > p:
             return False
-    room = await session.get(Room, room_id)
     if room and await check_phase_exit(session, room, runtime, emit=False):
         return False
     return True
@@ -442,11 +444,8 @@ async def _maybe_handle_pending_user_turn(room_id: str) -> None:
         return
     async with SessionLocal() as session:
         runtime = await session.get(RoomRuntimeState, room_id)
-        if runtime is None or runtime.frozen:
-            clear_autodrive_lock(room_id)
-            return
         room = await session.get(Room, room_id)
-        if room is not None and room.sealed_at is not None:
+        if runtime is None or runtime.frozen or room is None or room.sealed_at is not None:
             clear_autodrive_lock(room_id)
             return
         latest = await session.scalar(
@@ -911,6 +910,8 @@ async def run_room_turn(
     runtime = await session.get(RoomRuntimeState, room_id)
     if room is None or runtime is None:
         raise ValueError("room not found")
+    if room.sealed_at is not None:
+        return []
     result = await pick_next_speaker(session, room, runtime, requested_persona_id)
     await trace_record(
         session,

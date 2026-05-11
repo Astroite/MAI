@@ -1,6 +1,6 @@
 # 项目进度与状态快照
 
-> 最近更新：2026-05-10
+> 最近更新：2026-05-11
 > 基线文档：[`product/product_design.md`](product/product_design.md) / [`architecture/technical_design.md`](architecture/technical_design.md)。Story World 子产品见 [`product/story_world.md`](product/story_world.md)。
 
 ## 1. 总览
@@ -173,6 +173,12 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 修复 Scene 内残留的 Room scribe 渗透（`run_scribe_update` 在 `world_id IS NOT NULL` 时早退）。
 - 人设模板选择从原 `<select>` 换成可搜索 picker，自动回填字段。
 - **Scene-end inspector** 对话框：封幕后逐角色查看本幕产出的 episodic / impressions / vows，必要时重跑。
+
+### 3.12 文档结构整理
+
+- 新增 `docs/README.md` 作为文档地图，明确现行 source-of-truth、工程复盘和归档区边界。
+- 新增 `docs/engineering/refactor_issues_2026-05-11.md`，记录本轮重构暴露的 pause / freeze、runtime 多源状态、Story World 语义继承和文档过期问题。
+- 将早期 UI 概念图和一次性 Story World 首页实现 prompt 归档到 `docs/archive/design-concepts/`；`docs/design/` 只保留当前视觉规范 `ui_brief.md`。
 
 ## 4. 后端完成点
 

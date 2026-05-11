@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Pause, Play, Snowflake, Sparkles, Square } from "lucide-react";
+import { Loader2, Lock, Pause, Play, Snowflake, Sparkles, Square } from "lucide-react";
 import { api } from "../../api";
 import type { PersonaInstance, Runtime } from "../../types";
 import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../../components/PersonaIcon";
@@ -13,6 +13,7 @@ import { toast } from "../../components/Toaster";
  * Live status strip above the message list — answers "what is the room doing
  * right now?" at a glance:
  *
+ *   - sealed     : green lock, "已封幕"
  *   - frozen     : red snowflake, "已冻结"
  *   - streaming  : the speaker's persona icon + name + "正在说话…"
  *   - thinking   : the speaker's persona icon + name + "思考中…" (LLM call
@@ -29,12 +30,14 @@ export function SpeakerStateBar({
   roomId,
   runtime,
   personas,
-  frozen
+  frozen,
+  sealed = false
 }: {
   roomId: string;
   runtime: Runtime;
   personas: PersonaInstance[];
   frozen: boolean;
+  sealed?: boolean;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -72,13 +75,15 @@ export function SpeakerStateBar({
   });
 
   // Resolve the displayed state once so styling and labels stay aligned.
-  const state: "frozen" | "speaking" | "scheduling" | "idle" = frozen
-    ? "frozen"
-    : speakers.length > 0
-      ? "speaking"
-      : runtime.autodrive_active
-        ? "scheduling"
-        : "idle";
+  const state: SpeakerState = sealed
+    ? "sealed"
+    : frozen
+      ? "frozen"
+      : speakers.length > 0
+        ? "speaking"
+        : runtime.autodrive_active
+          ? "scheduling"
+          : "idle";
 
   // Choose tone via a CSS variable on the strip — keeps the layout stable
   // across states while the accent color tracks the current speaker.
@@ -91,7 +96,9 @@ export function SpeakerStateBar({
   return (
     <div
       className={`flex flex-shrink-0 items-center justify-between gap-3 border-y px-5 py-2 text-xs ${
-        state === "frozen"
+        state === "sealed"
+          ? "border-success/30 bg-success/5"
+          : state === "frozen"
           ? "border-danger/30 bg-danger/5"
           : state === "scheduling"
             ? "border-brand/30 bg-brand/5"
@@ -109,7 +116,7 @@ export function SpeakerStateBar({
 
       <div className="flex flex-shrink-0 items-center gap-2">
         {/* Chain counter shown whenever we're driving (not frozen, not idle). */}
-        {state !== "frozen" && cap > 0 && (
+        {state !== "sealed" && state !== "frozen" && cap > 0 && (
           <span className="hidden text-muted sm:inline" title={t("speaker.chainHint")}>
             {t("speaker.chain", { used: consecutive, max: cap })}
           </span>
@@ -175,8 +182,18 @@ function resumeSkipReasonKey(reason?: string | null) {
   }
 }
 
-function StateIndicator({ state }: { state: "frozen" | "speaking" | "scheduling" | "idle" }) {
+type SpeakerState = "sealed" | "frozen" | "speaking" | "scheduling" | "idle";
+
+function StateIndicator({ state }: { state: SpeakerState }) {
   const { t } = useI18n();
+  if (state === "sealed") {
+    return (
+      <StatusPill tone="success" dot>
+        <Lock size={12} className="-ml-0.5" />
+        {t("speaker.state.sealed")}
+      </StatusPill>
+    );
+  }
   if (state === "frozen") {
     return (
       <StatusPill tone="danger" dot>
@@ -217,10 +234,13 @@ function SpeakerPreview({
   speakers,
   t
 }: {
-  state: "frozen" | "speaking" | "scheduling" | "idle";
+  state: SpeakerState;
   speakers: PersonaInstance[];
   t: ReturnType<typeof useI18n>["t"];
 }) {
+  if (state === "sealed") {
+    return <span className="truncate text-muted">{t("speaker.sealedHint")}</span>;
+  }
   if (state === "frozen") {
     return <span className="truncate text-muted">{t("speaker.frozenHint")}</span>;
   }

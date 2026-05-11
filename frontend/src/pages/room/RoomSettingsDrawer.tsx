@@ -36,6 +36,7 @@ export function RoomSettingsDrawer({
   const { t } = useI18n();
   const settingsParam = params.get("settings");
   const open = settingsParam !== null;
+  const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
   const tab: TabKey = useMemo(() => {
     const candidate = settingsParam as TabKey | null;
     return TABS.some((entry) => entry.key === candidate) ? (candidate as TabKey) : "phase";
@@ -97,30 +98,30 @@ export function RoomSettingsDrawer({
         </nav>
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {tab === "phase" && <PhasePlanPanel state={state} />}
-          {tab === "limits" && <LimitPanel roomId={state.room.id} runtime={state.runtime} />}
+          {tab === "limits" && <LimitPanel roomId={state.room.id} runtime={state.runtime} readOnly={readOnly} />}
           {tab === "scribe" && <ScribePanel state={state.scribe_state.current_state} />}
           {tab === "facilitator" && (
             <FacilitatorPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               signals={state.facilitator_signals}
             />
           )}
           {tab === "decisions" && (
             <DecisionsPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               decisions={state.decisions ?? []}
             />
           )}
           {tab === "tools" && (
             <ToolPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               invocations={state.tool_invocations ?? []}
             />
           )}
-          {tab === "upload" && <UploadPanel roomId={state.room.id} frozen={state.runtime.frozen} />}
+          {tab === "upload" && <UploadPanel roomId={state.room.id} frozen={readOnly} />}
           {tab === "subroom" && (
             <SubroomPanel
               roomId={state.room.id}
@@ -130,6 +131,7 @@ export function RoomSettingsDrawer({
               formatId={state.room.format_id ?? undefined}
               personaIds={discussantIds}
               childRooms={childRooms}
+              frozen={readOnly}
             />
           )}
         </div>

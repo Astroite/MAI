@@ -9,6 +9,7 @@ import { queryKeys } from "../../../queryKeys";
 export function PhasePlanPanel({ state }: { state: RoomState }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
+  const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
   const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [insertPhaseId, setInsertPhaseId] = useState("");
   const insertPhase = useMutation({
@@ -44,6 +45,7 @@ export function PhasePlanPanel({ state }: { state: RoomState }) {
           className="input min-w-0 flex-1"
           value={insertPhaseId}
           onChange={(event) => setInsertPhaseId(event.target.value)}
+          disabled={readOnly}
         >
           <option value="">{t("panel.phase.insert")}</option>
           {(phases.data ?? []).map((phase) => (
@@ -54,7 +56,7 @@ export function PhasePlanPanel({ state }: { state: RoomState }) {
         </select>
         <button
           className="btn w-9 px-0"
-          disabled={!insertPhaseId || state.runtime.frozen}
+          disabled={!insertPhaseId || readOnly}
           onClick={() => insertPhase.mutate()}
           title={t("panel.phase.insert")}
         >

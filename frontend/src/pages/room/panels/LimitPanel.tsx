@@ -5,7 +5,15 @@ import type { Runtime } from "../../../types";
 import { useI18n } from "../../../i18n";
 import { queryKeys } from "../../../queryKeys";
 
-export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runtime }) {
+export function LimitPanel({
+  roomId,
+  runtime,
+  readOnly = false
+}: {
+  roomId: string;
+  runtime: Runtime;
+  readOnly?: boolean;
+}) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
   const [maxMessageTokens, setMaxMessageTokens] = useState(runtime.max_message_tokens);
@@ -50,6 +58,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
             min={1}
             value={maxMessageTokens}
             onChange={(event) => setMaxMessageTokens(Number(event.target.value))}
+            disabled={readOnly}
           />
         </label>
         <label className="block">
@@ -61,6 +70,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
             min={1}
             value={maxRoomTokens}
             onChange={(event) => setMaxRoomTokens(Number(event.target.value))}
+            disabled={readOnly}
           />
         </label>
         <label className="block">
@@ -72,6 +82,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
             min={1}
             value={maxPhaseRounds}
             onChange={(event) => setMaxPhaseRounds(Number(event.target.value))}
+            disabled={readOnly}
           />
         </label>
         <label className="block">
@@ -83,6 +94,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
             min={1}
             value={maxAccountDailyTokens}
             onChange={(event) => setMaxAccountDailyTokens(Number(event.target.value))}
+            disabled={readOnly}
           />
         </label>
         <label className="block">
@@ -94,6 +106,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
             min={1}
             value={maxAccountMonthlyTokens}
             onChange={(event) => setMaxAccountMonthlyTokens(Number(event.target.value))}
+            disabled={readOnly}
           />
         </label>
       </div>
@@ -106,6 +119,7 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           min={1}
           value={maxConsecutiveAiTurns}
           onChange={(event) => setMaxConsecutiveAiTurns(Number(event.target.value))}
+          disabled={readOnly}
         />
       </label>
       <div className="mt-3 rounded-md border border-border p-3 text-xs text-muted">
@@ -120,10 +134,11 @@ export function LimitPanel({ roomId, runtime }: { roomId: string; runtime: Runti
           type="checkbox"
           checked={autoTransition}
           onChange={(event) => setAutoTransition(event.target.checked)}
+          disabled={readOnly}
         />
         {t("panel.limits.autoNext")}
       </label>
-      <button className="btn mt-3 w-full" onClick={() => update.mutate()} disabled={update.isPending}>
+      <button className="btn mt-3 w-full" onClick={() => update.mutate()} disabled={readOnly || update.isPending}>
         {t("common.save")}
       </button>
     </section>

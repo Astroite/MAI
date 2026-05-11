@@ -31,11 +31,13 @@ export function Composer({
   roomId,
   personas,
   frozen,
+  sealed = false,
   story
 }: {
   roomId: string;
   personas: PersonaInstance[];
   frozen: boolean;
+  sealed?: boolean;
   story?: StoryComposerContext | null;
 }) {
   const queryClient = useQueryClient();
@@ -349,7 +351,13 @@ export function Composer({
               onKeyDown={handleKeyDown}
               onKeyUp={updateCursor}
               rows={3}
-              placeholder={frozen ? t("composer.frozenPlaceholder") : t("composer.placeholder")}
+              placeholder={
+                sealed
+                  ? t("composer.sealedPlaceholder")
+                  : frozen
+                    ? t("composer.frozenPlaceholder")
+                    : t("composer.placeholder")
+              }
               disabled={frozen}
             />
           </div>

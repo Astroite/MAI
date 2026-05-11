@@ -251,6 +251,57 @@ def test_scene_seal_is_idempotent_and_blocks_roster_changes(client, discussant_p
     assert exit_resp.status_code == 409
 
 
+def test_sealed_scene_room_is_read_only(client):
+    world = _make_world(client)
+    user_char = _make_user_character(client, world["id"])
+
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "只读封幕测试",
+            "members": [{"world_character_id": user_char["id"], "speak_as_user": True}],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+
+    sealed = client.post(f"/rooms/{scene_id}/seal")
+    assert sealed.status_code == 200, sealed.text
+    assert sealed.json()["sealed_at"] is not None
+
+    phase_id = client.get("/templates/phases").json()[0]["id"]
+    blocked_requests = [
+        ("post", f"/rooms/{scene_id}/messages", {"content": "封幕后不能继续说话"}),
+        ("post", f"/rooms/{scene_id}/messages/from_upload", {"upload_id": "missing"}),
+        ("post", f"/rooms/{scene_id}/verdicts", {"content": "封幕后不能裁决", "is_locked": False, "dead_end": False}),
+        ("post", f"/rooms/{scene_id}/masquerade", {"display_name": "群友", "content": "封幕后不能伪装发言"}),
+        ("post", f"/rooms/{scene_id}/turn", {"speaker_persona_id": None}),
+        ("post", f"/rooms/{scene_id}/autodrive/resume", None),
+        ("post", f"/rooms/{scene_id}/phase/next", {"target_position": None}),
+        ("post", f"/rooms/{scene_id}/phase/continue", None),
+        ("post", f"/rooms/{scene_id}/phase/extend", None),
+        ("post", f"/rooms/{scene_id}/phase/insert", {"phase_template_id": phase_id}),
+        ("post", f"/rooms/{scene_id}/facilitator", None),
+        ("post", f"/rooms/{scene_id}/tools/execute", {"tool_name": "missing", "arguments": {}}),
+        ("patch", f"/rooms/{scene_id}/background", {"background": "封幕后不能改背景"}),
+        ("patch", f"/rooms/{scene_id}/limits", {"max_consecutive_ai_turns": 2}),
+        ("post", f"/rooms/{scene_id}/freeze", None),
+        ("post", f"/rooms/{scene_id}/unfreeze", None),
+    ]
+    for method, path, body in blocked_requests:
+        request = getattr(client, method)
+        response = request(path, json=body) if body is not None else request(path)
+        assert response.status_code == 409, f"{method.upper()} {path}: {response.text}"
+
+    upload = client.post(
+        f"/upload?room_id={scene_id}",
+        files={"file": ("sealed.txt", b"sealed room upload", "text/plain")},
+    )
+    assert upload.status_code == 409
+
+    state = client.get(f"/rooms/{scene_id}/state").json()
+    assert all("封幕后不能" not in message["content"] for message in state["messages"])
+
+
 def test_non_scene_routes_reject_normal_room(client):
     """The /scene/* routes only accept rooms that have a world_id set."""
     room = client.post("/rooms", json={"title": "pytest non-scene room", "persona_ids": []}).json()

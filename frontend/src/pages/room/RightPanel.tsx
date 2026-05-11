@@ -36,6 +36,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
   const { t } = useI18n();
   const expandedKey = params.get("panel") as AnyKey | null;
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
+  const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
 
   useEffect(() => {
     if (!expandedKey) return;
@@ -86,7 +87,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           summary={
             <DecisionsPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               decisions={state.decisions ?? []}
               limit={3}
               hideLabel
@@ -95,7 +96,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           detail={
             <DecisionsPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               decisions={state.decisions ?? []}
             />
           }
@@ -111,7 +112,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           summary={
             <FacilitatorPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               signals={state.facilitator_signals}
               compact
             />
@@ -119,7 +120,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           detail={
             <FacilitatorPanel
               roomId={state.room.id}
-              frozen={state.runtime.frozen}
+              frozen={readOnly}
               signals={state.facilitator_signals}
             />
           }
@@ -145,7 +146,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
         >
           <ToolPanel
             roomId={state.room.id}
-            frozen={state.runtime.frozen}
+            frozen={readOnly}
             invocations={state.tool_invocations ?? []}
           />
         </CollapsibleSection>
@@ -157,7 +158,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           open={isExpanded("upload")}
           onToggle={() => setExpanded(isExpanded("upload") ? null : "upload")}
         >
-          <UploadPanel roomId={state.room.id} frozen={state.runtime.frozen} />
+          <UploadPanel roomId={state.room.id} frozen={readOnly} />
         </CollapsibleSection>
 
         <CollapsibleSection
@@ -175,6 +176,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
             formatId={state.room.format_id ?? undefined}
             personaIds={discussantIds}
             childRooms={childRooms}
+            frozen={readOnly}
           />
         </CollapsibleSection>
 
@@ -185,7 +187,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           open={isExpanded("limits")}
           onToggle={() => setExpanded(isExpanded("limits") ? null : "limits")}
         >
-          <LimitPanel roomId={state.room.id} runtime={state.runtime} />
+          <LimitPanel roomId={state.room.id} runtime={state.runtime} readOnly={readOnly} />
         </CollapsibleSection>
       </div>
     </aside>

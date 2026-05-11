@@ -466,8 +466,8 @@ async def sync_mcp_server_route(server_id: str, session: AsyncSession = Depends(
 
 @app.post("/rooms/{room_id}/tools/execute", response_model=ToolInvocationOut)
 async def execute_room_tool(room_id: str, body: ToolExecuteRequest, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     try:
         invocation = await execute_tool(
             session,
@@ -1442,9 +1442,8 @@ async def update_room_background(
     persona's system prompt from this point on; the appended message preserves
     history and lets AIs notice (and react to) the shift in setting.
     """
-    room = await session.get(Room, room_id)
-    if not room:
-        raise HTTPException(404, "room not found")
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     new_value = (body.background or "").strip()
     if new_value == (room.background or ""):
         return RoomOut.model_validate(room)
@@ -1479,9 +1478,8 @@ async def get_room_state(room_id: str, session: AsyncSession = Depends(get_sessi
 async def add_room_personas(
     room_id: str, body: AddPersonaInstancesRequest, session: AsyncSession = Depends(get_session)
 ):
-    room = await session.get(Room, room_id)
-    if not room:
-        raise HTTPException(404, "room not found")
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     existing_template_ids = set(
         (
             await session.scalars(
@@ -1509,6 +1507,8 @@ async def update_persona_instance(
     body: PersonaInstanceUpdate,
     session: AsyncSession = Depends(get_session),
 ):
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     instance = await session.get(PersonaInstance, instance_id)
     if not instance or instance.room_id != room_id:
         raise HTTPException(404, "persona instance not found")
@@ -1537,6 +1537,8 @@ async def update_persona_instance(
 async def delete_persona_instance(
     room_id: str, instance_id: str, session: AsyncSession = Depends(get_session)
 ):
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     instance = await session.get(PersonaInstance, instance_id)
     if not instance or instance.room_id != room_id:
         raise HTTPException(404, "persona instance not found")
@@ -1551,16 +1553,15 @@ async def delete_persona_instance(
 
 @app.post("/rooms/{room_id}/messages", response_model=MessageOut)
 async def append_user_message(room_id: str, body: MessageCreate, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     author_actual = "user"
     masquerade_name: str | None = None
     if body.as_character_id is not None:
         # Story World "扮演发言" path. Validate the character is on this scene's
         # roster and is a user-kind slot the human controls. AI characters are
         # excluded — the engine drives those, the user can't take over.
-        room = await session.get(Room, room_id)
-        if room is None or not is_scene_room(room):
+        if not is_scene_room(room):
             raise HTTPException(409, "as_character_id only valid in Story World scenes")
         member = await session.get(
             WorldSceneMember,
@@ -1598,6 +1599,8 @@ async def append_user_message(room_id: str, body: MessageCreate, session: AsyncS
 
 @app.post("/rooms/{room_id}/verdicts", response_model=MessageOut)
 async def create_verdict(room_id: str, body: VerdictCreate, session: AsyncSession = Depends(get_session)):
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     message = await append_verdict(session, room_id, body.content, body.is_locked, body.dead_end, body.revoke_message_id)
     await session.commit()
     return message
@@ -1610,8 +1613,8 @@ async def update_decision_lock(
     body: DecisionLockUpdate,
     session: AsyncSession = Depends(get_session),
 ):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     decision = await session.get(Decision, decision_id)
     if not decision or decision.room_id != room_id:
         raise HTTPException(404, "decision not found")
@@ -1651,8 +1654,8 @@ async def update_decision_lock(
 
 @app.post("/rooms/{room_id}/masquerade", response_model=MessageOut)
 async def create_masquerade(room_id: str, body: MasqueradeCreate, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     # body.persona_id is a TEMPLATE id; resolve to the room's instance.
     instance: PersonaInstance | None = None
     if body.persona_id:
@@ -1694,6 +1697,8 @@ async def create_masquerade(room_id: str, body: MasqueradeCreate, session: Async
 
 @app.post("/rooms/{room_id}/messages/{message_id}/reveal", response_model=MessageOut)
 async def reveal_masquerade(room_id: str, message_id: str, session: AsyncSession = Depends(get_session)):
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     message = await session.get(Message, message_id)
     if not message or message.room_id != room_id:
         raise HTTPException(404, "message not found")
@@ -1736,8 +1741,8 @@ async def reveal_masquerade(room_id: str, message_id: str, session: AsyncSession
 
 @app.post("/rooms/{room_id}/turn", response_model=list[MessageOut])
 async def run_turn(room_id: str, body: TurnRequest, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     try:
         messages = await run_room_turn(session, room_id, body.speaker_persona_id)
     except ValueError as exc:
@@ -1752,6 +1757,8 @@ async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_ses
     Lets the user "let the AI keep talking" without typing anything. Returns
     skipped + reason when the chain cannot be scheduled.
     """
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     try:
         result = await schedule_autodrive(session, room_id)
     except ValueError as exc:
@@ -1765,8 +1772,8 @@ async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_ses
 
 @app.post("/rooms/{room_id}/phase/next", response_model=RoomState)
 async def next_phase(room_id: str, body: PhaseTransitionRequest, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     await transition_to_next_phase(session, room_id, body.target_position)
     await session.commit()
     return await _room_state(session, room_id)
@@ -1774,8 +1781,8 @@ async def next_phase(room_id: str, body: PhaseTransitionRequest, session: AsyncS
 
 @app.post("/rooms/{room_id}/phase/continue", response_model=RoomState)
 async def continue_phase(room_id: str, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     await continue_current_phase(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
@@ -1784,8 +1791,8 @@ async def continue_phase(room_id: str, session: AsyncSession = Depends(get_sessi
 @app.post("/rooms/{room_id}/phase/extend", response_model=RoomState)
 async def extend_phase(room_id: str, session: AsyncSession = Depends(get_session)):
     """Add one round to the current phase's `rounds` / `phase_round_limit` budgets."""
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     await extend_current_phase(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
@@ -1793,8 +1800,8 @@ async def extend_phase(room_id: str, session: AsyncSession = Depends(get_session
 
 @app.post("/rooms/{room_id}/facilitator", response_model=RoomState)
 async def ask_facilitator(room_id: str, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     try:
         await run_manual_facilitator_eval(session, room_id)
     except ValueError as exc:
@@ -1805,8 +1812,8 @@ async def ask_facilitator(room_id: str, session: AsyncSession = Depends(get_sess
 
 @app.post("/rooms/{room_id}/phase/insert", response_model=RoomState)
 async def insert_phase(room_id: str, body: InsertPhaseRequest, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     phase = await session.get(PhaseTemplate, body.phase_template_id)
     if not phase:
         raise HTTPException(404, "phase not found")
@@ -1839,7 +1846,8 @@ async def insert_phase(room_id: str, body: InsertPhaseRequest, session: AsyncSes
 
 @app.patch("/rooms/{room_id}/limits", response_model=RoomRuntimeOut)
 async def update_limits(room_id: str, body: LimitUpdate, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     if body.max_message_tokens is not None:
         runtime.max_message_tokens = body.max_message_tokens
     if body.max_room_tokens is not None:
@@ -1862,6 +1870,8 @@ async def update_limits(room_id: str, body: LimitUpdate, session: AsyncSession =
 
 @app.post("/rooms/{room_id}/freeze", response_model=RoomState)
 async def freeze(room_id: str, session: AsyncSession = Depends(get_session)):
+    room, _runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_sealed(room)
     await freeze_room(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
@@ -1930,6 +1940,8 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
 
 @app.post("/rooms/{room_id}/unfreeze", response_model=RoomState)
 async def unfreeze(room_id: str, session: AsyncSession = Depends(get_session)):
+    room, _runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_sealed(room)
     await unfreeze_room(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
@@ -1942,6 +1954,9 @@ async def room_events(room_id: str):
 
 @app.post("/upload", response_model=UploadOut)
 async def upload_file(room_id: str | None = None, file: UploadFile = File(...), session: AsyncSession = Depends(get_session)):
+    if room_id is not None:
+        room, runtime = await _room_runtime_or_404(session, room_id)
+        _ensure_room_writable(room, runtime)
     suffix = Path(file.filename or "upload").suffix.lower()
     raw = await file.read()
     if suffix not in {".md", ".txt", ".pdf"}:
@@ -1968,8 +1983,8 @@ async def upload_file(room_id: str | None = None, file: UploadFile = File(...), 
 
 @app.post("/rooms/{room_id}/messages/from_upload", response_model=MessageOut)
 async def message_from_upload(room_id: str, body: FromUploadRequest, session: AsyncSession = Depends(get_session)):
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     upload = await session.get(Upload, body.upload_id)
     if not upload:
         raise HTTPException(404, "upload not found")
@@ -2001,6 +2016,8 @@ async def message_from_upload(room_id: str, body: FromUploadRequest, session: As
 
 @app.post("/rooms/{room_id}/subrooms", response_model=RoomState)
 async def create_subroom(room_id: str, body: RoomCreate, session: AsyncSession = Depends(get_session)):
+    room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_room_writable(room, runtime)
     body.parent_room_id = room_id
     return await create_room(body, session)
 
@@ -2010,6 +2027,10 @@ async def merge_back(room_id: str, body: MergeBackCreate, session: AsyncSession 
     sub_room = await session.get(Room, room_id)
     if not sub_room or not sub_room.parent_room_id:
         raise HTTPException(400, "room is not a sub-room")
+    sub_runtime = await _runtime_or_404(session, room_id)
+    _ensure_room_writable(sub_room, sub_runtime)
+    parent_room, parent_runtime = await _room_runtime_or_404(session, sub_room.parent_room_id)
+    _ensure_room_writable(parent_room, parent_runtime)
     merge = MergeBack(
         parent_room_id=sub_room.parent_room_id,
         sub_room_id=room_id,
@@ -2021,7 +2042,6 @@ async def merge_back(room_id: str, body: MergeBackCreate, session: AsyncSession 
         full_transcript_ref=f"/rooms/{room_id}/state",
     )
     session.add(merge)
-    parent_runtime = await session.get(RoomRuntimeState, sub_room.parent_room_id)
     session.add(
         Message(
             room_id=sub_room.parent_room_id,
@@ -2879,9 +2899,7 @@ async def scene_enter(
     system message (visible to models) and binds the character into the roster."""
     scene = await _scene_or_404(session, room_id)
     runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
-    if scene.sealed_at is not None:
-        raise HTTPException(409, "scene is sealed")
+    _ensure_room_writable(scene, runtime)
     character = await session.get(WorldCharacter, body.world_character_id)
     if character is None or character.world_id != scene.world_id:
         raise HTTPException(422, "character not in this world")
@@ -2965,9 +2983,7 @@ async def scene_exit(
     message; future routing skips them."""
     scene = await _scene_or_404(session, room_id)
     runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
-    if scene.sealed_at is not None:
-        raise HTTPException(409, "scene is sealed")
+    _ensure_room_writable(scene, runtime)
     member = await session.get(
         WorldSceneMember, {"scene_id": scene.id, "world_character_id": body.world_character_id}
     )
@@ -3378,9 +3394,32 @@ async def _runtime_or_404(session: AsyncSession, room_id: str) -> RoomRuntimeSta
     return runtime
 
 
+async def _room_or_404(session: AsyncSession, room_id: str) -> Room:
+    room = await session.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "room not found")
+    return room
+
+
+async def _room_runtime_or_404(
+    session: AsyncSession, room_id: str
+) -> tuple[Room, RoomRuntimeState]:
+    return await _room_or_404(session, room_id), await _runtime_or_404(session, room_id)
+
+
 def _ensure_not_frozen(runtime: RoomRuntimeState) -> None:
     if runtime.frozen:
         raise HTTPException(409, "room is frozen")
+
+
+def _ensure_not_sealed(room: Room) -> None:
+    if room.sealed_at is not None:
+        raise HTTPException(409, "scene is sealed")
+
+
+def _ensure_room_writable(room: Room, runtime: RoomRuntimeState) -> None:
+    _ensure_not_frozen(runtime)
+    _ensure_not_sealed(room)
 
 
 def _extract_text(path: Path, suffix: str, raw: bytes) -> str:

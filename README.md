@@ -1,19 +1,39 @@
-# MAI - 多模型协作讨论平台
+# MAI - 本地优先的 AI 故事导演台
 
-MAI 是一个本地优先的多模型协作讨论工具：用户创建讨论室，拉入多个 AI 人设，按阶段和赛制推进讨论，并由书记官、主持信号、裁决与子讨论机制沉淀可追溯结论。
+MAI 当前的主方向是 **Story World / 故事世界**：用户创建世界、设定角色、开启一幕场景，让多个 AI 角色在同一世界中持续互动；用户可以用旁白推进剧情，也可以扮演某个用户角色介入。每幕封幕后，系统会把角色经历折叠成记忆、关系印象和承诺，带入下一幕。
 
-当前形态已经从早期原型收敛为：
+MAI 仍保留 **Discussion Room / 讨论室** 作为第二条主线：多个 AI 人设按阶段和赛制围绕问题进行结构化讨论，由书记官、主持信号、裁决和子讨论沉淀可追溯结论。
 
-- FastAPI 单进程后端，默认 SQLite（已开启 WAL + 长 busy_timeout），本地文件即可运行；PostgreSQL 仍可通过 `DATABASE_URL` 启用。
+## 产品主线
+
+### Story World
+
+- World：跨房间的世界观容器，保存 synopsis、setting、时间提示和角色集合。
+- Character：AI / 用户角色档案，包含身份、目标、技能、外观和跨场景记忆。
+- Scene：一幕戏，本质上是带 `world_id` 和 `scene_index` 的 Room。
+- Memory：封幕后写入 episodic 记忆、角色关系印象和承诺，下一幕按 salience 检索入 prompt。
+- Composer：支持旁白和扮演模式，用户既可以做导演，也可以亲自上场。
+
+### Discussion Room
+
+- 阶段、赛制、配方：控制多 AI 发言范围、顺序、退出条件和自动讨论节奏。
+- 多 AI peer 路由：每个 AI 只把自己的历史看作 `assistant`，其他角色发言会改写为带名字的 `user` 消息，避免全知叙述者退化。
+- Scribe / Facilitator：书记官折叠共识、分歧、问题和产物；主持信号只面向用户，帮助判断节奏。
+- Freeze / Pause：用户拥有停止、恢复、阶段推进和模型配置的最终控制权。
+- Tools / MCP：房间成员可按权限调用内置工具或外部 MCP server，调用记录进入消息流审计。
+
+## 工程形态
+
+- FastAPI 单进程后端，默认 SQLite（WAL + 长 busy timeout），可选 PostgreSQL。
 - Vite + React + TypeScript 前端，支持中英文切换、暗色模式、Markdown/KaTeX/Shiki 渲染。
-- Tauri v2 桌面壳，使用 PyInstaller sidecar 自动启动后端。
-- LiteLLM 统一模型调用。API 配置两层：Provider（LiteLLM 路由 + 凭据）和 Model（具体可选模型）。`complete_tool` 三档降级覆盖 `deepseek-reasoner` 一类不支持强制 `tool_choice` 的模型，并自动还原 MiMo / OpenRouter 部分通道双重编码的 tool 参数。
-- 模板系统已稳定：内置模板只读；用户点击"添加"时从内置库复制一份可编辑实例；人设、阶段、赛制、配方页里的卡片都按可编辑实例管理。每个人设携带主题色 + 图标，贯穿卡片、消息气泡和状态条。
-- 多 AI peer 路由：在多角色房间里，每个 AI 只把自己的过去发言看作 `assistant`，其他人的发言改写为 `user` + `「Name」: ` 前缀，避免出现"全知叙述者"退化。
-- 故事模式：单 phase 持续接力的内置 phase + format，AI 一直按角色演下去直到用户喊停；房间消息列表上方的发言状态条实时显示 frozen / speaking / scheduling / idle 4 态。
-- 新增能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、场景化一键开房、模板 AI 起草（`PersonaDraftEnvelope` 严格 schema）。
+- Tauri v2 桌面壳，使用 PyInstaller sidecar 自动启动本地后端。
+- LiteLLM 统一模型调用；API 配置拆成 Provider（凭据 + 路由）和 Model（具体模型）。
+- 模板系统稳定：内置模板只读，用户从内置库复制后得到可编辑实例；人设带主题色和图标。
+- 能力扩展层：内置工具、MCP server 注册与同步、成员级工具权限、模板 AI 起草。
 
 ## 快速开始
+
+完整产品、架构、运行和设计文档见 [`docs/README.md`](docs/README.md)。
 
 Windows 一键开发启动：
 
@@ -105,9 +125,11 @@ GEMINI_API_KEY=...
 
 工具调用会以 `tool_invocation` 消息追加进房间，并在房间状态里返回完整调用记录，方便复盘和审计。
 
-## 场景与模板起草
+## Story World 与讨论室入口
 
-首页新建房间支持场景卡片，例如技术方案评审、产品决策圆桌、头脑风暴和假设压力测试。场景会预填房间标题、初始问题、赛制或配方；创建后可自动发送第一条消息。
+首页优先呈现 Story World 导演台：最近世界、最近一幕、角色近况和继续入口。用户可以从世界页创建角色、开启新 Scene，并在房间内用旁白或扮演模式推进剧情。
+
+讨论室仍作为结构化多 AI 协作入口保留。新建房间支持场景卡片，例如技术方案评审、产品决策圆桌、头脑风暴和假设压力测试。场景会预填房间标题、初始问题、赛制或配方；创建后可自动发送第一条消息。
 
 模板页的人设编辑器新增 `AI 起草`，可用自然语言生成一个可编辑的人设草稿。后端接口同时保留了 phase / recipe 草稿类型，便于后续扩展到更多模板。
 
@@ -180,11 +202,11 @@ pytest -q
 
 ## 文档
 
-- [`docs/ops/usage.md`](docs/ops/usage.md)：本地运行、模型配置、打包、安装与常见问题。
-- [`docs/product/product_design.md`](docs/product/product_design.md)：稳定后的产品概念和边界。
-- [`docs/product/story_world.md`](docs/product/story_world.md)：跨房间「世界」+ 角色记忆子产品（World / Scene / Character / Memory）。
-- [`docs/product/personas.md`](docs/product/personas.md)：内置人设清单与扩充路线。
-- [`docs/architecture/technical_design.md`](docs/architecture/technical_design.md)：当前架构、数据模型和前后端契约。
-- [`docs/status.md`](docs/status.md)：当前实现状态快照。
-- [`docs/ops/desktop_tauri.md`](docs/ops/desktop_tauri.md)：桌面壳依赖与打包清单。
-- [`docs/design/ui_brief.md`](docs/design/ui_brief.md)：UI 视觉方向参考。
+文档入口见 [`docs/README.md`](docs/README.md)。常用阅读顺序：
+
+- 产品语义：`docs/product/product_design.md`、`docs/product/story_world.md`
+- 实现约束：`docs/architecture/technical_design.md`
+- 本地运行与打包：`docs/ops/usage.md`、`docs/ops/desktop_tauri.md`
+- 当前状态：`docs/status.md`
+- 工程复盘：`docs/engineering/`
+- 历史概念稿：`docs/archive/`

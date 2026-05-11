@@ -14,7 +14,8 @@ export function SubroomPanel({
   recipeId,
   formatId,
   personaIds,
-  childRooms
+  childRooms,
+  frozen = false
 }: {
   roomId: string;
   parentRoomId?: string | null;
@@ -23,6 +24,7 @@ export function SubroomPanel({
   formatId?: string;
   personaIds: string[];
   childRooms: Room[];
+  frozen?: boolean;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -84,6 +86,7 @@ export function SubroomPanel({
               className="textarea mt-1 w-full"
               value={conclusion}
               onChange={(event) => setConclusion(event.target.value)}
+              disabled={frozen}
             />
           </label>
           <label className="block">
@@ -93,6 +96,7 @@ export function SubroomPanel({
               className="textarea mt-1 w-full"
               value={keyReasoning}
               onChange={(event) => setKeyReasoning(event.target.value)}
+              disabled={frozen}
             />
           </label>
           <label className="block">
@@ -102,11 +106,12 @@ export function SubroomPanel({
               className="textarea mt-1 w-full"
               value={unresolved}
               onChange={(event) => setUnresolved(event.target.value)}
+              disabled={frozen}
             />
           </label>
           <button
             className="btn btn-primary w-full"
-            disabled={!conclusion.trim() || merge.isPending}
+            disabled={frozen || !conclusion.trim() || merge.isPending}
             onClick={() => merge.mutate()}
           >
             <Merge size={16} />
@@ -139,8 +144,9 @@ export function SubroomPanel({
           className="input w-full"
           value={subroomTitle}
           onChange={(event) => setSubroomTitle(event.target.value)}
+          disabled={frozen}
         />
-        <button className="btn w-full" disabled={!subroomTitle.trim() || create.isPending} onClick={() => create.mutate()}>
+        <button className="btn w-full" disabled={frozen || !subroomTitle.trim() || create.isPending} onClick={() => create.mutate()}>
           <GitBranchPlus size={16} />
           {t("panel.subroom.open")}
         </button>

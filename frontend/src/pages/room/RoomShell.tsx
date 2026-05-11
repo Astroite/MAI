@@ -63,6 +63,8 @@ export function RoomShell() {
   const [showRoomsDrawer, setShowRoomsDrawer] = useState(false);
   const [params, setParams] = useSearchParams();
   const state = room.data;
+  const sceneSealed = Boolean(state?.room.sealed_at);
+  const roomReadOnly = Boolean(state?.runtime.frozen || sceneSealed);
   const hydrateStream = useUIStore((store) => store.hydrateStream);
   const finalizeStreams = useUIStore((store) => store.finalizeStreams);
 
@@ -283,23 +285,24 @@ export function RoomShell() {
                     </button>
                   ))}
                 </div>
-                {state.runtime.frozen ? (
-                  <button className="btn" type="button" onClick={() => unfreeze.mutate()} disabled={unfreeze.isPending}>
-                    <Unlock size={16} />
-                    {t("room.unfreeze")}
-                  </button>
-                ) : (
-                  <button
-                    className="btn btn-danger"
-                    type="button"
-                    onClick={() => freeze.mutate()}
-                    disabled={freeze.isPending}
-                    title={t("room.freezeTitle")}
-                  >
-                    <Snowflake size={16} />
-                    {t("room.freeze")}
-                  </button>
-                )}
+                {!sceneSealed &&
+                  (state.runtime.frozen ? (
+                    <button className="btn" type="button" onClick={() => unfreeze.mutate()} disabled={unfreeze.isPending}>
+                      <Unlock size={16} />
+                      {t("room.unfreeze")}
+                    </button>
+                  ) : (
+                    <button
+                      className="btn btn-danger"
+                      type="button"
+                      onClick={() => freeze.mutate()}
+                      disabled={freeze.isPending}
+                      title={t("room.freezeTitle")}
+                    >
+                      <Snowflake size={16} />
+                      {t("room.freeze")}
+                    </button>
+                  ))}
                 {isScene && !state.room.sealed_at && (
                   <button
                     className="btn"
@@ -339,7 +342,7 @@ export function RoomShell() {
               tokenUsed={state.runtime.token_counter_total}
               tokenMax={state.runtime.max_room_tokens}
               background={state.room.background ?? ""}
-              frozen={state.runtime.frozen}
+              frozen={roomReadOnly}
               onEditPhase={() => openSettings("phase")}
             />
             {state.runtime.phase_exit_suggested && (
@@ -349,7 +352,7 @@ export function RoomShell() {
                 onContinue={() => continuePhase.mutate()}
                 onExtend={() => extendPhase.mutate()}
                 disabled={
-                  state.runtime.frozen ||
+                  roomReadOnly ||
                   nextPhase.isPending ||
                   continuePhase.isPending ||
                   extendPhase.isPending
@@ -361,17 +364,19 @@ export function RoomShell() {
               runtime={state.runtime}
               personas={state.personas.filter((p) => p.kind === "discussant")}
               frozen={state.runtime.frozen}
+              sealed={sceneSealed}
             />
             <MessageList
               roomId={activeRoomId}
-              frozen={state.runtime.frozen}
+              frozen={roomReadOnly}
               messages={state.messages}
               personas={state.personas}
             />
             <Composer
               roomId={activeRoomId}
               personas={state.personas.filter((p) => p.kind === "discussant")}
-              frozen={state.runtime.frozen}
+              frozen={roomReadOnly}
+              sealed={sceneSealed}
               story={storyContext}
             />
           </>
