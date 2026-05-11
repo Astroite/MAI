@@ -69,6 +69,10 @@ CASUAL_CONTINUATION_DECAY = 0.85
 SILENCE_SENTINEL = "<silent/>"
 
 
+def is_scene_room(room: Room) -> bool:
+    return room.world_id is not None
+
+
 def _extract_llm_error_detail(exc: BaseException) -> str:
     """Build a useful one-line detail string from a LiteLLM/OpenAI exception.
 
@@ -117,6 +121,23 @@ class NextSpeakerResult:
     reason: str
 
 
+AutodriveSkipReason = Literal[
+    "locked",
+    "frozen",
+    "in_flight",
+    "no_available_speaker",
+    "phase_not_auto",
+    "exit_condition_met",
+    "token_budget_exceeded",
+]
+
+
+@dataclass(frozen=True)
+class AutodriveScheduleResult:
+    status: Literal["scheduled", "skipped"]
+    reason: AutodriveSkipReason | None = None
+
+
 @dataclass
 class InFlightCall:
     room_id: str
@@ -156,16 +177,90 @@ def _unregister_active_call(call: InFlightCall) -> None:
         ACTIVE_CALLS.pop(call.room_id, None)
 
 
+async def drain_active_calls(room_id: str, reason: str) -> list[InFlightCall]:
+    """Cancel and await all in-flight calls for a room.
+
+    `task.cancel()` only schedules cancellation. Awaiting here lets streaming
+    tasks append their partial/truncated messages and release DB sessions
+    before freeze/delete/seal continues.
+    """
+    _request_autodrive_stop(room_id)
+    active_calls = active_calls_for_room(room_id)
+    for active_call in active_calls:
+        active_call.cancel(reason)
+    if active_calls:
+        await asyncio.gather(
+            *(call.task for call in active_calls), return_exceptions=True
+        )
+    await _await_autodrive_runner(room_id, cancel=True)
+    ACTIVE_CALLS.pop(room_id, None)
+    return active_calls
+
+
 # Per-room locks guarding auto-drive dispatch. A held lock means an autodrive
 # task is already streaming a persona reply; further user messages skip
 # scheduling rather than queueing. Users can still POST /turn manually.
 _AUTODRIVE_LOCKS: dict[str, asyncio.Lock] = {}
+_AUTODRIVE_TASKS: dict[str, asyncio.Task] = {}
+_AUTODRIVE_STOP_REQUESTS: set[str] = set()
 _AUTODRIVE_TRIGGER_AUTHORS = {"user", "user_as_persona", "user_as_judge"}
 _AUTODRIVE_TRIGGER_TYPES = {"speech", "question", "answer", "user_doc", "narration"}
 
 
 def _autodrive_lock(room_id: str) -> asyncio.Lock:
     return _AUTODRIVE_LOCKS.setdefault(room_id, asyncio.Lock())
+
+
+def clear_autodrive_lock(room_id: str, *, clear_stop: bool = False) -> None:
+    _AUTODRIVE_LOCKS.pop(room_id, None)
+    task = _AUTODRIVE_TASKS.get(room_id)
+    if task is not None and task.done():
+        _AUTODRIVE_TASKS.pop(room_id, None)
+    if clear_stop:
+        _AUTODRIVE_STOP_REQUESTS.discard(room_id)
+
+
+def _request_autodrive_stop(room_id: str) -> None:
+    _AUTODRIVE_STOP_REQUESTS.add(room_id)
+
+
+def _clear_autodrive_stop(room_id: str) -> None:
+    _AUTODRIVE_STOP_REQUESTS.discard(room_id)
+
+
+def _autodrive_stop_requested(room_id: str) -> bool:
+    return room_id in _AUTODRIVE_STOP_REQUESTS
+
+
+def _start_autodrive_runner(
+    room_id: str,
+    lock: asyncio.Lock,
+    *,
+    continue_chain: bool = True,
+) -> None:
+    if continue_chain:
+        task = asyncio.create_task(_autodrive_runner(room_id, lock))
+    else:
+        task = asyncio.create_task(
+            _autodrive_runner(room_id, lock, continue_chain=False)
+        )
+    _AUTODRIVE_TASKS[room_id] = task
+
+    def _forget(done: asyncio.Task) -> None:
+        if _AUTODRIVE_TASKS.get(room_id) is done:
+            _AUTODRIVE_TASKS.pop(room_id, None)
+
+    task.add_done_callback(_forget)
+
+
+async def _await_autodrive_runner(room_id: str, *, cancel: bool) -> None:
+    task = _AUTODRIVE_TASKS.get(room_id)
+    current = asyncio.current_task()
+    if task is None or task.done() or task is current:
+        return
+    if cancel:
+        task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 async def maybe_autodrive_after(room_id: str, just_appended: Message) -> None:
@@ -175,27 +270,41 @@ async def maybe_autodrive_after(room_id: str, just_appended: Message) -> None:
     `author_actual == "ai"` and never re-trigger autodrive, even though
     `_stream_one_message` calls `after_message_appended` on its tail.
     """
+    if _autodrive_stop_requested(room_id):
+        return
     if just_appended.author_actual not in _AUTODRIVE_TRIGGER_AUTHORS:
         return
     if just_appended.message_type not in _AUTODRIVE_TRIGGER_TYPES:
         return
-    lock = _autodrive_lock(room_id)
-    if lock.locked():
+    lock = _AUTODRIVE_LOCKS.get(room_id)
+    if lock is not None and lock.locked():
         return
     if active_calls_for_room(room_id):
         return
-    asyncio.create_task(_autodrive_runner(room_id, lock))
+    lock = _autodrive_lock(room_id)
+    _start_autodrive_runner(room_id, lock, continue_chain=False)
 
 
-async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
+async def _autodrive_runner(
+    room_id: str,
+    lock: asyncio.Lock,
+    *,
+    continue_chain: bool = True,
+) -> None:
     if lock.locked():
         return
     async with lock:
         try:
             while True:
+                if _autodrive_stop_requested(room_id):
+                    break
                 async with SessionLocal() as session:
                     messages = await run_room_turn(session, room_id, None)
                 if not messages:
+                    break
+                if _autodrive_stop_requested(room_id):
+                    break
+                if not continue_chain:
                     break
                 async with SessionLocal() as session:
                     if not await _should_auto_discuss(session, room_id):
@@ -227,12 +336,16 @@ async def _autodrive_runner(room_id: str, lock: asyncio.Lock) -> None:
                     "traceback": tb,
                 },
             )
-    # After chain completes, check if a user message arrived during the chain
-    asyncio.create_task(_maybe_handle_pending_user_turn(room_id))
+    # After chain completes, check if a user message arrived during the chain.
+    # Awaiting avoids leaving a pending DB task behind when test/client event
+    # loops shut down immediately after the response.
+    await _maybe_handle_pending_user_turn(room_id)
 
 
 async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
     """Return True if the engine should chain another AI turn."""
+    if _autodrive_stop_requested(room_id):
+        return False
     runtime = await session.get(RoomRuntimeState, room_id)
     if runtime is None or runtime.frozen:
         return False
@@ -269,35 +382,79 @@ def is_autodrive_active(room_id: str) -> bool:
     return lock is not None and lock.locked()
 
 
-def schedule_autodrive(room_id: str) -> bool:
+async def _autodrive_preflight_skip_reason(
+    session: AsyncSession, room_id: str
+) -> AutodriveSkipReason | None:
+    runtime = await session.get(RoomRuntimeState, room_id)
+    room = await session.get(Room, room_id)
+    if runtime is None or room is None:
+        raise ValueError("room not found")
+    if runtime.frozen:
+        return "frozen"
+    if room.sealed_at is not None:
+        return "phase_not_auto"
+    account_daily_total, account_monthly_total = await _account_token_totals(session)
+    if (
+        runtime.token_counter_total >= runtime.max_room_tokens
+        or account_daily_total >= runtime.max_account_daily_tokens
+        or account_monthly_total >= runtime.max_account_monthly_tokens
+    ):
+        return "token_budget_exceeded"
+    result = await pick_next_speaker(session, room, runtime, None)
+    if result.kind == "phase_done":
+        return "exit_condition_met"
+    if result.kind == "wait":
+        if result.reason in {"no running phase", "unknown ordering"}:
+            return "phase_not_auto"
+        return "no_available_speaker"
+    return None
+
+
+async def schedule_autodrive(session: AsyncSession, room_id: str) -> AutodriveScheduleResult:
     """Manually kick the autodrive chain without requiring a user message.
 
     Used by `POST /rooms/{id}/autodrive/resume` so the user can let the AI
-    keep going by clicking a button instead of typing. No-op (returns False)
-    if a chain is already running or any persona stream is in flight."""
-    lock = _autodrive_lock(room_id)
-    if lock.locked():
-        return False
+    keep going by clicking a button instead of typing. Returns a skip reason
+    when no chain is started so the UI can distinguish locked/frozen/no-speaker
+    states from a successful schedule."""
+    lock = _AUTODRIVE_LOCKS.get(room_id)
+    if lock is not None and lock.locked():
+        return AutodriveScheduleResult("skipped", "locked")
     if active_calls_for_room(room_id):
-        return False
-    asyncio.create_task(_autodrive_runner(room_id, lock))
-    return True
+        return AutodriveScheduleResult("skipped", "in_flight")
+    if _autodrive_stop_requested(room_id):
+        return AutodriveScheduleResult("skipped", "frozen")
+    skip_reason = await _autodrive_preflight_skip_reason(session, room_id)
+    if skip_reason is not None:
+        return AutodriveScheduleResult("skipped", skip_reason)
+    lock = _autodrive_lock(room_id)
+    _start_autodrive_runner(room_id, lock)
+    return AutodriveScheduleResult("scheduled")
 
 
 async def _maybe_handle_pending_user_turn(room_id: str) -> None:
     """After an autodrive chain completes, re-trigger if a user message is pending."""
-    lock = _autodrive_lock(room_id)
-    if lock.locked():
+    lock = _AUTODRIVE_LOCKS.get(room_id)
+    if lock is not None and lock.locked():
+        return
+    if _autodrive_stop_requested(room_id):
+        clear_autodrive_lock(room_id)
         return
     async with SessionLocal() as session:
         runtime = await session.get(RoomRuntimeState, room_id)
         if runtime is None or runtime.frozen:
+            clear_autodrive_lock(room_id)
+            return
+        room = await session.get(Room, room_id)
+        if room is not None and room.sealed_at is not None:
+            clear_autodrive_lock(room_id)
             return
         latest = await session.scalar(
             select(Message).where(Message.room_id == room_id).order_by(Message.created_at.desc()).limit(1)
         )
         if latest and latest.author_actual in _AUTODRIVE_TRIGGER_AUTHORS:
-            asyncio.create_task(_autodrive_runner(room_id, lock))
+            lock = _autodrive_lock(room_id)
+            _start_autodrive_runner(room_id, lock, continue_chain=False)
 
 
 async def get_current_phase(session: AsyncSession, runtime: RoomRuntimeState) -> RoomPhaseInstance | None:
@@ -317,7 +474,14 @@ async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) 
         api_model = await session.get(ApiModel, persona.api_model_id)
         if api_model is not None:
             return await session.get(ApiProvider, api_model.api_provider_id)
+    settings_row = await session.get(AppSettings, 1)
+    if settings_row and settings_row.default_api_model_id:
+        api_model = await session.get(ApiModel, settings_row.default_api_model_id)
+        if api_model is not None:
+            return await session.get(ApiProvider, api_model.api_provider_id)
     if not persona.api_provider_id:
+        if settings_row and settings_row.default_api_provider_id:
+            return await session.get(ApiProvider, settings_row.default_api_provider_id)
         return None
     return await session.get(ApiProvider, persona.api_provider_id)
 
@@ -340,8 +504,7 @@ async def resolve_persona_runtime(
     default_model = (settings_row.default_backing_model or "").strip() if settings_row else ""
     default_provider_id = settings_row.default_api_provider_id if settings_row else None
 
-    persona_has_legacy_model = bool((persona.backing_model or "").strip() or persona.api_provider_id)
-    effective_api_model_id = persona.api_model_id or (None if persona_has_legacy_model else default_model_id)
+    effective_api_model_id = persona.api_model_id or default_model_id
     effective_model = (persona.backing_model or "").strip()
     effective_provider_id = persona.api_provider_id
 
@@ -742,6 +905,8 @@ async def run_room_turn(
     room_id: str,
     requested_persona_id: str | None = None,
 ) -> list[Message]:
+    if requested_persona_id is None and _autodrive_stop_requested(room_id):
+        return []
     room = await session.get(Room, room_id)
     runtime = await session.get(RoomRuntimeState, room_id)
     if room is None or runtime is None:
@@ -1101,7 +1266,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
     # consensus / decisions / etc. that don't make sense for a story scene, so
     # short-circuit here when this room is a scene.
     room = await session.get(Room, room_id)
-    if room is not None and room.world_id is not None:
+    if room is not None and is_scene_room(room):
         return
     state = await session.get(ScribeState, room_id)
     if state is None:
@@ -1410,7 +1575,7 @@ async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[st
     Returns a {character_id: rows_written} dict for telemetry. Rooms that
     aren't scenes (world_id IS NULL) are no-ops.
     """
-    if scene.world_id is None:
+    if not is_scene_room(scene):
         return {}
     members = list(
         (
@@ -1474,7 +1639,7 @@ async def decay_unused_memories(
     Runs at scene seal so decay is bounded (one pass per scene, deterministic).
     Returns {character_id: rows_decayed}.
     """
-    if scene.world_id is None or scene.scene_index is None:
+    if not is_scene_room(scene) or scene.scene_index is None:
         return {}
     threshold_index = scene.scene_index - MEMORY_DECAY_GRACE_SCENES
     # Limit to characters in this world (rather than the entire DB).
@@ -1529,7 +1694,7 @@ async def enforce_memory_cap(
     summarisation drift is hard to debug and the cap mostly bounds memory
     bloat in long-running worlds rather than something users will hit fast.
     """
-    if scene.world_id is None:
+    if not is_scene_room(scene):
         return {}
     char_ids = list(
         (
@@ -1590,7 +1755,7 @@ async def run_facilitator_eval(
     # for the rare case the user explicitly asks via /facilitator.
     if not force:
         room = await session.get(Room, room_id)
-        if room is not None and room.world_id is not None:
+        if room is not None and is_scene_room(room):
             return None
     facilitator = await get_room_system_persona(session, room_id, "facilitator")
     config = facilitator.config or {}
@@ -1933,14 +2098,69 @@ async def latest_visible_message_id_for_room(session: AsyncSession, room_id: str
     )
 
 
+async def pause_room(session: AsyncSession, room_id: str) -> None:
+    """Gracefully pause a room after the current speaker finishes.
+
+    Pause differs from freeze: it stops the autodrive chain immediately but
+    does not cancel active LLM calls. Any current speaker is allowed to append
+    a normal final message, then the room is marked frozen so no next speaker
+    is scheduled.
+    """
+    room = await session.get(Room, room_id)
+    runtime = await session.get(RoomRuntimeState, room_id)
+    if room is None or runtime is None:
+        raise ValueError("room not found")
+    _request_autodrive_stop(room_id)
+    await session.rollback()
+
+    active_calls = active_calls_for_room(room_id)
+    tasks = [
+        call.task
+        for call in active_calls
+        if isinstance(call.task, asyncio.Task) and call.task is not asyncio.current_task()
+    ]
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    await _await_autodrive_runner(room_id, cancel=not bool(active_calls))
+    clear_autodrive_lock(room_id)
+
+    room = await session.get(Room, room_id, populate_existing=True)
+    runtime = await session.get(RoomRuntimeState, room_id, populate_existing=True)
+    if room is None or runtime is None:
+        raise ValueError("room not found")
+    runtime.frozen = True
+    room.status = "frozen"
+    room.frozen_at = now_utc()
+    snapshot = RoomSnapshot(room_id=room_id, full_state=await snapshot_room(session, room_id))
+    session.add(snapshot)
+    await trace_record(
+        session,
+        room_id,
+        "state_mutation",
+        "room paused after current turn",
+        {
+            "snapshot_id": snapshot.id,
+            "waited_message_ids": [call.message_id for call in active_calls],
+        },
+    )
+    await session.flush()
+    await event_bus.publish(room_id, {"type": "room.frozen"})
+
+
 async def freeze_room(session: AsyncSession, room_id: str) -> None:
     room = await session.get(Room, room_id)
     runtime = await session.get(RoomRuntimeState, room_id)
     if room is None or runtime is None:
         raise ValueError("room not found")
-    active_calls = active_calls_for_room(room_id)
-    for active_call in active_calls:
-        active_call.cancel("frozen")
+    _request_autodrive_stop(room_id)
+    await session.rollback()
+    active_calls = await drain_active_calls(room_id, "frozen")
+    await _await_autodrive_runner(room_id, cancel=True)
+    clear_autodrive_lock(room_id)
+    room = await session.get(Room, room_id, populate_existing=True)
+    runtime = await session.get(RoomRuntimeState, room_id, populate_existing=True)
+    if room is None or runtime is None:
+        raise ValueError("room not found")
     runtime.frozen = True
     room.status = "frozen"
     room.frozen_at = now_utc()
@@ -1966,6 +2186,7 @@ async def unfreeze_room(session: AsyncSession, room_id: str) -> None:
     runtime = await session.get(RoomRuntimeState, room_id)
     if room is None or runtime is None:
         raise ValueError("room not found")
+    _clear_autodrive_stop(room_id)
     runtime.frozen = False
     room.status = "active"
     room.frozen_at = None
@@ -2180,6 +2401,8 @@ def format_truncated_partial(partial: str, reason: str) -> str:
         "frozen": "房间冻结",
         "timeout": "调用超时",
         "cancelled": "调用取消",
+        "room_deleted": "房间删除",
+        "scene_sealed": "场景封幕",
     }
     label = labels.get(reason, reason)
     suffix = f"\n\n[已因{label}截断]"

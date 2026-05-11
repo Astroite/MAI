@@ -4,15 +4,16 @@ import { Plus } from "lucide-react";
 import { api } from "../../../api";
 import type { RoomState } from "../../../types";
 import { useI18n } from "../../../i18n";
+import { queryKeys } from "../../../queryKeys";
 
 export function PhasePlanPanel({ state }: { state: RoomState }) {
   const queryClient = useQueryClient();
   const { t } = useI18n();
-  const phases = useQuery({ queryKey: ["phases"], queryFn: () => api.phases() });
+  const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [insertPhaseId, setInsertPhaseId] = useState("");
   const insertPhase = useMutation({
     mutationFn: () => api.insertPhase(state.room.id, insertPhaseId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", state.room.id] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(state.room.id) })
   });
   const currentPhaseTemplate = phases.data?.find((phase) => phase.id === state.current_phase?.phase_template_id);
   return (

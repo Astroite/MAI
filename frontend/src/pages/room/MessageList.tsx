@@ -8,19 +8,15 @@ import type { Message, PersonaInstance } from "../../types";
 import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
+import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
 import { personaTone } from "../../utils/color";
+import { previewValue } from "../../utils/preview";
 import { splitActions } from "./splitActions";
 
 type Avatar =
   | { kind: "icon"; icon?: string | null; color: string }
   | { kind: "label"; label: string; color: string };
-
-function previewValue(value: unknown, fallback = ""): string {
-  if (value == null) return fallback;
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return text.length > 520 ? `${text.slice(0, 520)}...` : text;
-}
 
 type Entry =
   | { kind: "message"; key: string; message: Message }
@@ -51,8 +47,10 @@ export function MessageList({
   );
   const entries = useMemo<Entry[]>(() => {
     const out: Entry[] = messages.map((message) => ({ kind: "message", key: message.id, message }));
+    const finalMessageIds = new Set(messages.map((message) => message.id));
     for (const item of Object.values(streaming)) {
       if (item.roomId !== roomId) continue;
+      if (finalMessageIds.has(item.messageId)) continue;
       out.push({
         kind: "stream",
         key: `stream-${item.messageId}`,
@@ -238,7 +236,7 @@ function MessageRow({
   const revoke = useMutation({
     mutationFn: () =>
       api.verdict(roomId, t("message.revokeVerdict", { content: message.content }), false, { revoke_message_id: message.id }),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
 
   if (message.message_type === "tool_invocation") {

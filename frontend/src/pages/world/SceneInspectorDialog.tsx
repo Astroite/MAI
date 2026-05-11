@@ -4,6 +4,8 @@ import { useQueries } from "@tanstack/react-query";
 import { Heart, ScrollText, X } from "lucide-react";
 import { api } from "../../api";
 import { PersonaIcon } from "../../components/PersonaIcon";
+import { queryKeys } from "../../queryKeys";
+import { useI18n } from "../../i18n";
 import type { SceneTimelineEntry, WorldCharacter, WorldCharacterMemory, WorldCharacterRelation } from "../../types";
 
 /**
@@ -29,6 +31,7 @@ export function SceneInspectorDialog({
   scene: SceneTimelineEntry | null;
   rosterCharacters: WorldCharacter[];
 }) {
+  const { t } = useI18n();
   const aiRoster = useMemo(
     () => rosterCharacters.filter((c) => c.kind === "ai"),
     [rosterCharacters]
@@ -39,14 +42,14 @@ export function SceneInspectorDialog({
   // hits the cache.
   const memoryQueries = useQueries({
     queries: aiRoster.map((character) => ({
-      queryKey: ["character-memories", worldId, character.id],
+      queryKey: queryKeys.characterMemories(worldId, character.id),
       queryFn: () => api.characterMemories(worldId, character.id),
       enabled: open && Boolean(sceneId)
     }))
   });
   const relationQueries = useQueries({
     queries: aiRoster.map((character) => ({
-      queryKey: ["character-relations", worldId, character.id],
+      queryKey: queryKeys.characterRelations(worldId, character.id),
       queryFn: () => api.characterRelations(worldId, character.id),
       enabled: open && Boolean(sceneId)
     }))
@@ -60,17 +63,19 @@ export function SceneInspectorDialog({
           <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3">
             <div className="min-w-0">
               <Dialog.Title className="truncate text-base font-semibold text-text">
-                {scene ? `第 ${scene.scene_index} 幕：${scene.title}` : "本幕产出"}
+                {scene
+                  ? t("sceneInspector.sceneTitle", { n: scene.scene_index, title: scene.title })
+                  : t("sceneInspector.titleFallback")}
               </Dialog.Title>
               <Dialog.Description className="mt-0.5 text-xs text-muted">
-                封幕后由 LLM 提炼出来的角色记忆与关系卡变更（仅 AI 角色）。
+                {t("sceneInspector.description")}
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
               <button
                 type="button"
                 className="grid h-8 w-8 place-items-center rounded text-muted hover:bg-surface hover:text-text"
-                aria-label="关闭"
+                aria-label={t("common.close")}
               >
                 <X size={16} />
               </button>
@@ -80,12 +85,12 @@ export function SceneInspectorDialog({
           <div className="mai-scrollbar min-h-0 flex-1 overflow-auto p-4">
             {!scene && (
               <div className="grid h-full place-items-center text-sm text-muted">
-                未选中场景。
+                {t("sceneInspector.noScene")}
               </div>
             )}
             {scene && aiRoster.length === 0 && (
               <div className="grid h-full place-items-center text-sm text-muted">
-                本幕没有 AI 角色，没有记忆/关系产出。
+                {t("sceneInspector.noAiRoster")}
               </div>
             )}
             {scene && aiRoster.length > 0 && (
@@ -110,6 +115,7 @@ export function SceneInspectorDialog({
                       relations={sceneRelations}
                       peerLookup={peerLookup}
                       isLoading={memQuery.isLoading || relQuery.isLoading}
+                      t={t}
                     />
                   );
                 })}
@@ -120,7 +126,7 @@ export function SceneInspectorDialog({
           <div className="flex justify-end gap-2 border-t border-border px-4 py-3">
             <Dialog.Close asChild>
               <button type="button" className="btn">
-                关闭
+                {t("common.close")}
               </button>
             </Dialog.Close>
           </div>
@@ -135,13 +141,15 @@ function CharacterInspectorBlock({
   memories,
   relations,
   peerLookup,
-  isLoading
+  isLoading,
+  t
 }: {
   character: WorldCharacter;
   memories: WorldCharacterMemory[];
   relations: WorldCharacterRelation[];
   peerLookup: Map<string, WorldCharacter>;
   isLoading: boolean;
+  t: ReturnType<typeof useI18n>["t"];
 }) {
   const empty = !isLoading && memories.length === 0 && relations.length === 0;
   return (
@@ -155,14 +163,13 @@ function CharacterInspectorBlock({
               <span className="text-xs text-muted">（{character.identity}）</span>
             )}
           </div>
-          {isLoading && <div className="text-xs text-muted">加载中…</div>}
+          {isLoading && <div className="text-xs text-muted">{t("common.loading")}</div>}
         </div>
       </header>
 
       {empty && (
         <div className="rounded bg-surface px-3 py-2 text-xs text-muted">
-          本幕没有为此角色产出新记忆或关系卡变更。可能 LLM scribe 失败（看 backend trace
-          里的 scene_memory_failed 事件），或者本幕场景里这个角色没什么值得记的。
+          {t("sceneInspector.emptyCharacterOutput")}
         </div>
       )}
 
@@ -170,7 +177,7 @@ function CharacterInspectorBlock({
         <section className="mb-3">
           <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted">
             <ScrollText size={12} />
-            新记忆（{memories.length}）
+            {t("sceneInspector.newMemories", { count: memories.length })}
           </div>
           <ul className="space-y-1">
             {memories.map((memory) => (
@@ -179,9 +186,9 @@ function CharacterInspectorBlock({
                 className="rounded border border-border bg-surface px-2 py-1.5 text-xs"
               >
                 <div className="flex items-center gap-1.5 text-xs uppercase tracking-wide text-muted">
-                  <span>{KIND_LABEL[memory.kind] ?? memory.kind}</span>
+                  <span>{memoryKindLabel(memory.kind, t)}</span>
                   <span>·</span>
-                  <span>salience {memory.salience.toFixed(2)}</span>
+                  <span>{t("sceneInspector.salience", { value: memory.salience.toFixed(2) })}</span>
                   {memory.in_world_time_at_event && (
                     <>
                       <span>·</span>
@@ -200,7 +207,7 @@ function CharacterInspectorBlock({
         <section>
           <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted">
             <Heart size={12} />
-            关系卡变更（{relations.length}）
+            {t("sceneInspector.relationChanges", { count: relations.length })}
           </div>
           <ul className="space-y-1">
             {relations.map((relation) => {
@@ -230,7 +237,7 @@ function CharacterInspectorBlock({
                             : "text-muted"
                       }`}
                     >
-                      {relation.label || "（未命名）"} {relation.sentiment >= 0 ? "+" : ""}
+                      {relation.label || t("sceneInspector.unnamed")} {relation.sentiment >= 0 ? "+" : ""}
                       {relation.sentiment.toFixed(2)}
                     </span>
                   </div>
@@ -247,10 +254,8 @@ function CharacterInspectorBlock({
   );
 }
 
-const KIND_LABEL: Record<string, string> = {
-  episode: "经历",
-  vow: "誓言",
-  impression: "印象",
-  fact: "事实",
-  backstory: "背景"
-};
+const MEMORY_KIND_KEYS = new Set(["episode", "vow", "impression", "fact", "backstory"]);
+
+function memoryKindLabel(kind: string, t: ReturnType<typeof useI18n>["t"]): string {
+  return MEMORY_KIND_KEYS.has(kind) ? t(`sceneInspector.memoryKind.${kind}`) : kind;
+}

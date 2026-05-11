@@ -22,14 +22,16 @@ import {
 } from "../components/PersonaIcon";
 import { StatusPill, type PillTone } from "../components/StatusPill";
 import { useI18n } from "../i18n";
+import { queryKeys } from "../queryKeys";
+import { isSceneRoom } from "../utils/scene";
 import type { Room, World, WorldCharacter, WorldDetail, WorldSummary } from "../types";
 
 type SceneStatus = "active" | "sealed" | "frozen" | "none";
 
 export function HomePage() {
   const { t, formatRelativeTime } = useI18n();
-  const worlds = useQuery({ queryKey: ["worlds"], queryFn: api.worlds });
-  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
+  const worlds = useQuery({ queryKey: queryKeys.worlds, queryFn: api.worlds });
+  const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
 
   const sortedWorlds = useMemo<WorldSummary[]>(
     () =>
@@ -45,7 +47,7 @@ export function HomePage() {
   const sceneRooms = useMemo<Room[]>(
     () =>
       [...(rooms.data ?? [])]
-        .filter((room) => Boolean(room.world_id))
+        .filter((room) => isSceneRoom(room))
         .sort((a, b) => {
           const aT = a.last_activity_at ?? a.created_at;
           const bT = b.last_activity_at ?? b.created_at;
@@ -78,7 +80,7 @@ export function HomePage() {
   const latestScene: Room | null = sceneRooms[0] ?? null;
 
   const currentWorldDetail = useQuery({
-    queryKey: ["worlds", currentWorld?.id],
+    queryKey: queryKeys.world(currentWorld?.id),
     queryFn: () => api.world(currentWorld!.id),
     enabled: Boolean(currentWorld?.id)
   });

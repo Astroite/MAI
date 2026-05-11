@@ -3,6 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileUp } from "lucide-react";
 import { api } from "../../../api";
 import { useI18n } from "../../../i18n";
+import { queryKeys } from "../../../queryKeys";
 
 export function UploadPanel({ roomId, frozen }: { roomId: string; frozen: boolean }) {
   const queryClient = useQueryClient();
@@ -22,7 +23,7 @@ export function UploadPanel({ roomId, frozen }: { roomId: string; frozen: boolea
     },
     onSuccess: () => {
       setFile(null);
-      void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
     }
   });
   return (

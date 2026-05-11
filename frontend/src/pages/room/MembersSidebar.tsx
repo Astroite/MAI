@@ -5,62 +5,10 @@ import { api } from "../../api";
 import { useUIStore } from "../../store";
 import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
 import { useI18n } from "../../i18n";
-import { providerKindLabel } from "../../providers";
+import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
 import { personaTone } from "../../utils/color";
-
-function providerDisplayName(provider: ApiProvider | undefined, t: (key: string) => string): string {
-  if (!provider) return t("room.noProvider");
-  return `${provider.name} · ${providerKindLabel(provider.provider_slug, t)}`;
-}
-
-function apiModelOptionLabel(model: ApiModel, t: (key: string) => string): string {
-  const name =
-    model.display_name && model.display_name !== model.model_name
-      ? `${model.display_name} · ${model.model_name}`
-      : model.model_name;
-  const markers = [
-    model.is_default ? t("common.default") : "",
-    model.enabled ? "" : t("common.disabled")
-  ].filter(Boolean);
-  return markers.length ? `${name} (${markers.join(", ")})` : name;
-}
-
-function personaModelLabel(
-  persona: { api_model_id?: string | null; backing_model?: string | null },
-  modelById: Map<string, ApiModel>,
-  providerById: Map<string, ApiProvider>,
-  t: (key: string) => string
-): string {
-  if (persona.api_model_id) {
-    const model = modelById.get(persona.api_model_id);
-    if (model) return `${providerDisplayName(providerById.get(model.api_provider_id), t)} · ${apiModelOptionLabel(model, t)}`;
-  }
-  return persona.backing_model?.trim() || t("room.defaultModel");
-}
-
-function renderApiModelOptions(models: ApiModel[], providerById: Map<string, ApiProvider>, t: (key: string) => string) {
-  const groups = new Map<string, ApiModel[]>();
-  for (const model of models) {
-    groups.set(model.api_provider_id, [...(groups.get(model.api_provider_id) ?? []), model]);
-  }
-  return Array.from(groups.entries())
-    .sort(([left], [right]) =>
-      providerDisplayName(providerById.get(left), t).localeCompare(providerDisplayName(providerById.get(right), t))
-    )
-    .map(([providerId, group]) => (
-      <optgroup key={providerId} label={providerDisplayName(providerById.get(providerId), t)}>
-        {group
-          .slice()
-          .sort((left, right) => Number(right.is_default) - Number(left.is_default) || left.display_name.localeCompare(right.display_name))
-          .map((model) => (
-            <option key={model.id} value={model.id} disabled={!model.enabled}>
-              {apiModelOptionLabel(model, t)}
-            </option>
-          ))}
-      </optgroup>
-    ));
-}
+import { personaModelLabel, renderApiModelOptions } from "../../utils/modelLabels";
 
 export function MembersSidebar({
   roomId,
@@ -73,8 +21,8 @@ export function MembersSidebar({
 }) {
   const streaming = useUIStore((state) => state.streaming);
   const { t } = useI18n();
-  const providers = useQuery({ queryKey: ["api-providers"], queryFn: api.apiProviders });
-  const models = useQuery({ queryKey: ["api-models"], queryFn: () => api.apiModels() });
+  const providers = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
+  const models = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
   const [editingId, setEditingId] = useState<string | null>(null);
   const providerById = useMemo(
     () => new Map((providers.data ?? []).map((provider) => [provider.id, provider])),
@@ -322,8 +270,6 @@ function PersonaInstanceEditor({
       api.updatePersonaInstance(roomId, persona.id, {
         description,
         api_model_id: selectedApiModel?.id ?? null,
-        api_provider_id: selectedApiModel?.api_provider_id ?? null,
-        backing_model: selectedApiModel?.model_name ?? "",
         temperature,
         talkativeness,
         system_prompt: systemPrompt,
@@ -335,7 +281,7 @@ function PersonaInstanceEditor({
         }
       }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
       onClose();
     },
     onError: (err) => setError(err instanceof Error ? err.message : t("api.saveFailed"))

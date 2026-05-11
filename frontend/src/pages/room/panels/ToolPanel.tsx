@@ -5,12 +5,8 @@ import { api } from "../../../api";
 import { StatusPill } from "../../../components/StatusPill";
 import type { ToolInvocation } from "../../../types";
 import { useI18n } from "../../../i18n";
-
-function preview(value: unknown, fallback = ""): string {
-  if (value == null) return fallback;
-  const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
-  return text.length > 420 ? `${text.slice(0, 420)}...` : text;
-}
+import { queryKeys } from "../../../queryKeys";
+import { previewValue } from "../../../utils/preview";
 
 function parseArguments(raw: string): Record<string, unknown> {
   const text = raw.trim();
@@ -33,8 +29,8 @@ export function ToolPanel({
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
-  const tools = useQuery({ queryKey: ["tools"], queryFn: api.tools });
-  const servers = useQuery({ queryKey: ["tool-servers"], queryFn: api.toolServers });
+  const tools = useQuery({ queryKey: queryKeys.tools, queryFn: api.tools });
+  const servers = useQuery({ queryKey: queryKeys.toolServers, queryFn: api.toolServers });
   const [serverName, setServerName] = useState("");
   const [serverUrl, setServerUrl] = useState("");
   const [transport, setTransport] = useState<"streamable_http" | "sse">("streamable_http");
@@ -56,22 +52,22 @@ export function ToolPanel({
       setServerName("");
       setServerUrl("");
       setAllowWrite(false);
-      void queryClient.invalidateQueries({ queryKey: ["tool-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.toolServers });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     }
   });
   const syncServer = useMutation({
     mutationFn: (serverId: string) => api.syncToolServer(serverId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tool-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.toolServers });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     }
   });
   const deleteServer = useMutation({
     mutationFn: (serverId: string) => api.deleteToolServer(serverId),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["tool-servers"] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.toolServers });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     }
   });
   const execute = useMutation({
@@ -86,8 +82,8 @@ export function ToolPanel({
       });
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["room", roomId] });
-      void queryClient.invalidateQueries({ queryKey: ["tools"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
     onError: (error) => setExecuteError(error instanceof Error ? error.message : t("api.saveFailed"))
   });
@@ -267,7 +263,7 @@ export function ToolPanel({
               </StatusPill>
             </div>
             <pre className="mt-2 max-h-32 min-w-0 overflow-auto break-all whitespace-pre-wrap rounded bg-surface p-2 text-xs text-muted">
-              {item.error || preview(item.result, preview(item.arguments))}
+              {item.error || previewValue(item.result, previewValue(item.arguments, "", 420), 420)}
             </pre>
           </div>
         ))}

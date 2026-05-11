@@ -2,7 +2,9 @@ import asyncio
 import time
 
 from app.db import SessionLocal
+from app import engine as engine_module
 from app.engine import ACTIVE_CALLS, pick_next_speaker
+from app.llm import llm_adapter
 from app.models import Message, PersonaInstance, Room, RoomRuntimeState
 
 
@@ -147,6 +149,88 @@ def test_freeze_cancels_active_turn(client, review_format, architect_persona):
     assert state["room"]["status"] == "frozen"
 
 
+def test_pause_waits_for_active_turn_without_truncating(
+    client, discussant_personas, monkeypatch
+):
+    async def controlled_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        yield type("Chunk", (), {"text": "first ", "index": 0})()
+        await asyncio.sleep(0.25)
+        yield type("Chunk", (), {"text": "done", "index": 1})()
+
+    monkeypatch.setattr(llm_adapter, "stream", controlled_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", controlled_stream)
+
+    phase = client.post(
+        "/templates/phases",
+        json={
+            "name": "pytest graceful pause story phase",
+            "description": "story pause test",
+            "declared_variables": [],
+            "allowed_speakers": {"type": "all"},
+            "ordering_rule": {"type": "casual"},
+            "exit_conditions": [{"type": "user_manual"}],
+            "role_constraints": "",
+            "prompt_template": "请继续演。",
+            "auto_discuss": True,
+            "tags": ["pytest", "story", "casual"],
+        },
+    ).json()
+    debate_format = client.post(
+        "/templates/formats",
+        json={
+            "name": "pytest graceful pause story format",
+            "phase_sequence": [
+                {
+                    "phase_template_id": phase["id"],
+                    "phase_template_version": phase["version"],
+                }
+            ],
+            "tags": ["pytest", "story"],
+        },
+    ).json()
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest graceful pause story room",
+            "format_id": debate_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "scheduled"
+
+    deadline = time.monotonic() + 5
+    while room_id not in ACTIVE_CALLS and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert room_id in ACTIVE_CALLS, "autodrive should have started the current turn"
+
+    pause = client.post(f"/rooms/{room_id}/pause")
+    assert pause.status_code == 200
+    state = pause.json()
+    ai_messages = [m for m in state["messages"] if m["author_actual"] == "ai"]
+    assert len(ai_messages) == 1
+    assert ai_messages[0]["content"] == "first done"
+    assert ai_messages[0]["truncated_reason"] is None
+    assert state["room"]["status"] == "frozen"
+    assert state["runtime"]["frozen"] is True
+
+    time.sleep(0.5)
+    final_state = client.get(f"/rooms/{room_id}/state").json()
+    final_ai_messages = [m for m in final_state["messages"] if m["author_actual"] == "ai"]
+    assert len(final_ai_messages) == 1
+
+
 def test_autodrive_user_message_triggers_persona_reply(
     client, roundtable_format, discussant_personas
 ):
@@ -277,6 +361,94 @@ def test_autodrive_short_circuits_when_frozen(
         if m["author_actual"] == "ai"
     ]
     assert len(ai_messages) == before, "frozen room must not produce any persona reply"
+
+
+def test_resume_autodrive_reports_frozen_reason(client, roundtable_format, discussant_personas):
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive frozen reason",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    assert client.post(f"/rooms/{room_id}/freeze").status_code == 200
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "skipped"
+    assert resume.json()["reason"] == "frozen"
+
+
+def test_resume_autodrive_reports_no_available_speaker(client, discussant_personas):
+    room = _make_ordering_room(
+        client,
+        discussant_personas,
+        "user_picks",
+        suffix="resume-skip",
+        count=1,
+    )
+    room_id = room["room"]["id"]
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "skipped"
+    assert resume.json()["reason"] == "no_available_speaker"
+
+
+def test_resume_autodrive_reports_in_flight_reason(
+    client, roundtable_format, discussant_personas, instance_for_template
+):
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive in-flight reason",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, discussant_personas[0]["id"])
+    ACTIVE_CALLS.setdefault(room_id, {})["msg-in-flight"] = engine_module.InFlightCall(
+        room_id=room_id,
+        message_id="msg-in-flight",
+        persona_id=speaker_instance_id,
+        task=object(),
+    )
+    try:
+        resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+        assert resume.status_code == 200
+        assert resume.json()["status"] == "skipped"
+        assert resume.json()["reason"] == "in_flight"
+    finally:
+        ACTIVE_CALLS.pop(room_id, None)
+
+
+def test_resume_autodrive_reports_scheduled_without_running_llm(
+    client, roundtable_format, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_runner(room_id, lock):
+        if lock.locked():
+            return
+        async with lock:
+            return
+
+    monkeypatch.setattr(engine_module, "_autodrive_runner", noop_autodrive_runner)
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodrive scheduled reason",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "scheduled"
+    assert resume.json().get("reason") is None
 
 
 def _make_ordering_room(client, discussant_personas, ordering: str, *, suffix: str, count: int = 2):

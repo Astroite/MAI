@@ -7,7 +7,9 @@ export interface PersonaTemplate {
   name: string;
   identity: string;
   description: string;
-  backing_model: string;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
+  backing_model?: string | null;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
   api_provider_id?: string | null;
   api_model_id?: string | null;
   system_prompt: string;
@@ -32,7 +34,9 @@ export interface PersonaInstance {
   name: string;
   identity: string;
   description: string;
-  backing_model: string;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
+  backing_model?: string | null;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
   api_provider_id?: string | null;
   api_model_id?: string | null;
   system_prompt: string;
@@ -86,7 +90,9 @@ export interface ApiModel {
 }
 
 export interface AppSettings {
+  /** @deprecated Legacy fallback snapshot. New writes should use default_api_model_id. */
   default_backing_model?: string | null;
+  /** @deprecated Legacy fallback snapshot. New writes should use default_api_model_id. */
   default_api_provider_id?: string | null;
   default_api_model_id?: string | null;
   setup_complete: boolean;

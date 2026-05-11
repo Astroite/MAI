@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import os
 import sys
@@ -25,13 +24,17 @@ from .engine import (
     active_calls_for_room,
     after_message_appended,
     append_verdict,
+    clear_autodrive_lock,
     continue_current_phase,
     decay_unused_memories,
+    drain_active_calls,
     enforce_memory_cap,
     estimate_tokens,
     extend_current_phase,
     freeze_room,
     is_autodrive_active,
+    is_scene_room,
+    pause_room,
     run_manual_facilitator_eval,
     run_room_turn,
     run_scene_memory_scribe,
@@ -69,6 +72,7 @@ from .models import (
     WorldCharacterRelation,
     WorldSceneMember,
 )
+from .prompts import compose_scene_persona_prompt
 from .schemas import (
     AddPersonaInstancesRequest,
     ApiModelCreate,
@@ -232,10 +236,7 @@ async def health(session: AsyncSession = Depends(get_session)) -> dict:
     settings_row = await _get_or_create_app_settings(session)
     provider_count = await session.scalar(select(func.count(ApiProvider.id))) or 0
     model_count = await session.scalar(select(func.count(ApiModel.id))) or 0
-    has_default_model = bool(
-        settings_row.default_api_model_id
-        or (settings_row.default_backing_model and settings_row.default_api_provider_id)
-    )
+    has_default_model = _setup_complete(settings_row)
     setup_steps = {
         "providers": provider_count > 0,
         "models": model_count > 0,
@@ -258,6 +259,10 @@ async def _get_or_create_app_settings(session: AsyncSession) -> AppSettings:
         await session.commit()
         await session.refresh(row)
     return row
+
+
+def _setup_complete(row: AppSettings) -> bool:
+    return bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id))
 
 
 def _template_copy_name(source) -> str:
@@ -284,17 +289,50 @@ async def _api_model_or_404(session: AsyncSession, model_id: str) -> ApiModel:
 
 
 async def _sync_api_model_snapshot(session: AsyncSession, payload: dict) -> dict:
-    """Keep legacy model/provider columns in sync when api_model_id is used."""
+    """Normalize model payloads with `api_model_id` as the canonical write path.
+
+    Legacy `backing_model` / `api_provider_id` remain accepted for old clients
+    and old rows, but new ApiModel-backed writes intentionally leave them empty
+    so the runtime resolves model/provider from `api_models`.
+    """
+    if "api_model_id" not in payload:
+        return payload
     model_id = payload.get("api_model_id")
+    payload = dict(payload)
     if not model_id:
+        if "backing_model" not in payload and "api_provider_id" not in payload:
+            payload["backing_model"] = ""
+            payload["api_provider_id"] = None
         return payload
     api_model = await _api_model_or_404(session, model_id)
     if not api_model.enabled:
         raise HTTPException(400, "api model is disabled")
-    payload = dict(payload)
-    payload["backing_model"] = api_model.model_name
-    payload["api_provider_id"] = api_model.api_provider_id
+    payload["backing_model"] = ""
+    payload["api_provider_id"] = None
     return payload
+
+
+def _api_model_trace_payload(api_model: ApiModel) -> dict:
+    return {
+        "id": api_model.id,
+        "api_provider_id": api_model.api_provider_id,
+        "display_name": api_model.display_name,
+        "model_name": api_model.model_name,
+        "enabled": api_model.enabled,
+        "is_default": api_model.is_default,
+        "context_window": api_model.context_window,
+        "tags": list(api_model.tags or []),
+    }
+
+
+def _api_provider_trace_payload(provider: ApiProvider) -> dict:
+    return {
+        "id": provider.id,
+        "name": provider.name,
+        "provider_slug": provider.provider_slug,
+        "api_base": provider.api_base,
+        "has_api_key": bool(provider.api_key),
+    }
 
 
 async def _set_single_default_api_model(session: AsyncSession, api_model: ApiModel) -> None:
@@ -313,7 +351,7 @@ async def get_app_settings(session: AsyncSession = Depends(get_session)):
         default_backing_model=row.default_backing_model,
         default_api_provider_id=row.default_api_provider_id,
         default_api_model_id=row.default_api_model_id,
-        setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
+        setup_complete=_setup_complete(row),
         updated_at=row.updated_at,
     )
 
@@ -324,9 +362,16 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
     changes = body.model_dump(mode="json", exclude_unset=True)
     if "default_api_model_id" in changes and changes["default_api_model_id"]:
         api_model = await _api_model_or_404(session, changes["default_api_model_id"])
-        changes["default_api_provider_id"] = api_model.api_provider_id
-        changes["default_backing_model"] = api_model.model_name
-    elif "default_api_model_id" in changes and not changes["default_api_model_id"]:
+        if not api_model.enabled:
+            raise HTTPException(400, "api model is disabled")
+        changes["default_api_provider_id"] = None
+        changes["default_backing_model"] = None
+    elif (
+        "default_api_model_id" in changes
+        and not changes["default_api_model_id"]
+        and "default_api_provider_id" not in changes
+        and "default_backing_model" not in changes
+    ):
         changes["default_api_provider_id"] = None
         changes["default_backing_model"] = None
     if "default_api_provider_id" in changes and changes["default_api_provider_id"]:
@@ -341,7 +386,7 @@ async def update_app_settings(body: AppSettingsUpdate, session: AsyncSession = D
         default_backing_model=row.default_backing_model,
         default_api_provider_id=row.default_api_provider_id,
         default_api_model_id=row.default_api_model_id,
-        setup_complete=bool(row.default_api_model_id or (row.default_backing_model and row.default_api_provider_id)),
+        setup_complete=_setup_complete(row),
         updated_at=row.updated_at,
     )
 
@@ -713,9 +758,20 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     provider = await session.get(ApiProvider, provider_id)
     if not provider:
         raise HTTPException(404, "api provider not found")
-    model_ids = (
-        await session.scalars(select(ApiModel.id).where(ApiModel.api_provider_id == provider_id))
+    api_models = (
+        await session.scalars(select(ApiModel).where(ApiModel.api_provider_id == provider_id))
     ).all()
+    model_ids = [row.id for row in api_models]
+    await trace_record(
+        session,
+        "settings",
+        "api_config_mutation",
+        "api provider deleted",
+        {
+            "provider": _api_provider_trace_payload(provider),
+            "api_models": [_api_model_trace_payload(row) for row in api_models],
+        },
+    )
     await session.execute(
         update(PersonaTemplate)
         .where(PersonaTemplate.api_provider_id == provider_id)
@@ -728,13 +784,19 @@ async def delete_api_provider(provider_id: str, session: AsyncSession = Depends(
     )
     if model_ids:
         await session.execute(
-            update(PersonaTemplate).where(PersonaTemplate.api_model_id.in_(model_ids)).values(api_model_id=None)
+            update(PersonaTemplate)
+            .where(PersonaTemplate.api_model_id.in_(model_ids))
+            .values(api_model_id=None, api_provider_id=None, backing_model="")
         )
         await session.execute(
-            update(PersonaInstance).where(PersonaInstance.api_model_id.in_(model_ids)).values(api_model_id=None)
+            update(PersonaInstance)
+            .where(PersonaInstance.api_model_id.in_(model_ids))
+            .values(api_model_id=None, api_provider_id=None, backing_model="")
         )
         await session.execute(
-            update(AppSettings).where(AppSettings.default_api_model_id.in_(model_ids)).values(default_api_model_id=None)
+            update(AppSettings)
+            .where(AppSettings.default_api_model_id.in_(model_ids))
+            .values(default_api_model_id=None, default_api_provider_id=None, default_backing_model=None)
         )
         await session.execute(delete(ApiModel).where(ApiModel.id.in_(model_ids)))
     await session.execute(
@@ -882,21 +944,6 @@ async def update_api_model(model_id: str, body: ApiModelUpdate, session: AsyncSe
         api_model.display_name = _model_display_name(api_model.model_name)
     if api_model.is_default:
         await _set_single_default_api_model(session, api_model)
-    await session.execute(
-        update(PersonaTemplate)
-        .where(PersonaTemplate.api_model_id == model_id)
-        .values(backing_model=api_model.model_name, api_provider_id=api_model.api_provider_id)
-    )
-    await session.execute(
-        update(PersonaInstance)
-        .where(PersonaInstance.api_model_id == model_id)
-        .values(backing_model=api_model.model_name, api_provider_id=api_model.api_provider_id)
-    )
-    await session.execute(
-        update(AppSettings)
-        .where(AppSettings.default_api_model_id == model_id)
-        .values(default_backing_model=api_model.model_name, default_api_provider_id=api_model.api_provider_id)
-    )
     await session.commit()
     await session.refresh(api_model)
     return api_model
@@ -905,6 +952,13 @@ async def update_api_model(model_id: str, body: ApiModelUpdate, session: AsyncSe
 @app.delete("/templates/api-models/{model_id}")
 async def delete_api_model(model_id: str, session: AsyncSession = Depends(get_session)):
     api_model = await _api_model_or_404(session, model_id)
+    await trace_record(
+        session,
+        "settings",
+        "api_config_mutation",
+        "api model deleted",
+        {"api_model": _api_model_trace_payload(api_model)},
+    )
     await session.execute(
         update(PersonaTemplate)
         .where(PersonaTemplate.api_model_id == model_id)
@@ -1506,7 +1560,7 @@ async def append_user_message(room_id: str, body: MessageCreate, session: AsyncS
         # roster and is a user-kind slot the human controls. AI characters are
         # excluded — the engine drives those, the user can't take over.
         room = await session.get(Room, room_id)
-        if room is None or room.world_id is None:
+        if room is None or not is_scene_room(room):
             raise HTTPException(409, "as_character_id only valid in Story World scenes")
         member = await session.get(
             WorldSceneMember,
@@ -1695,13 +1749,18 @@ async def run_turn(room_id: str, body: TurnRequest, session: AsyncSession = Depe
 async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_session)):
     """Manually kick the autodrive chain.
 
-    Lets the user "let the AI keep talking" without typing anything. No-op if
-    the chain is already running or any persona stream is in flight.
+    Lets the user "let the AI keep talking" without typing anything. Returns
+    skipped + reason when the chain cannot be scheduled.
     """
-    runtime = await _runtime_or_404(session, room_id)
-    _ensure_not_frozen(runtime)
-    started = schedule_autodrive(room_id)
-    return {"status": "started" if started else "skipped", "active": is_autodrive_active(room_id)}
+    try:
+        result = await schedule_autodrive(session, room_id)
+    except ValueError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {
+        "status": result.status,
+        "reason": result.reason,
+        "active": is_autodrive_active(room_id),
+    }
 
 
 @app.post("/rooms/{room_id}/phase/next", response_model=RoomState)
@@ -1808,6 +1867,13 @@ async def freeze(room_id: str, session: AsyncSession = Depends(get_session)):
     return await _room_state(session, room_id)
 
 
+@app.post("/rooms/{room_id}/pause", response_model=RoomState)
+async def pause(room_id: str, session: AsyncSession = Depends(get_session)):
+    await pause_room(session, room_id)
+    await session.commit()
+    return await _room_state(session, room_id)
+
+
 @app.delete("/rooms/{room_id}")
 async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)):
     """Hard-delete a room and all of its dependents. Cancels any in-flight
@@ -1816,18 +1882,10 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     if not room:
         raise HTTPException(404, "room not found")
     # Cancel any in-flight LLM streams AND wait for them to actually unwind
-    # before issuing DELETEs. `task.cancel()` only schedules a CancelledError
-    # at the next await point — the task may still be holding a DB session
-    # (and a SQLite write lock) when this function continues. Without the
-    # await below, DELETE races the still-running task and trips
-    # `database is locked`.
-    in_flight = active_calls_for_room(room_id)
-    for active_call in in_flight:
-        active_call.cancel("room_deleted")
-    if in_flight:
-        await asyncio.gather(
-            *(call.task for call in in_flight), return_exceptions=True
-        )
+    # before issuing DELETEs. This lets background tasks release DB sessions
+    # and avoids racing SQLite write locks.
+    await drain_active_calls(room_id, "room_deleted")
+    clear_autodrive_lock(room_id, clear_stop=True)
     # Order matters: clear children before parents to satisfy FKs even when
     # ON DELETE CASCADE isn't declared.
     from .models import (
@@ -2532,25 +2590,6 @@ async def _fetch_top_memories(
     )
 
 
-def _format_memory_line(memory: WorldCharacterMemory) -> str:
-    prefix_parts: list[str] = []
-    if memory.scene_index_at_write is not None:
-        prefix_parts.append(f"第{memory.scene_index_at_write}幕")
-    elif memory.kind == "backstory":
-        prefix_parts.append("过往")
-    if memory.in_world_time_at_event:
-        prefix_parts.append(memory.in_world_time_at_event)
-    prefix = "（" + " · ".join(prefix_parts) + "）" if prefix_parts else ""
-    kind_label = {
-        "episode": "经历",
-        "vow": "誓言",
-        "impression": "印象",
-        "fact": "事实",
-        "backstory": "背景",
-    }.get(memory.kind, memory.kind)
-    return f"- [{kind_label}]{prefix} {memory.content.strip()}"
-
-
 async def _fetch_relations_to_peers(
     session: AsyncSession,
     character_id: str,
@@ -2570,100 +2609,6 @@ async def _fetch_relations_to_peers(
         )
     ).all()
     return {row.to_character_id: row for row in rows}
-
-
-def _format_relation_line(peer: WorldCharacter, relation: WorldCharacterRelation) -> str:
-    """One bullet under '## 你和在场角色的关系'."""
-    label = relation.label.strip() or "（未命名关系）"
-    sentiment = relation.sentiment
-    # Crude sentiment glyph so the model has an at-a-glance signal alongside
-    # the textual notes. -1 hostile … +1 close.
-    if sentiment >= 0.5:
-        marker = "❤"
-    elif sentiment >= 0.1:
-        marker = "+"
-    elif sentiment <= -0.5:
-        marker = "✕"
-    elif sentiment <= -0.1:
-        marker = "-"
-    else:
-        marker = "·"
-    notes = relation.notes.strip()
-    head = f"- 对「{peer.name}」: {label} [{marker} {sentiment:+.2f}]"
-    if notes:
-        return f"{head}\n  {notes}"
-    return head
-
-
-def _compose_scene_persona_prompt(
-    world: World,
-    character: WorldCharacter,
-    scene: Room,
-    memories: list[WorldCharacterMemory] | None = None,
-    relations: dict[str, WorldCharacterRelation] | None = None,
-    peers: list[WorldCharacter] | None = None,
-) -> str:
-    """Bake World + character context into the persona's system_prompt at
-    PersonaInstance creation time.
-
-    Editing the source World/Character later does *not* retroactively rewrite
-    instances of already-created scenes (per design doc R2). New scenes pick
-    up fresh context.
-    """
-    parts: list[str] = []
-    # World block
-    world_lines: list[str] = []
-    if world.synopsis.strip():
-        world_lines.append(world.synopsis.strip())
-    if world.setting.strip():
-        world_lines.append(f"设定：{world.setting.strip()}")
-    if world.calendar_hint.strip():
-        world_lines.append(f"纪年法：{world.calendar_hint.strip()}")
-    if world_lines:
-        parts.append(f"## 世界『{world.name}』\n" + "\n".join(world_lines))
-    # Character block
-    identity = character.identity.strip()
-    char_header = f"你是「{character.name}」"
-    if identity:
-        char_header += f"（{identity}）"
-    char_header += "。"
-    char_lines = [char_header]
-    # Note: character.core_identity is intentionally NOT inlined here. It
-    # plays the role of the character's primary system prompt and is emitted
-    # once at the very top of the composed prompt by `_create_scene_persona_instance`.
-    # Including it here too would duplicate it in the LLM context.
-    if character.brief.strip():
-        char_lines.append(character.brief.strip())
-    if character.skills_text.strip():
-        char_lines.append(f"技能：{character.skills_text.strip()}")
-    if character.goals_text.strip():
-        char_lines.append(f"当前目标：{character.goals_text.strip()}")
-    parts.append("## 你是谁\n" + "\n".join(char_lines))
-    # Memory block (retrieved at scene-creation; frozen in the snapshot).
-    if memories:
-        memory_lines = [_format_memory_line(m) for m in memories]
-        parts.append("## 你记得的事\n" + "\n".join(memory_lines))
-    # Relationships block — only for peers actually on stage in this scene.
-    relation_map = relations or {}
-    if peers and relation_map:
-        relation_lines = [
-            _format_relation_line(peer, relation_map[peer.id])
-            for peer in peers
-            if peer.id != character.id and peer.id in relation_map
-        ]
-        if relation_lines:
-            parts.append("## 你和在场角色的关系\n" + "\n".join(relation_lines))
-    # Scene block (time + background hints)
-    scene_lines: list[str] = []
-    if scene.in_world_time_start.strip():
-        scene_lines.append(f"时间：{scene.in_world_time_start.strip()}")
-    if scene.in_world_duration_hint.strip():
-        scene_lines.append(f"时长：{scene.in_world_duration_hint.strip()}")
-    if scene.background.strip():
-        scene_lines.append(scene.background.strip())
-    if scene_lines:
-        parts.append(f"## 这一幕（第 {scene.scene_index} 幕）\n" + "\n".join(scene_lines))
-    return "\n\n".join(parts)
 
 
 async def _create_scene_persona_instance(
@@ -2688,7 +2633,7 @@ async def _create_scene_persona_instance(
         session, character.id, current_scene_index=scene.scene_index
     )
     relations = await _fetch_relations_to_peers(session, character.id, peer_characters or [])
-    composed_prompt = _compose_scene_persona_prompt(
+    composed_prompt = compose_scene_persona_prompt(
         world, character, scene, memories, relations, peer_characters or []
     )
     # Single source of truth for the character's "main" prompt: prefer
@@ -2921,7 +2866,7 @@ async def _scene_or_404(session: AsyncSession, room_id: str) -> Room:
     room = await session.get(Room, room_id)
     if room is None:
         raise HTTPException(404, "room not found")
-    if not room.world_id:
+    if not is_scene_room(room):
         raise HTTPException(409, "room is not a scene of any world")
     return room
 
@@ -3077,6 +3022,8 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
         return scene
+    await drain_active_calls(room_id, "scene_sealed")
+    clear_autodrive_lock(room_id, clear_stop=True)
     scene.sealed_at = datetime.now(timezone.utc)
     await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
     # Hold the sealed_at write so even if the scribe crashes, the seal sticks.

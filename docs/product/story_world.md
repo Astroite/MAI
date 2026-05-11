@@ -77,7 +77,7 @@ Retrieval v1 简化为 `salience DESC, scene_index DESC` 的 top-K，未引入 B
 - `run_scene_memory_scribe` / `decay_unused_memories` / `enforce_memory_cap`：封幕路径的三个核心函数。
 - Scene 内默认**关闭** Room scribe（`run_scribe_update` 在 `world_id IS NOT NULL` 的房间里早退）；character memory scribe 是唯一的折叠路径。
 
-`autodrive` / `facilitator` / `freeze` 全部不动。
+`autodrive` / `facilitator` 仍沿用主引擎路径；`pause` / `freeze` 也走 Room 级控制（pause 等当前角色说完后冻结，freeze 立即取消 in-flight）。
 
 ## 6. 路由
 

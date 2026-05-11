@@ -1,6 +1,6 @@
 # MAI 桌面壳安装与打包清单
 
-> 当前状态：Tauri v2 壳与 FastAPI PyInstaller sidecar 已接入，Windows NSIS 安装包已完成构建验证；无窗口 sidecar 已通过 `/health` 运行时探活。
+> 当前状态：Tauri v2 壳与 FastAPI PyInstaller sidecar 已接入，Windows NSIS 安装包已完成构建验证；无窗口 sidecar 已通过 `/health` 运行时探活；桌面端会把 sidecar 启动和退出诊断写入本机日志目录。
 
 ## 1. 你需要安装的东西
 
@@ -112,7 +112,22 @@ frontend/src-tauri/binaries/mai-backend-x86_64-pc-windows-msvc.exe
 frontend/src-tauri/target/release/bundle/nsis/
 ```
 
-## 5. 常见错误
+## 5. 桌面端诊断日志
+
+Windows release 版会把桌面壳和 sidecar 诊断写入：
+
+```text
+%APPDATA%\MAI\logs\
+```
+
+主要文件：
+
+- `backend.log`：后端 sidecar 启动参数、stdout/stderr、健康检查失败、进程退出状态
+- `frontend.log`：桌面壳启动、前端加载、前端未捕获错误和未处理 Promise rejection
+
+如果后端启动失败或运行中退出，前端会显示顶部诊断横幅，并提供“打开日志目录”按钮；也可以在 `设置 -> 调试 -> 诊断日志` 打开同一目录。
+
+## 6. 常见错误
 
 | 现象 | 处理 |
 |---|---|
@@ -120,7 +135,7 @@ frontend/src-tauri/target/release/bundle/nsis/
 | `link.exe` 或 MSVC linker 缺失 | 安装 Visual Studio Build Tools 2022 的 C++ 桌面开发工作负载 |
 | `pnpm tauri` 不存在 | 在 `frontend/` 重新执行 `pnpm install` |
 | 找不到 `mai-backend-<triple>.exe` | 先运行 `.\scripts\build-sidecar.ps1 -TargetTriple x86_64-pc-windows-msvc` |
-| 桌面应用启动后白屏或 API 不通 | 检查 sidecar 是否启动；Tauri 壳会向前端注入 `window.__MAI_API_BASE__` 指向本地临时端口 |
+| 桌面应用启动后白屏或 API 不通 | 打开诊断日志目录，优先检查 `backend.log`；Tauri 壳会向前端注入 `window.__MAI_API_BASE__` 指向本地临时端口 |
 | 设置页提示未配置默认模型 | 打开 `模板 -> API 配置`，先新建 API 配置和模型，再回到 `设置` 选择默认模型 |
 | `ModuleNotFoundError: No module named 'app'` | 重新构建 sidecar；`mai_backend_main.py` 必须直接导入 `app.main`，`mai-backend.spec` 必须显式收集 `app.*` |
 | 提示 WebView2 缺失 | 安装 Microsoft Edge WebView2 Evergreen Runtime |

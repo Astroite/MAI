@@ -298,9 +298,13 @@ export const api = {
       body: JSON.stringify({ is_locked })
     }),
   freeze: (roomId: string) => request<RoomState>(`/rooms/${roomId}/freeze`, { method: "POST" }),
+  pause: (roomId: string) => request<RoomState>(`/rooms/${roomId}/pause`, { method: "POST" }),
   unfreeze: (roomId: string) => request<RoomState>(`/rooms/${roomId}/unfreeze`, { method: "POST" }),
   resumeAutodrive: (roomId: string) =>
-    request<{ status: string; active: boolean }>(`/rooms/${roomId}/autodrive/resume`, { method: "POST" }),
+    request<{ status: "scheduled" | "skipped"; reason?: string | null; active: boolean }>(
+      `/rooms/${roomId}/autodrive/resume`,
+      { method: "POST" }
+    ),
   updateLimits: (roomId: string, body: unknown) =>
     request(`/rooms/${roomId}/limits`, { method: "PATCH", body: JSON.stringify(body) }),
   upload: async (roomId: string, file: File) => {

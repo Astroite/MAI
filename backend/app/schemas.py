@@ -166,7 +166,7 @@ class PersonaCreate(APIModel):
     kind: Literal["discussant", "scribe", "facilitator"] = "discussant"
     name: str
     description: str = ""
-    backing_model: str = "openai/gpt-4o-mini"
+    backing_model: str = ""
     api_provider_id: str | None = None
     api_model_id: str | None = None
     system_prompt: str
@@ -225,7 +225,7 @@ class PersonaTemplateCreate(APIModel):
     name: str
     identity: str = ""
     description: str = ""
-    backing_model: str = "openai/gpt-4o-mini"
+    backing_model: str = ""
     api_provider_id: str | None = None
     api_model_id: str | None = None
     system_prompt: str

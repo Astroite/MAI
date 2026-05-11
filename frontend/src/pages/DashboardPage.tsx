@@ -8,13 +8,15 @@ import { StatusPill } from "../components/StatusPill";
 import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../components/PersonaIcon";
 import type { Room } from "../types";
 import { useI18n } from "../i18n";
+import { queryKeys } from "../queryKeys";
+import { isSceneRoom } from "../utils/scene";
 
 export function DashboardPage() {
   const { t, display, formatRelativeTime } = useI18n();
-  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const health = useQuery({ queryKey: ["health"], queryFn: api.health, refetchInterval: 30000 });
+  const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
+  const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, refetchInterval: 30000 });
   const personas = useQuery({
-    queryKey: ["persona-templates", "discussant", "editable"],
+    queryKey: queryKeys.personaTemplates.discussantEditable,
     queryFn: () => api.personaTemplates("discussant", false)
   });
 
@@ -23,7 +25,7 @@ export function DashboardPage() {
   const discussionRooms = useMemo(
     () =>
       [...(rooms.data ?? [])]
-        .filter((room) => !room.parent_room_id && !room.world_id)
+        .filter((room) => !room.parent_room_id && !isSceneRoom(room))
         .sort((a, b) => {
           const aT = a.last_activity_at ?? a.created_at;
           const bT = b.last_activity_at ?? b.created_at;

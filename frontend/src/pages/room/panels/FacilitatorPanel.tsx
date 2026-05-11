@@ -3,6 +3,7 @@ import { Activity, MessageSquarePlus, Shield } from "lucide-react";
 import { api } from "../../../api";
 import { StatusPill, type PillTone } from "../../../components/StatusPill";
 import { useI18n } from "../../../i18n";
+import { queryKeys } from "../../../queryKeys";
 
 interface FacilitatorSignal {
   id: string;
@@ -37,7 +38,7 @@ export function FacilitatorPanel({
   const { t } = useI18n();
   const ask = useMutation({
     mutationFn: () => api.askFacilitator(roomId),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["room", roomId] })
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) })
   });
   const visible = compact ? signals.slice(0, 1) : signals.slice(0, 6);
 

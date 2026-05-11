@@ -79,7 +79,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - `AppSettings.default_api_model_id`：全局默认模型。
 - persona template / instance 可绑定 `api_model_id`。
 
-旧字段 `backing_model` 和 `api_provider_id` 仍保留为兼容镜像。`migrate_api_models.py` 会把旧数据补成 `api_models`。
+旧字段 `backing_model` 和 `api_provider_id` 仍保留为兼容 fallback；新写入只保存 `api_model_id`。`migrate_api_models.py` 会把旧数据补成 `api_models`。
 
 ### 3.3 国际化
 
@@ -122,6 +122,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 同标签 phase 改写 silent 提示：原 casual_chat 的"没话就 silent"换成"用一句台词或动作维持存在感"，避免一房间全部 `<silent/>`。
 - `llm.py::_build_messages` 加入多 AI peer 路由：当前发言人之外的角色历史发言改写成 `user` + `「Name」: ` 前缀，并向 system prompt 注入"你只是 X 一个人"硬约束，根治"剑客代写刀客台词"那种全知叙述者退化。
 - `engine.py` 新增 `is_autodrive_active` / `schedule_autodrive`；`POST /rooms/{id}/autodrive/resume` 端点让用户不发消息也能让 AI 接力。
+- `POST /rooms/{id}/pause` 提供 graceful pause：故事模式里等当前角色说完再冻结；顶部 Freeze 仍是强制截断当前 in-flight。
 - `RoomRuntimeOut` 暴露 `autodrive_active` 和 `current_speakers`，前端 `SpeakerStateBar` 据此显示 4 态。
 
 ### 3.6 人设主题色与视觉一致性
@@ -197,8 +198,9 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - Room 三栏布局和设置抽屉。
 - Composer 支持 normal / judge / dead_end / 群友发言。
 - parallel 多气泡 streaming。
-- `message.cancelled` 清理 streaming 状态。
-- 断线重连通过 `in_flight_partial` 恢复。
+- Zustand `streaming` 是流式期间唯一实时文本来源；`message.appended` 后由 TanStack Query room cache 接管最终消息。
+- `message.cancelled` / final message id 会 finalized streaming 状态，防止迟到 chunk 或旧 partial 复活。
+- 断线重连通过 `in_flight_partial` 恢复，且只恢复尚未进入最终消息列表的 partial。
 - 成员编辑器可为房间内人设选择模型。
 - 成员编辑器可配置自动回复和工具权限。
 - 右侧工具面板可管理 MCP server、查看工具清单、手动执行只读工具。

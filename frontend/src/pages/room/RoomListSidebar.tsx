@@ -8,18 +8,20 @@ import { useConfirm } from "../../components/ConfirmDialog";
 import { toast } from "../../components/Toaster";
 import type { Room } from "../../types";
 import { useI18n } from "../../i18n";
+import { queryKeys } from "../../queryKeys";
 import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../../components/PersonaIcon";
+import { isSceneRoom } from "../../utils/scene";
 
 export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { t } = useI18n();
   const confirm = useConfirm();
-  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
-  const formats = useQuery({ queryKey: ["formats"], queryFn: () => api.formats() });
-  const recipes = useQuery({ queryKey: ["recipes"], queryFn: () => api.recipes() });
+  const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
+  const formats = useQuery({ queryKey: queryKeys.formats.all, queryFn: () => api.formats() });
+  const recipes = useQuery({ queryKey: queryKeys.recipes.all, queryFn: () => api.recipes() });
   const personas = useQuery({
-    queryKey: ["persona-templates", "discussant"],
+    queryKey: queryKeys.personaTemplates.discussant,
     queryFn: () => api.personaTemplates("discussant")
   });
   const [creating, setCreating] = useState(false);
@@ -43,9 +45,9 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
         recipe_id: defaultRecipeId,
         format_id: defaultRecipeId ? undefined : fallbackFormatId,
         persona_ids: defaultRecipeId ? [] : fallbackPersonaIds
-      }),
+    }),
     onSuccess: (state) => {
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       setCreating(false);
       setTitle(t("room.newDiscussion"));
       navigate(`/rooms/${state.room.id}`);
@@ -55,7 +57,7 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   const remove = useMutation({
     mutationFn: (roomId: string) => api.deleteRoom(roomId),
     onSuccess: (_data, roomId) => {
-      void queryClient.invalidateQueries({ queryKey: ["rooms"] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       // If we just deleted the room we're viewing, kick back to the list.
       if (roomId === activeRoomId) navigate("/");
     },
@@ -77,18 +79,18 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
   // between acts without leaving the chat shell). Otherwise it shows ordinary
   // discussion rooms only — Scene rooms have their own home in /worlds/:id.
   const activeRoom = (rooms.data ?? []).find((r) => r.id === activeRoomId);
-  const activeWorldId = activeRoom?.world_id ?? null;
+  const activeWorldId = isSceneRoom(activeRoom) ? activeRoom.world_id : null;
 
   // Top-level rooms (not subrooms), filtered by Scene-vs-discussion context.
   const topLevel = useMemo(() => {
     const all = (rooms.data ?? []).filter((room) => !room.parent_room_id);
     if (activeWorldId) {
       return all
-        .filter((room) => room.world_id === activeWorldId)
+        .filter((room) => isSceneRoom(room) && room.world_id === activeWorldId)
         .sort((a, b) => (a.scene_index ?? 0) - (b.scene_index ?? 0));
     }
     return all
-      .filter((room) => !room.world_id)
+      .filter((room) => !isSceneRoom(room))
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   }, [rooms.data, activeWorldId]);
   const childrenByParent = useMemo(() => {
@@ -139,9 +141,9 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
           <NavLink
             to={`/worlds/${activeWorldId}`}
             className="btn h-9 w-full justify-between px-3"
-            title="返回世界"
+            title={t("room.scene.backToWorld")}
           >
-            <span>返回世界</span>
+            <span>{t("room.scene.backToWorld")}</span>
             <CornerDownRight size={14} />
           </NavLink>
         ) : (
@@ -182,13 +184,13 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
       )}
       <div className="mai-scrollbar min-h-0 flex-1 overflow-auto p-3">
         <div className="mb-2 flex items-center justify-between px-1 text-xs font-semibold text-muted">
-          <span>{activeWorldId ? "本世界场景" : t("room.allRooms")}</span>
+          <span>{activeWorldId ? t("room.scene.sidebarTitle") : t("room.allRooms")}</span>
           <span>{visibleTopLevel.length}</span>
         </div>
         {visibleTopLevel.length === 0 && (
           <div className="px-2 py-6 text-center text-sm text-muted">
             {activeWorldId ? (
-              <>本世界尚无场景。回到世界页面创建第一幕。</>
+              <>{t("room.scene.sidebarEmpty")}</>
             ) : (
               <>{t("dashboard.emptyRooms")} <Plus size={12} className="inline" /> {t("common.create")}</>
             )}
