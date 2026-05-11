@@ -19,7 +19,7 @@ import { SKIP_UPDATE_KEY } from "../App";
 import { SectionCard } from "../components/SectionCard";
 import { StatusPill } from "../components/StatusPill";
 import { toast } from "../components/Toaster";
-import { ApiProvidersView } from "./TemplatesPage";
+import { ProvidersTab } from "./templates/ProvidersTab";
 import { useI18n } from "../i18n";
 import { queryKeys } from "../queryKeys";
 import { useUIStore } from "../store";
@@ -77,7 +77,7 @@ export function SettingsPage() {
 
       <DebugSection />
 
-      <ApiProvidersView />
+      <ProvidersTab />
     </div>
   );
 }
