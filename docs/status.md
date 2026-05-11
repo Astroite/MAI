@@ -197,8 +197,9 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - Room 三栏布局和设置抽屉。
 - Composer 支持 normal / judge / dead_end / 群友发言。
 - parallel 多气泡 streaming。
-- `message.cancelled` 清理 streaming 状态。
-- 断线重连通过 `in_flight_partial` 恢复。
+- Zustand `streaming` 是流式期间唯一实时文本来源；`message.appended` 后由 TanStack Query room cache 接管最终消息。
+- `message.cancelled` / final message id 会 finalized streaming 状态，防止迟到 chunk 或旧 partial 复活。
+- 断线重连通过 `in_flight_partial` 恢复，且只恢复尚未进入最终消息列表的 partial。
 - 成员编辑器可为房间内人设选择模型。
 - 成员编辑器可配置自动回复和工具权限。
 - 右侧工具面板可管理 MCP server、查看工具清单、手动执行只读工具。

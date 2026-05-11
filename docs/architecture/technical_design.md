@@ -366,6 +366,12 @@ casual ordering 自带的 `<silent/>` 逃生口也按 phase tag 分支：`casual
 5. 完成、取消、超时或触发 limit 后追加最终 message。
 6. 清理 `ACTIVE_CALLS`。
 
+前端状态分层：
+
+- 流式期间：Zustand `streaming` buffer 是唯一实时文本来源。
+- 完成后：`message.appended` 直接 upsert TanStack Query room cache，并把该 `message_id` 标记为 finalized，迟到 chunk 或旧 `/state.in_flight_partial` 不再恢复气泡。
+- `/state.in_flight_partial` 只用于刷新页面、切换房间或 SSE 重连后的恢复；如果同一 `message_id` 已在最终消息列表中，前端会忽略该 partial。
+
 ### 6.4 带工具调用的生成
 
 房间成员实例可在 `config` 中开启：
@@ -484,12 +490,13 @@ Dashboard 首次使用引导是三个水平节点（API → 人设 → 房间）
 `useRoomEvents` 订阅 `/rooms/{id}/events`：
 
 - `message.streaming`：直接更新 Zustand streaming buffer。
-- `message.appended` / room / phase / scribe / facilitator 事件：invalidate 对应 TanStack Query。
-- `message.cancelled`：清理 streaming buffer 并刷新房间。
+- `message.appended`：先 upsert TanStack Query room cache，再 finalized 对应 streaming buffer，并继续触发去抖 invalidate 做最终对账。
+- `message.cancelled`：finalized 对应 streaming buffer 并刷新房间。
+- room / phase / scribe / facilitator 事件：invalidate 对应 TanStack Query。
 
 invalidate 走 250 ms 去抖（`scheduleInvalidate`）：autodrive 链一次能在几秒内 burst 多个事件，去抖后多次合并成 1 次 `/state` refetch，避免后台被淹。
 
-断线后，`GET /rooms/{id}/state` 会返回 `in_flight_partial`，前端用 `message_id` 和 `chunk_index` 去重恢复。
+断线后，`GET /rooms/{id}/state` 会返回 `in_flight_partial`，前端用 `message_id` 和 `chunk_index` 去重恢复；已 finalized 的 message id 会阻止迟到 partial 重新出现。
 
 ### 8.5 国际化
 

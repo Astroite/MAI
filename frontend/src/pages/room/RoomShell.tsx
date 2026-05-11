@@ -64,13 +64,17 @@ export function RoomShell() {
   const [params, setParams] = useSearchParams();
   const state = room.data;
   const hydrateStream = useUIStore((store) => store.hydrateStream);
+  const finalizeStreams = useUIStore((store) => store.finalizeStreams);
 
   useEffect(() => {
     if (!activeRoomId) return;
+    const finalMessageIds = new Set((state?.messages ?? []).map((message) => message.id));
+    finalizeStreams([...finalMessageIds]);
     for (const partial of state?.in_flight_partial ?? []) {
+      if (finalMessageIds.has(partial.message_id)) continue;
       hydrateStream(activeRoomId, partial.message_id, partial.persona_id, partial.content, partial.last_chunk_index);
     }
-  }, [activeRoomId, hydrateStream, state?.in_flight_partial]);
+  }, [activeRoomId, finalizeStreams, hydrateStream, state?.in_flight_partial, state?.messages]);
 
   useEffect(() => {
     setShowRoomsDrawer(false);

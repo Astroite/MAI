@@ -47,8 +47,10 @@ export function MessageList({
   );
   const entries = useMemo<Entry[]>(() => {
     const out: Entry[] = messages.map((message) => ({ kind: "message", key: message.id, message }));
+    const finalMessageIds = new Set(messages.map((message) => message.id));
     for (const item of Object.values(streaming)) {
       if (item.roomId !== roomId) continue;
+      if (finalMessageIds.has(item.messageId)) continue;
       out.push({
         kind: "stream",
         key: `stream-${item.messageId}`,

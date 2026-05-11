@@ -6,7 +6,7 @@ import { toast } from "./components/Toaster";
 import { useI18n } from "./i18n";
 import { queryKeys } from "./queryKeys";
 import { useUIStore } from "./store";
-import type { StreamingEvent } from "./types";
+import type { Message, RoomState, StreamingEvent } from "./types";
 
 export function useUnsavedChangesWarning(when: boolean) {
   useEffect(() => {
@@ -22,12 +22,22 @@ export function useUnsavedChangesWarning(when: boolean) {
   }, [when]);
 }
 
-type EventPayload = StreamingEvent & { message?: { id: string } };
+type EventPayload = StreamingEvent & { message?: Message };
+
+export function upsertRoomMessage(state: RoomState | undefined, message: Message): RoomState | undefined {
+  if (!state) return state;
+  const index = state.messages.findIndex((item) => item.id === message.id);
+  const messages =
+    index >= 0
+      ? state.messages.map((item, itemIndex) => (itemIndex === index ? message : item))
+      : [...state.messages, message];
+  return { ...state, messages };
+}
 
 export function useRoomEvents(roomId?: string) {
   const queryClient = useQueryClient();
   const appendChunk = useUIStore((state) => state.appendChunk);
-  const clearStream = useUIStore((state) => state.clearStream);
+  const finalizeStream = useUIStore((state) => state.finalizeStream);
   const setConnectionStatus = useUIStore((state) => state.setConnectionStatus);
   const { t } = useI18n();
 
@@ -76,9 +86,14 @@ export function useRoomEvents(roomId?: string) {
         if (payload.type === "message.streaming" && payload.message_id && payload.persona_id && payload.chunk_text) {
           appendChunk(roomId, payload.message_id, payload.persona_id, payload.chunk_text, payload.chunk_index);
         }
+        if (payload.type === "message.appended" && payload.message) {
+          queryClient.setQueryData<RoomState>(queryKeys.room(roomId), (current) =>
+            upsertRoomMessage(current, payload.message!)
+          );
+        }
         if (payload.type === "message.appended" || payload.type === "message.cancelled") {
           const id = payload.message_id ?? payload.message?.id;
-          if (id) clearStream(id);
+          if (id) finalizeStream(id);
         }
         if (
           [
@@ -144,5 +159,5 @@ export function useRoomEvents(roomId?: string) {
       if (invalidateTimer != null) clearTimeout(invalidateTimer);
       setConnectionStatus("connected", 0);
     };
-  }, [appendChunk, clearStream, queryClient, roomId, setConnectionStatus, t]);
+  }, [appendChunk, finalizeStream, queryClient, roomId, setConnectionStatus, t]);
 }
