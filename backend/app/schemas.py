@@ -284,6 +284,8 @@ class PersonaInstanceOut(APIModel):
     room_id: str
     template_id: str
     template_version: int
+    # PersonaInstance rows do not persist these template lifecycle fields yet.
+    # Keep derived defaults here so the frontend contract stays parallel to templates.
     schema_version: int = 1
     status: Literal["draft", "published"] = "published"
     position: int
