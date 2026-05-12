@@ -1640,5 +1640,113 @@ class WorldStateOut(APIModel):
     recent_relationship_changes_count: int = 0
 
 
+class SceneWorldBibleCompactOut(APIModel):
+    id: str
+    name: str
+    summary: str = ""
+    background: str = ""
+    current_date_label: str = ""
+    current_location: str = ""
+    current_arc: dict[str, Any] = Field(default_factory=dict)
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    taboos: list[dict[str, Any]] = Field(default_factory=list)
+    plot_hooks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SceneStageContextOut(APIModel):
+    id: str
+    scene_index: int | None = None
+    title: str
+    background: str = ""
+    in_world_time_start: str = ""
+    in_world_time_end: str = ""
+    in_world_duration_hint: str = ""
+    sealed: bool = False
+    frozen: bool = False
+
+
+class SceneTimelineEventCompactOut(APIModel):
+    id: str
+    type: TimelineEventType = "history"
+    title: str
+    summary: str = ""
+    date_label: str = ""
+    order: int = 0
+    source: TimelineEventSource = "user"
+
+
+class SceneStageCharacterOut(APIModel):
+    world_character_id: str
+    persona_instance_id: str | None = None
+    name: str
+    kind: Literal["ai", "user"]
+    role_in_scene: str = ""
+    speak_as_user: bool = False
+    entry_order: int = 0
+    joined_at: datetime
+    entered_at_message_id: str | None = None
+    exited_at_message_id: str | None = None
+    is_present: bool = True
+    can_speak: bool = False
+    can_user_speak_as: bool = False
+
+
+class SceneMemoryCueOut(APIModel):
+    id: str
+    world_character_id: str
+    source_scene_id: str | None = None
+    seal_draft_id: str | None = None
+    scene_index_at_write: int | None = None
+    in_world_time_at_event: str = ""
+    kind: Literal["episode", "impression", "vow", "fact", "backstory"]
+    target_character_id: str | None = None
+    content: str
+    salience: float = 0.5
+    last_used_scene_index: int | None = None
+    source: Literal["manual", "seal_committed"] = "manual"
+    created_at: datetime
+
+
+class SceneRelationshipCueOut(APIModel):
+    id: str
+    from_character_id: str
+    to_character_id: str
+    to_character_name: str = ""
+    label: str = ""
+    sentiment: float = 0.0
+    notes: str = ""
+    last_updated_scene_id: str | None = None
+    last_updated_seal_draft_id: str | None = None
+    source: Literal["manual", "seal_committed"] = "manual"
+    updated_at: datetime
+
+
+class SceneTranscriptVisibilityPreviewOut(APIModel):
+    transcript_from_message_id: str | None = None
+    transcript_to_message_id: str | None = None
+    visible_message_count: int = 0
+    notes: list[str] = Field(default_factory=list)
+
+
+class SceneSpeakerContextOut(APIModel):
+    persona_instance_id: str
+    world_character_id: str | None = None
+    name: str = ""
+    memory_cues: list[SceneMemoryCueOut] = Field(default_factory=list)
+    relationship_cues: list[SceneRelationshipCueOut] = Field(default_factory=list)
+    visibility: SceneTranscriptVisibilityPreviewOut = Field(
+        default_factory=SceneTranscriptVisibilityPreviewOut
+    )
+
+
+class SceneContextOut(APIModel):
+    room_id: str
+    world: SceneWorldBibleCompactOut
+    scene: SceneStageContextOut
+    timeline: list[SceneTimelineEventCompactOut] = Field(default_factory=list)
+    stage_characters: list[SceneStageCharacterOut] = Field(default_factory=list)
+    speaker: SceneSpeakerContextOut | None = None
+
+
 # Resolve the forward reference in MemoryDistillation.
 MemoryDistillation.model_rebuild()

@@ -138,6 +138,7 @@ from .schemas import (
     UploadOut,
     VerdictCreate,
     SceneCreate,
+    SceneContextOut,
     SceneEnterRequest,
     SceneExitRequest,
     SceneRosterEntry,
@@ -168,6 +169,7 @@ from .schemas import (
     WorldTimelineEventUpdate,
     WorldUpdate,
 )
+from .scene_context import SceneContextError, build_scene_context
 from .llm import LITELLM_ROUTABLE_SLUGS, llm_adapter
 from .model_runtime import (
     resolve_default_model_runtime,
@@ -1590,8 +1592,12 @@ async def append_user_message(room_id: str, body: MessageCreate, session: AsyncS
         if member is None or member.exited_at_message_id is not None:
             raise HTTPException(422, "character is not currently on this scene's roster")
         character = await session.get(WorldCharacter, body.as_character_id)
-        if character is None or character.kind != "user":
+        if character is None or character.world_id != room.world_id:
+            raise HTTPException(422, "as_character_id must reference a character in this scene's world")
+        if character.kind != "user":
             raise HTTPException(422, "as_character_id must reference a kind=user character")
+        if member.speak_as_user is not True:
+            raise HTTPException(422, "character is not enabled for user speech in this scene")
         author_actual = "user_as_persona"
         masquerade_name = character.name
     message = Message(
@@ -3416,6 +3422,23 @@ async def scene_exit(
         {"type": "message.appended", "message": MessageOut.model_validate(message).model_dump(mode="json")},
     )
     return member
+
+
+@app.get("/rooms/{room_id}/scene/context", response_model=SceneContextOut)
+async def get_scene_context(
+    room_id: str,
+    speaker_persona_id: str | None = None,
+    session: AsyncSession = Depends(get_session),
+):
+    scene = await _scene_or_404(session, room_id)
+    try:
+        return await build_scene_context(
+            session,
+            scene,
+            speaker_persona_id=speaker_persona_id,
+        )
+    except SceneContextError as exc:
+        raise HTTPException(404, str(exc)) from exc
 
 
 async def _seal_draft_out(
