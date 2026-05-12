@@ -1,6 +1,6 @@
 # 项目进度与状态快照
 
-> 最近更新：2026-05-11
+> 最近更新：2026-05-12
 > 基线文档：[`product/product_design.md`](product/product_design.md) / [`architecture/technical_design.md`](architecture/technical_design.md)。Story World 子产品见 [`product/story_world.md`](product/story_world.md)。
 
 ## 1. 总览
@@ -52,6 +52,8 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 | Trace | 写入完成 | 查询与重放 UI 不做 |
 | Story World | PR 1–6 全部合入 | World / Character / Scene / Memory / Relations 五张表 + 路由 + 封幕 scribe + UI；详见 [`product/story_world.md`](product/story_world.md) |
 | World State System | P0 完成 | World Detail 主控台、World Bible 兼容层、Timeline Event、Memory / Relationship 可视化、两阶段封幕与 Scene-end Inspector |
+
+> **P0 Story World State System completed**：已完成 World Detail dashboard、World Bible、Timeline、Character Memory、Relationship view、Two-stage Seal Draft / Inspector / Commit。下一阶段先进入 P0.5 Stabilization / Polish，不立刻扩展 P1 功能。
 
 ## 3. 最近稳定化改动
 
@@ -268,6 +270,9 @@ pnpm build
 
 本次变更已额外做过：
 
+- 后端 Story World 测试：`tests/test_worlds.py tests/test_scenes.py tests/test_memory.py tests/test_relations.py tests/test_memory_decay.py tests/test_world_state.py`，31 passed。
+- 前端 `pnpm build` 通过。
+- `git diff --check HEAD` 通过。
 - `backend/.venv/bin/python -m py_compile backend/app/*.py`
 - FastAPI app import smoke
 - 临时 SQLite smoke：创建房间、初始消息、执行 `mai_list_room_members`
@@ -304,12 +309,12 @@ pnpm build
 
 ## 9. 下一阶段建议
 
-现在适合做的不是继续堆功能，而是稳定性与体验整理：
+现在适合做的不是继续堆功能，而是进入 P0.5 Stabilization / Polish，先把 P0 的体验和稳定性收口：
 
-- 给 i18n 字典补齐少量边角页面和错误消息。
-- 增加前端组件级测试，特别是 API 配置、模板复制和语言切换。
-- 梳理大 chunk 体积，考虑 Markdown/代码高亮按需加载。
-- 做一次完整桌面安装包 smoke test。
-- 如果要公开分发，再补隐私说明和 API key 本地存储说明。
-- 接入真实 MCP server 做端到端兼容性测试，优先覆盖 streamable_http。
-- **Story World 关系图（TODO）**：基于 `world_character_relations`（A→B 单向卡片）+ 角色档案，做一个直观的关系网络视图。形态待定——可能是侧栏弹出的力导向图，也可能是 World 页内的一栏；要能按 sentiment 着色、按 label 过滤、点节点跳到角色档案。等用户对 PR 4 的关系卡片用熟之后再开工。
+- 拆分 `WorldDetailPage`，降低主控台页面维护成本。
+- 优化 Scene-end Inspector 交互，让 Seal Draft 审阅、编辑、提交路径更清晰。
+- 优化 Timeline 视觉层级，让历史事件和 Scene 节点更容易扫描。
+- 优化 Relationship 列表 / 详情可读性。
+- **Story World 关系视图**：已实现 Relationship 列表 / 详情视图；完整图谱视图留作后续体验增强。
+- 跟踪本地 smoke 结束时偶发的 `aiosqlite` rollback shutdown warning；当前验证已成功且未观察到功能失败，不阻塞 P0 合入。
+- P0.5 收口后，再评估 i18n 边角补齐、前端组件级测试、大 chunk 拆分、桌面安装包 smoke test、公开分发隐私说明和真实 MCP server 端到端兼容性测试。
