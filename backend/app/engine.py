@@ -18,7 +18,6 @@ from .model_runtime import (
     runtime_persona_view,
 )
 from .models import (
-    ApiProvider,
     Decision,
     FacilitatorSignal,
     Message,
@@ -552,12 +551,7 @@ async def get_phase_template(session: AsyncSession, phase_instance: RoomPhaseIns
     return await session.get(PhaseTemplate, phase_instance.phase_template_id)
 
 
-async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) -> ApiProvider | None:
-    runtime = await resolve_model_runtime(session, persona)
-    return await session.get(ApiProvider, runtime.provider_id)
-
-
-async def resolve_persona_runtime(
+async def _runtime_view_for_persona(
     session: AsyncSession, persona: PersonaInstance
 ) -> tuple[object, ResolvedModelRuntime]:
     """Resolve model/provider settings into an immutable runtime view.
@@ -1043,7 +1037,7 @@ async def _stream_one_message(
     truncated_reason = None
     model_runtime: ResolvedModelRuntime | None = None
     try:
-        persona, model_runtime = await resolve_persona_runtime(session, persona)
+        persona, model_runtime = await _runtime_view_for_persona(session, persona)
         await trace_record(
             session,
             room.id,
@@ -1342,7 +1336,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
                 break
     new_messages = messages[start_index:]
     scribe = await get_room_system_persona(session, room_id, "scribe")
-    scribe, scribe_runtime = await resolve_persona_runtime(session, scribe)
+    scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
     update = await llm_adapter.complete_tool(
         scribe,
         "scribe_update",
@@ -1488,7 +1482,7 @@ async def _scribe_memory_for_character(
         )
     ).all()
     scribe = await get_room_system_persona(session, scene.id, "scribe")
-    scribe, scribe_runtime = await resolve_persona_runtime(session, scribe)
+    scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
     peer_ids = [pid for pid in peer_names if pid != character.id]
     existing_relations = (
         await session.scalars(
@@ -1893,7 +1887,7 @@ async def run_facilitator_eval(
             )
         ).all()
     )
-    facilitator, facilitator_runtime = await resolve_persona_runtime(session, facilitator)
+    facilitator, facilitator_runtime = await _runtime_view_for_persona(session, facilitator)
     evaluation = await llm_adapter.complete_tool(
         facilitator,
         "facilitator_evaluation",
