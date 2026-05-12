@@ -1,6 +1,6 @@
 # Story World
 
-> 状态：已实现（PR 1–6 全部合入 `feature/story-world`）。当前文档反映**现状**，原始设计草案与决策表见 git 历史。
+> 状态：已实现（PR 1–6 全部合入 `feature/story-world`，P1 Scene Experience 全部完成）。当前文档反映**现状**，原始设计草案与决策表见 git 历史。
 > 配套阅读：[`product_design.md`](product_design.md)、[`personas.md`](personas.md)、[`../architecture/technical_design.md`](../architecture/technical_design.md)。
 
 ## 1. 定位
@@ -78,14 +78,47 @@ Retrieval v1 简化为 `salience DESC, scene_index DESC` 的 top-K，未引入 B
 
 落在 `app/engine.py`：
 
-- `pick_next_speaker`：Scene 模式下，候选集来自当前在场（`exited_at_message_id IS NULL` 且 `entered_at_message_id` 已发生）的 `world_scene_members`。`kind=user` 角色出现在轮转里时变成 `wait`。
+- `pick_next_speaker`：Scene 模式下，候选集来自当前在场（`exited_at_message_id IS NULL` 且 `entered_at_message_id` 已发生）的 `world_scene_members`。`kind=user` 角色出现在轮转里时变成 `wait`。已退场角色完全排除在调度之外。
 - `_build_messages`：在 system prompt 头部 prepend World synopsis + character 档案 + retrieved episodic + 同场关系卡片。
-- `generate_scene_seal_draft_payload`：生成可编辑封幕草稿，不写入长期状态。
+- `visible_messages_for_scene_speaker`：基于 `WorldSceneMember` 的 `entered_at_message_id` / `exited_at_message_id` 做 transcript visibility slicing。晚入场角色看不到入场前消息，退场角色看不到退场后消息。
+- `_stream_one_message`：Scene room 中调用 `build_scene_context` + `compose_scene_runtime_context_prompt` 构建 Scene Context；如有 `director_instruction` 则调用 `append_ephemeral_director_instruction` 追加 ephemeral 指令块。
+- `generate_scene_seal_draft_payload`：生成可编辑封幕草稿，不写入长期状态。使用 `_slice_messages_for_character` 确保每个角色只看到自己见证的消息。
 - `run_scene_memory_scribe`：保留为底层兼容函数；正式 UI 路径通过 SealDraft commit 写入。
 - `decay_unused_memories` / `enforce_memory_cap`：SealDraft commit 后执行的记忆维护函数。
 - Scene 内默认**关闭** Room scribe（`run_scribe_update` 在 `world_id IS NOT NULL` 的房间里早退）；character memory scribe 是唯一的折叠路径。
 
 `autodrive` / `facilitator` 仍沿用主引擎路径；`pause` / `freeze` 也走 Room 级控制（pause 等当前角色说完后冻结，freeze 立即取消 in-flight）。
+
+### 5.1 Scene Context Builder（P1.1）
+
+`backend/app/scene_context.py` 提供只读 Scene Context Builder：
+
+- `build_scene_context(session, room, speaker_persona_id)` → `SceneContextOut`
+- 包含 World Bible compact、timeline events、stage roster、speaker private memory（top 6 by salience）、outgoing relationships to active peers、transcript visibility preview
+- `compose_scene_runtime_context_prompt(context)` 渲染为 `[World State]` / `[Stage State]` / `[Your Private Context]` / `[Behavior Contract]` 四段
+
+### 5.2 Behavior Contract（P1.6）
+
+Scene Context 的 `[Behavior Contract / 角色行为契约]` 段包含 8 条双语规则：
+
+- 只扮演自己 / Play only yourself
+- 不代替其他角色说话或行动 / Do not speak or act for other characters
+- 不做全知旁白 / Do not narrate as an omniscient observer
+- 只依据可见上下文 / Base responses only on visible context
+- 不知道的信息就表现为不知道 / If you don't know something, behave as if you don't know it
+- 如果被点名，优先回应点名意图 / When named, prioritize responding to the call
+- 未被点名时可以简短观察或沉默 / When not named, you may briefly observe or stay silent
+- 导演指令是临时指导，不是故事事实，不是角色听到的话，不会进入长期记忆 / A director instruction is temporary guidance, not a story fact, not something your character heard, and will not enter long-term memory
+
+### 5.3 Ephemeral Director Instruction（P1.5）
+
+`engine.py::append_ephemeral_director_instruction` 将导演指令包裹为 ephemeral block：
+
+- 只影响下一次 AI turn
+- 不持久化（不写入 Message 表）
+- 不是故事事实、不是旁白、不是角色听到的话
+- 不会进入 Seal Draft 或 Memory
+- 不会污染 World State
 
 ## 6. 路由
 
@@ -127,6 +160,13 @@ POST   /rooms/{rid}/seal-drafts/{draft_id}/retry       基于当前草稿整体�
 POST   /rooms/{rid}/seal-drafts/{draft_id}/commit      确认写入世界状态，Scene → sealed
 ```
 
+P1 新增路由：
+
+```
+POST   /rooms/{rid}/turn                               AI turn（可带 director_instruction）
+GET    /rooms/{rid}/scene/context                      Scene Context（只读，含 visibility preview）
+```
+
 `POST /rooms/{rid}/messages` 增加可选字段 `as_character_id`——当用户挂多个 user 角色时，指明本次以谁的身份发言。
 
 ## 7. 前端
@@ -137,10 +177,13 @@ POST   /rooms/{rid}/seal-drafts/{draft_id}/commit      确认写入世界状态�
 - `WorldDetailPage.tsx` —— World State 主控台：Header + 状态卡 + Tabs（Overview / Timeline / World Bible / Characters / Relationships / Memories / Scenes）。
 - `world/CharacterEditor.tsx` / `CharacterMemoryPanel.tsx` / `SceneCreator.tsx` / `TimelineColumn.tsx`。
 
-`RoomShell.tsx` 已小幅改造：检测到 `world_id` 时 title bar 显示「世界 / 第 N 幕」；Composer 增加两类模式：
+`RoomShell.tsx` 已小幅改造：检测到 `world_id` 时 title bar 显示「世界 / 第 N 幕」；Composer 增加三类模式（P1.3）：
 
 - **旁白（narration）**：用户以「导演」身份描写场景或角色动作，落库为 system 消息。
 - **扮演（act-as）**：用户挑选 `kind=user` 的角色，以该角色身份发言。
+- **导演指令（director）**：用户输入指令调度 AI 回应 / 下一拍。指令是 ephemeral runtime instruction，不写入故事正文。
+
+**Stage Presence UI（P1.4）**：`SceneStageConsole.tsx` 展示 World / Act / time / location、在场 / 退场角色列表、可发言 / 可扮演状态、memory / relationship cues。
 
 封幕草稿生成后，**Scene-end Inspector** 对话框展示本幕摘要、时间轴事件、角色记忆更新、关系变化与警告。用户确认 commit 后，这些内容才会进入长期世界状态。
 
@@ -161,6 +204,7 @@ World Detail 的 P0 主控台能力：
 - `tests/test_relations.py` —— 关系卡片单向维护。
 - `tests/test_room_export.py` —— Scene 导出。
 - `tests/test_world_state.py` —— World State 聚合、World Bible 编辑、Timeline Event CRUD 与链接校验。
+- `tests/test_scene_context.py` —— Scene Context Builder、transcript visibility slicing、director instruction ephemeral semantics、behavior contract completeness、Discussion Room isolation。
 
 ## 9. v2 候选（不在 v1）
 

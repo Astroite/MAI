@@ -1,6 +1,6 @@
 # 项目进度与状态快照
 
-> 最近更新：2026-05-12
+> 最近更新：2026-05-13
 > 基线文档：[`product/product_design.md`](product/product_design.md) / [`architecture/technical_design.md`](architecture/technical_design.md)。Story World 子产品见 [`product/story_world.md`](product/story_world.md)。
 
 ## 1. 总览
@@ -29,6 +29,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - Tauri 桌面壳打包。
 - **Story World**：跨房间世界 + 角色档案 + 三层记忆（core / relationships / episodic）+ 封幕 scribe + 旁白 / 扮演 composer 模式。
 - **World State System**：World Detail 主控台、World Bible 编辑、World 级 Timeline Event、记忆/关系可视化列表、两阶段 Seal Draft / Inspector / Commit。
+- **P1 Scene Experience**：Scene Context Builder、Runtime Context Injection、Transcript Visibility Slicing、Composer 三模式（旁白 / 扮演 / 导演指令）、Stage Presence UI、Director Controls（ephemeral instruction）、角色行为边界硬化。
 
 ## 2. 模块状态
 
@@ -52,8 +53,9 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 | Trace | 写入完成 | 查询与重放 UI 不做 |
 | Story World | PR 1–6 全部合入 | World / Character / Scene / Memory / Relations 五张表 + 路由 + 封幕 scribe + UI；详见 [`product/story_world.md`](product/story_world.md) |
 | World State System | P0 完成 | World Detail 主控台、World Bible 兼容层、Timeline Event、Memory / Relationship 可视化、两阶段封幕与 Scene-end Inspector |
+| P1 Scene Experience | P1 完成 | Scene Context Builder、Runtime Context Injection、Transcript Visibility Slicing、Composer 三模式、Stage Presence UI、Director Controls、角色行为边界硬化 |
 
-> **P0 Story World State System completed**：已完成 World Detail dashboard、World Bible、Timeline、Character Memory、Relationship view、Two-stage Seal Draft / Inspector / Commit。下一阶段先进入 P0.5 Stabilization / Polish，不立刻扩展 P1 功能。
+> **P1 Scene Experience completed**：已完成 Scene Context Builder、Runtime Context Injection、Transcript Visibility Slicing、Composer 三模式（旁白 / 扮演 / 导演指令）、Stage Presence UI、Director Controls（ephemeral instruction）、角色行为边界硬化。Story Scene 的 AI 角色现在只扮演自己、只使用可见信息、在导演控制下保持角色边界。
 
 ## 3. 最近稳定化改动
 
@@ -184,7 +186,25 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - **Memory / Relationship 可视化**：World Detail 中新增 Memories / Relationships 页签，展示来源、关联 Scene 与关系详情。
 - **两阶段封幕**：新增 `world_scene_seal_drafts`，`POST /rooms/{rid}/seal` 生成草稿，`POST /rooms/{rid}/seal-drafts/{draft_id}/commit` 幂等写入 Timeline / Memory / Relationship / sealed 状态。
 
-### 3.12 文档结构整理
+### 3.12 P1 Scene Experience
+
+P1 在 P0 Story World 基础上增加了 Scene 的运行时演出能力。详见 [`p1_plan.md`](p1_plan.md)。
+
+**P1.1 Scene Context Builder**：只读 Scene Context Builder，为每个 AI turn 构建 World Bible compact、timeline events、stage roster、speaker private memory、outgoing relationships、transcript visibility preview。位于 `backend/app/scene_context.py`。
+
+**P1.2 Runtime Context Injection**：将 Scene Context 注入 Story World Scene AI runtime system prompt。`engine.py::_stream_one_message` 在 scene room 中调用 `build_scene_context` + `compose_scene_runtime_context_prompt`，失败时 fallback 到 legacy prompt。
+
+**P1.2b Transcript Visibility Slicing**：晚入场角色看不到入场前消息，退场角色看不到退场后消息。`engine.py::visible_messages_for_scene_speaker` 基于 `WorldSceneMember.entered_at_message_id` / `exited_at_message_id` 做 interval slicing。封幕 pipeline 使用 `_slice_messages_for_character` 做相同过滤。
+
+**P1.3 Composer Mode Upgrade**：Story Scene Composer 三模式——**旁白**（用户作为导演描写场景 / 动作，落库为 system 消息）、**扮演**（用户挑 `kind=user` 角色以其身份发言）、**导演指令**（调度 AI 回应 / 下一拍，不写入故事正文）。
+
+**P1.4 Stage Presence UI**：Scene Header 显示 World / Act / time / location；Stage Panel 显示在场 / 退场角色、可发言 / 可扮演状态、memory / relationship cues。
+
+**P1.5 Director Controls**：ephemeral director instruction 语义——只影响下一次 AI turn，不持久化，不是故事事实，不是旁白，不是角色听到的话，不会进入长期记忆或 Seal Commit。`engine.py::append_ephemeral_director_instruction` 负责 prompt 注入。
+
+**P1.6 Role-bounded Behavior Hardening**：Behavior Contract 从 6 条扩展到 8 条双语规则，新增"被点名优先回应"和"导演指令是临时指导"。角色边界、信息边界、导演指令边界全部硬化。详见 `scene_context.py` 和 `test_scene_context.py`。
+
+### 3.13 文档结构整理
 
 - 新增 `docs/README.md` 作为文档地图，明确现行 source-of-truth、工程复盘和归档区边界。
 - 新增 `docs/engineering/refactor_issues_2026-05-11.md`，记录本轮重构暴露的 pause / freeze、runtime 多源状态、Story World 语义继承和文档过期问题。
@@ -251,6 +271,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - `test_memory_decay.py` —— `last_used_scene_index` 衰减 + episodic cap 折叠
 - `test_relations.py` —— 关系卡片单向维护
 - `test_world_state.py` —— World State 聚合、World Bible、Timeline Event
+- `test_scene_context.py` —— Scene Context Builder、transcript visibility、director instruction、behavior contract
 
 测试需要真实 LLM 凭据：
 
@@ -309,12 +330,8 @@ pnpm build
 
 ## 9. 下一阶段建议
 
-现在适合做的不是继续堆功能，而是进入 P0.5 Stabilization / Polish，先把 P0 的体验和稳定性收口：
+P1 Scene Experience 已完成。下一步可进入 P2 或继续 P1 Polish：
 
-- 拆分 `WorldDetailPage`，降低主控台页面维护成本。
-- 优化 Scene-end Inspector 交互，让 Seal Draft 审阅、编辑、提交路径更清晰。
-- 优化 Timeline 视觉层级，让历史事件和 Scene 节点更容易扫描。
-- 优化 Relationship 列表 / 详情可读性。
-- **Story World 关系视图**：已实现 Relationship 列表 / 详情视图；完整图谱视图留作后续体验增强。
-- 跟踪本地 smoke 结束时偶发的 `aiosqlite` rollback shutdown warning；当前验证已成功且未观察到功能失败，不阻塞 P0 合入。
-- P0.5 收口后，再评估 i18n 边角补齐、前端组件级测试、大 chunk 拆分、桌面安装包 smoke test、公开分发隐私说明和真实 MCP server 端到端兼容性测试。
+- P1 Polish：Composer 文案统一、Director instruction tooltip、Stage Presence UI 信息密度优化、空状态文案优化。
+- P2 候选：地图系统、任务系统、分支剧情、复杂导演 DSL、自动剧情规划器、完整关系图谱编辑器、角色记忆编辑器。
+- 持续：i18n 边角补齐、前端组件级测试、大 chunk 拆分、桌面安装包 smoke test、真实 MCP server 端到端兼容性测试。
