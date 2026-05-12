@@ -206,7 +206,7 @@ def _maybe_enable_litellm_debug() -> None:
         logger.warning("failed to enable LiteLLM debug: %r", exc)
 
 
-app = FastAPI(title=settings.app_name, version="0.5.0", lifespan=lifespan)
+app = FastAPI(title=settings.app_name, version="0.6.5", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -304,9 +304,21 @@ frontend/src-tauri/target/release/bundle/nsis/
 
 推送匹配 `v*.*.*` 的 tag 会触发 `.github/workflows/release.yml`：
 
+发布前先统一应用版本号。当前需要同步的版本位置：
+
+| 文件 | 字段 | 用途 |
+|---|---|---|
+| `frontend/package.json` | `version` | 前端包版本 |
+| `frontend/src-tauri/tauri.conf.json` | `version` | Tauri 应用/更新器版本 |
+| `frontend/src-tauri/Cargo.toml` | `[package].version` | 桌面壳 Rust crate 版本 |
+| `frontend/src-tauri/Cargo.lock` | `mai-desktop` package `version` | 锁定桌面壳 crate 版本 |
+| `backend/app/main.py` | `FastAPI(..., version=...)` | 后端 OpenAPI 元数据版本 |
+
+版本号提交应先合入 `main`，再创建同版本 tag，避免 tag 指向的代码仍带旧版本号。
+
 ```powershell
-git tag v0.1.0
-git push origin v0.1.0
+git tag -a v0.6.5 -m "Release v0.6.5"
+git push origin v0.6.5
 ```
 
 工作流会安装依赖、运行测试、构建前端、打包并上传 Release 产物。
