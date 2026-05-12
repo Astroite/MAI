@@ -576,26 +576,161 @@ async def get_room_discussants(session: AsyncSession, room_id: str) -> list[Pers
         .order_by(PersonaInstance.position, PersonaInstance.name)
     )
     discussants = list((await session.scalars(stmt)).all())
-    # Filter out scene members who have exited (Story World N5). Non-scene
-    # rooms are unaffected — those instances have world_character_id IS NULL.
+    room = await session.get(Room, room_id)
+    if room is None or not is_scene_room(room):
+        return discussants
+
+    # Scene rooms only auto-schedule AI characters who are on the current
+    # roster and have not exited. Unbound room personas or stale instances stay
+    # available for audit/state display, but never become runtime candidates.
     bound_ids = [p.world_character_id for p in discussants if p.world_character_id]
     if not bound_ids:
-        return discussants
-    exited = set(
+        return []
+    members = list(
         (
             await session.scalars(
-                select(WorldSceneMember.world_character_id)
-                .where(
+                select(WorldSceneMember).where(
                     WorldSceneMember.scene_id == room_id,
                     WorldSceneMember.world_character_id.in_(bound_ids),
-                    WorldSceneMember.exited_at_message_id.is_not(None),
+                    WorldSceneMember.exited_at_message_id.is_(None),
                 )
             )
         ).all()
     )
-    if not exited:
-        return discussants
-    return [p for p in discussants if p.world_character_id not in exited]
+    present_ids = {member.world_character_id for member in members}
+    if not present_ids:
+        return []
+    ai_character_ids = set(
+        (
+            await session.scalars(
+                select(WorldCharacter.id).where(
+                    WorldCharacter.id.in_(present_ids),
+                    WorldCharacter.world_id == room.world_id,
+                    WorldCharacter.kind == "ai",
+                )
+            )
+        ).all()
+    )
+    return [p for p in discussants if p.world_character_id in ai_character_ids]
+
+
+async def _trace_scene_transcript_visibility(
+    session: AsyncSession,
+    scene: Room,
+    speaker_persona: PersonaInstance,
+    messages: list[Message],
+    filtered: list[Message],
+    *,
+    speaker_character_id: str | None,
+    entered_at_message_id: str | None,
+    exited_at_message_id: str | None,
+    fallback_reason: str | None,
+) -> None:
+    summary = (
+        "scene transcript visibility "
+        f"{'fallback' if fallback_reason else 'applied'}: "
+        f"{len(filtered)}/{len(messages)} messages; "
+        f"persona={speaker_persona.id}; "
+        f"character={speaker_character_id}; "
+        f"entered={entered_at_message_id}; "
+        f"exited={exited_at_message_id}; "
+        f"fallback={fallback_reason}"
+    )
+    await trace_record(
+        session,
+        scene.id,
+        "scene_transcript_visibility",
+        summary,
+        {
+            "original_message_count": len(messages),
+            "filtered_message_count": len(filtered),
+            "speaker_persona_id": speaker_persona.id,
+            "speaker_character_id": speaker_character_id,
+            "entered_at_message_id": entered_at_message_id,
+            "exited_at_message_id": exited_at_message_id,
+            "fallback_reason": fallback_reason,
+        },
+    )
+
+
+async def visible_messages_for_scene_speaker(
+    session: AsyncSession,
+    scene: Room,
+    speaker_persona: PersonaInstance,
+    messages: list[Message],
+) -> list[Message]:
+    """Return the runtime transcript visible to a Scene speaker.
+
+    This is deliberately read-only: it only slices the in-memory list passed to
+    the LLM call. Raw Scene messages remain intact for export, Seal Draft, and
+    commit flows.
+    """
+    if not is_scene_room(scene):
+        return messages
+
+    def _by_interval(member: WorldSceneMember) -> list[Message]:
+        if member.entered_at_message_id is None and member.exited_at_message_id is None:
+            return messages
+        visible: list[Message] = []
+        started = member.entered_at_message_id is None
+        for message in messages:
+            if not started:
+                if message.id == member.entered_at_message_id:
+                    started = True
+                else:
+                    continue
+            visible.append(message)
+            if member.exited_at_message_id and message.id == member.exited_at_message_id:
+                break
+        return visible
+
+    fallback_reason: str | None = None
+    speaker_character_id = speaker_persona.world_character_id
+    member: WorldSceneMember | None = None
+    if not speaker_character_id:
+        fallback_reason = "speaker persona is not bound to a WorldCharacter"
+    else:
+        character = await session.get(WorldCharacter, speaker_character_id)
+        if character is None or character.world_id != scene.world_id:
+            fallback_reason = "speaker WorldCharacter is missing or belongs to a different world"
+        else:
+            member = await session.get(
+                WorldSceneMember,
+                {
+                    "scene_id": scene.id,
+                    "world_character_id": speaker_character_id,
+                },
+            )
+            if member is None:
+                fallback_reason = "speaker WorldCharacter is not on this scene roster"
+
+    if fallback_reason or member is None:
+        await _trace_scene_transcript_visibility(
+            session,
+            scene,
+            speaker_persona,
+            messages,
+            messages,
+            speaker_character_id=speaker_character_id,
+            entered_at_message_id=None,
+            exited_at_message_id=None,
+            fallback_reason=fallback_reason or "speaker roster state unavailable",
+        )
+        return messages
+
+    filtered = _by_interval(member)
+    await _trace_scene_transcript_visibility(
+        session,
+        scene,
+        speaker_persona,
+        messages,
+        filtered,
+        speaker_character_id=speaker_character_id,
+        entered_at_message_id=member.entered_at_message_id,
+        exited_at_message_id=member.exited_at_message_id,
+        fallback_reason=None,
+    )
+    return filtered
 
 
 async def get_room_system_persona(
@@ -1006,6 +1141,7 @@ async def _stream_one_message(
             )
         ).all()
     )
+    context = await visible_messages_for_scene_speaker(session, room, persona, context)
     scribe = await session.get(ScribeState, room.id)
     scribe_state = normalize_scribe_state(scribe.current_state if scribe else None)
     # Map peer persona ids -> display names so llm_adapter can label "who said

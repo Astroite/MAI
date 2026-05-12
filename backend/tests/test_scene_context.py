@@ -1,9 +1,14 @@
 """Read-only Scene Context Builder API coverage."""
 
+import asyncio
 from datetime import datetime, timezone
 
+from sqlalchemy import select
+
+from app.db import SessionLocal
 from app import engine as engine_module
 from app.llm import llm_adapter
+from app.models import Message, PersonaInstance, Room, RoomRuntimeState
 from app.scene_context import compose_scene_runtime_context_prompt
 from app.schemas import (
     SceneContextOut,
@@ -59,6 +64,93 @@ def _scene_persona_id(state: dict, world_character_id: str) -> str:
         if persona["world_character_id"] == world_character_id:
             return persona["id"]
     raise AssertionError(f"no PersonaInstance bound to {world_character_id}")
+
+
+async def _insert_visible_message(
+    room_id: str,
+    content: str,
+    *,
+    message_type: str = "speech",
+    author_actual: str = "user",
+    author_persona_id: str | None = None,
+    created_at: datetime | None = None,
+) -> str:
+    async with SessionLocal() as session:
+        runtime = await session.get(RoomRuntimeState, room_id)
+        message = Message(
+            room_id=room_id,
+            phase_instance_id=runtime.current_phase_instance_id if runtime else None,
+            message_type=message_type,
+            author_actual=author_actual,
+            author_persona_id=author_persona_id,
+            visibility="public",
+            visibility_to_models=True,
+            content=content,
+            created_at=created_at or datetime.now(timezone.utc),
+        )
+        session.add(message)
+        await session.commit()
+        return message.id
+
+
+async def _visible_contents_for_speaker(room_id: str, speaker_persona_id: str) -> list[str]:
+    async with SessionLocal() as session:
+        room = await session.get(Room, room_id)
+        speaker = await session.get(PersonaInstance, speaker_persona_id)
+        assert room is not None
+        assert speaker is not None
+        messages = list(
+            (
+                await session.scalars(
+                    select(Message)
+                    .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
+                    .order_by(Message.created_at)
+                )
+            ).all()
+        )
+        visible = await engine_module.visible_messages_for_scene_speaker(
+            session,
+            room,
+            speaker,
+            messages,
+        )
+        return [message.content for message in visible]
+
+
+async def _clone_unbound_scene_persona(
+    room_id: str,
+    source_persona_id: str,
+    *,
+    world_character_id: str | None,
+    name: str,
+) -> str:
+    async with SessionLocal() as session:
+        source = await session.get(PersonaInstance, source_persona_id)
+        assert source is not None
+        clone = PersonaInstance(
+            room_id=room_id,
+            template_id=source.template_id,
+            template_version=source.template_version,
+            position=99,
+            kind="discussant",
+            name=name,
+            identity=source.identity,
+            description=source.description,
+            backing_model=source.backing_model,
+            api_provider_id=source.api_provider_id,
+            api_model_id=source.api_model_id,
+            system_prompt=source.system_prompt,
+            temperature=source.temperature,
+            talkativeness=source.talkativeness,
+            color=source.color,
+            icon=source.icon,
+            config=dict(source.config or {}),
+            tags=list(source.tags or []),
+            world_character_id=world_character_id,
+        )
+        session.add(clone)
+        await session.commit()
+        return clone.id
 
 
 def _make_context_scene(client, discussant_personas):
@@ -135,6 +227,170 @@ def test_scene_context_rejects_regular_discussion_room(
 
     assert response.status_code == 409
     assert "not a scene" in response.text
+
+
+def test_visible_messages_filter_leaves_regular_discussion_transcript_unchanged(
+    client, discussant_personas, roundtable_format
+):
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "普通讨论 transcript visibility",
+            "format_id": roundtable_format["id"],
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_id = next(
+        p["id"] for p in room["personas"] if p["template_id"] == discussant_personas[0]["id"]
+    )
+    asyncio.run(
+        _insert_visible_message(
+            room_id,
+            "普通讨论第一条",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    asyncio.run(
+        _insert_visible_message(
+            room_id,
+            "普通讨论第二条",
+            message_type="narration",
+            created_at=datetime(2020, 1, 2, tzinfo=timezone.utc),
+        )
+    )
+
+    contents = asyncio.run(_visible_contents_for_speaker(room_id, speaker_id))
+
+    assert contents[-2:] == ["普通讨论第一条", "普通讨论第二条"]
+
+
+def test_scene_visible_messages_follow_presence_interval(
+    client, discussant_personas
+):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    opener = _make_ai_character(client, world["id"], template["id"], "开场者")
+    latecomer = _make_ai_character(client, world["id"], template["id"], "迟到者")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "Transcript 切片测试",
+            "members": [{"world_character_id": opener["id"]}],
+        },
+    )
+    assert scene.status_code == 200, scene.text
+    state = scene.json()
+    scene_id = state["room"]["id"]
+    opener_persona_id = _scene_persona_id(state, opener["id"])
+
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "开场时所有人能听到的风声。",
+            message_type="narration",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    enter = client.post(
+        f"/rooms/{scene_id}/scene/enter",
+        json={
+            "world_character_id": latecomer["id"],
+            "description": "迟到者推门而入。",
+        },
+    )
+    assert enter.status_code == 200, enter.text
+    state_after_enter = client.get(f"/rooms/{scene_id}/state").json()
+    late_persona_id = _scene_persona_id(state_after_enter, latecomer["id"])
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "迟到者入场后的旁白。",
+            message_type="narration",
+        )
+    )
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "迟到者入场后的对话。",
+            author_actual="ai",
+            author_persona_id=opener_persona_id,
+        )
+    )
+    exit_resp = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": latecomer["id"], "description": "迟到者离开后院。"},
+    )
+    assert exit_resp.status_code == 200, exit_resp.text
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "迟到者退场后的秘密。",
+            message_type="narration",
+            created_at=datetime(2100, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    opener_contents = asyncio.run(_visible_contents_for_speaker(scene_id, opener_persona_id))
+    late_contents = asyncio.run(_visible_contents_for_speaker(scene_id, late_persona_id))
+
+    assert "开场时所有人能听到的风声。" in opener_contents
+    assert "迟到者退场后的秘密。" in opener_contents
+    assert "开场时所有人能听到的风声。" not in late_contents
+    assert "迟到者推门而入。" in late_contents
+    assert "迟到者入场后的旁白。" in late_contents
+    assert "迟到者入场后的对话。" in late_contents
+    assert "迟到者离开后院。" in late_contents
+    assert "迟到者退场后的秘密。" not in late_contents
+
+
+def test_scene_visible_messages_fallback_for_unbound_or_unrostered_speaker(
+    client, discussant_personas
+):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    on_stage = _make_ai_character(client, world["id"], template["id"], "在场者")
+    off_roster = _make_ai_character(client, world["id"], template["id"], "未入场者")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "Fallback 切片测试",
+            "members": [{"world_character_id": on_stage["id"]}],
+        },
+    )
+    assert scene.status_code == 200, scene.text
+    state = scene.json()
+    scene_id = state["room"]["id"]
+    source_persona_id = _scene_persona_id(state, on_stage["id"])
+    unbound_id = asyncio.run(
+        _clone_unbound_scene_persona(
+            scene_id,
+            source_persona_id,
+            world_character_id=None,
+            name="未绑定 persona",
+        )
+    )
+    unrostered_id = asyncio.run(
+        _clone_unbound_scene_persona(
+            scene_id,
+            source_persona_id,
+            world_character_id=off_roster["id"],
+            name="不在 roster persona",
+        )
+    )
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "fallback 应看到的原始消息。",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+
+    unbound_contents = asyncio.run(_visible_contents_for_speaker(scene_id, unbound_id))
+    unrostered_contents = asyncio.run(_visible_contents_for_speaker(scene_id, unrostered_id))
+
+    assert "fallback 应看到的原始消息。" in unbound_contents
+    assert "fallback 应看到的原始消息。" in unrostered_contents
 
 
 def test_scene_context_world_bible_compact_filters_uncommitted_items(
@@ -524,6 +780,80 @@ def test_scene_ai_turn_calls_builder_and_passes_runtime_context_prompt(
     assert "阿照担心苏离" not in prompt
 
 
+def test_scene_ai_turn_uses_filtered_transcript_for_late_speaker(
+    client, discussant_personas, monkeypatch
+):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    opener = _make_ai_character(client, world["id"], template["id"], "开场者")
+    latecomer = _make_ai_character(client, world["id"], template["id"], "迟到者")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "runtime transcript 切片",
+            "members": [{"world_character_id": opener["id"]}],
+        },
+    )
+    assert scene.status_code == 200, scene.text
+    scene_id = scene.json()["room"]["id"]
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "迟到者不该知道的开场暗号。",
+            message_type="narration",
+            created_at=datetime(2020, 1, 1, tzinfo=timezone.utc),
+        )
+    )
+    enter = client.post(
+        f"/rooms/{scene_id}/scene/enter",
+        json={
+            "world_character_id": latecomer["id"],
+            "description": "迟到者推门而入。",
+        },
+    )
+    assert enter.status_code == 200, enter.text
+    state = client.get(f"/rooms/{scene_id}/state").json()
+    late_persona_id = _scene_persona_id(state, latecomer["id"])
+    asyncio.run(
+        _insert_visible_message(
+            scene_id,
+            "迟到者可以听见的旁白。",
+            message_type="narration",
+        )
+    )
+    captured_context: list[list[str]] = []
+    captured_prompts: list[str] = []
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured_context.append([message.content for message in context])
+        captured_prompts.append(kwargs.get("scene_context_prompt", ""))
+        yield type("Chunk", (), {"text": "迟到者回应", "index": 0})()
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+
+    response = client.post(
+        f"/rooms/{scene_id}/turn",
+        json={"speaker_persona_id": late_persona_id},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["content"] == "迟到者回应"
+    assert captured_context
+    assert "迟到者不该知道的开场暗号。" not in captured_context[0]
+    assert "迟到者推门而入。" in captured_context[0]
+    assert "迟到者可以听见的旁白。" in captured_context[0]
+    assert captured_prompts[0]
+
+
 def test_scene_runtime_context_failure_falls_back_to_legacy_prompt(
     client, discussant_personas, monkeypatch
 ):
@@ -578,3 +908,51 @@ def test_runtime_context_does_not_break_seal_draft_commit(client):
 
     assert committed.status_code == 200, committed.text
     assert committed.json()["scene"]["sealed_at"] is not None
+
+
+def test_exited_scene_ai_is_not_picked_by_scheduler(client, discussant_personas):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    active = _make_ai_character(client, world["id"], template["id"], "在场 AI")
+    exited = _make_ai_character(client, world["id"], template["id"], "退场 AI")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "退场调度保护",
+            "members": [
+                {"world_character_id": active["id"]},
+                {"world_character_id": exited["id"]},
+            ],
+        },
+    )
+    assert scene.status_code == 200, scene.text
+    state = scene.json()
+    scene_id = state["room"]["id"]
+    active_persona_id = _scene_persona_id(state, active["id"])
+    exited_persona_id = _scene_persona_id(state, exited["id"])
+    exit_resp = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": exited["id"]},
+    )
+    assert exit_resp.status_code == 200, exit_resp.text
+
+    async def pick():
+        async with SessionLocal() as session:
+            room = await session.get(Room, scene_id)
+            runtime = await session.get(RoomRuntimeState, scene_id)
+            assert room is not None
+            assert runtime is not None
+            return await engine_module.pick_next_speaker(session, room, runtime, None)
+
+    result = asyncio.run(pick())
+
+    assert result.kind == "single"
+    assert result.persona_ids == [active_persona_id]
+    assert exited_persona_id not in result.persona_ids
+
+    manual_exited = client.post(
+        f"/rooms/{scene_id}/turn",
+        json={"speaker_persona_id": exited_persona_id},
+    )
+    assert manual_exited.status_code == 200, manual_exited.text
+    assert manual_exited.json() == []
