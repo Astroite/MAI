@@ -43,6 +43,7 @@ import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { SealResultsDialog } from "./SealResultsDialog";
 import { useI18n } from "../../i18n";
+import { formatLocalDateTime } from "../../utils/time";
 import { queryKeys } from "../../queryKeys";
 import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
 import { isSceneRoom } from "../../utils/scene";
@@ -436,14 +437,7 @@ function shortId(id: string): string {
 }
 
 function formatDateTime(value: string, locale: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat(locale, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  }).format(date);
+  return formatLocalDateTime(value, locale);
 }
 
 function tokenPercent(used: number, max: number): number {

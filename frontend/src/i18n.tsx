@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { formatRelativeFromNow } from "./utils/time";
 import { Languages } from "lucide-react";
 
 export type Locale = "zh-CN" | "en-US";
@@ -1630,29 +1631,8 @@ interface I18nContextValue {
   formatRelativeTime: (date: string | Date | null | undefined) => string;
 }
 
-const RELATIVE_THRESHOLDS: { unit: Intl.RelativeTimeFormatUnit; ms: number }[] = [
-  { unit: "year", ms: 365 * 24 * 60 * 60 * 1000 },
-  { unit: "month", ms: 30 * 24 * 60 * 60 * 1000 },
-  { unit: "week", ms: 7 * 24 * 60 * 60 * 1000 },
-  { unit: "day", ms: 24 * 60 * 60 * 1000 },
-  { unit: "hour", ms: 60 * 60 * 1000 },
-  { unit: "minute", ms: 60 * 1000 },
-  { unit: "second", ms: 1000 }
-];
-
 function relativeTime(locale: Locale, target: string | Date | null | undefined): string {
-  if (!target) return "";
-  const date = typeof target === "string" ? new Date(target) : target;
-  if (Number.isNaN(date.getTime())) return "";
-  const diff = date.getTime() - Date.now();
-  const formatter = new Intl.RelativeTimeFormat(locale === "zh-CN" ? "zh-CN" : "en-US", { numeric: "auto" });
-  const abs = Math.abs(diff);
-  for (const { unit, ms } of RELATIVE_THRESHOLDS) {
-    if (abs >= ms || unit === "second") {
-      return formatter.format(Math.round(diff / ms), unit);
-    }
-  }
-  return formatter.format(0, "second");
+  return formatRelativeFromNow(target, locale);
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);

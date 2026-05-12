@@ -8,6 +8,7 @@ import type { Message, PersonaInstance } from "../../types";
 import { MarkdownBlock } from "../../components/MarkdownBlock";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
+import { formatTimeOfDay } from "../../utils/time";
 import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
 import { personaTone } from "../../utils/color";
@@ -394,7 +395,5 @@ function shortMessageId(id: string): string {
 }
 
 function formatMessageTime(value: string, locale: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" }).format(date);
+  return formatTimeOfDay(value, locale);
 }

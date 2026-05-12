@@ -9,6 +9,7 @@ import type { WorldSummary } from "../types";
 import { COVER_PALETTE } from "../constants/colors";
 import { queryKeys } from "../queryKeys";
 import { useI18n } from "../i18n";
+import { formatLocalDateTime } from "../utils/time";
 
 export function WorldListPage() {
   const worlds = useQuery({ queryKey: queryKeys.worlds, queryFn: api.worlds });
@@ -70,7 +71,7 @@ export function WorldListPage() {
 function WorldCard({ world }: { world: WorldSummary }) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const remove = useMutation({
     mutationFn: () => api.deleteWorld(world.id),
     onSuccess: () => {
@@ -81,7 +82,7 @@ function WorldCard({ world }: { world: WorldSummary }) {
   });
 
   const last = world.last_activity_at
-    ? new Date(world.last_activity_at).toLocaleString()
+    ? formatLocalDateTime(world.last_activity_at, locale)
     : t("worldList.noScenes");
 
   return (

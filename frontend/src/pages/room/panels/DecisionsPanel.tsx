@@ -6,6 +6,7 @@ import { StatusPill } from "../../../components/StatusPill";
 import { queryKeys } from "../../../queryKeys";
 import type { Decision } from "../../../types";
 import { useI18n } from "../../../i18n";
+import { formatLocalDateTime } from "../../../utils/time";
 
 export function DecisionsPanel({
   roomId,
@@ -21,7 +22,7 @@ export function DecisionsPanel({
   hideLabel?: boolean;
 }) {
   const queryClient = useQueryClient();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const [showRevoked, setShowRevoked] = useState(false);
 
   const toggleLock = useMutation({
@@ -74,7 +75,7 @@ export function DecisionsPanel({
               </StatusPill>
             </div>
             <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
-              <span>#{decision.id.slice(-6)} · {formatTime(decision.created_at)}</span>
+              <span>#{decision.id.slice(-6)} · {formatTime(decision.created_at, locale)}</span>
               <button
                 className="btn h-7 px-2 text-xs"
                 disabled={frozen || toggleLock.isPending}
@@ -115,7 +116,7 @@ export function DecisionsPanel({
                 >
                   <div className="line-through decoration-muted/60">{decision.content}</div>
                   <div className="mt-1 text-xs">
-                    #{decision.id.slice(-6)} · {formatTime(decision.created_at)}
+                    #{decision.id.slice(-6)} · {formatTime(decision.created_at, locale)}
                   </div>
                 </li>
               ))}
@@ -147,13 +148,6 @@ function DecisionsHeader({ lockedCount, totalCount }: { lockedCount: number; tot
   );
 }
 
-function formatTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString(undefined, {
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit"
-  });
+function formatTime(value: string, locale: string): string {
+  return formatLocalDateTime(value, locale);
 }
