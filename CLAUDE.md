@@ -21,3 +21,13 @@ MAI is a multi-model collaborative discussion platform: single-process FastAPI b
 - Tests hit real LLM endpoints: put `OPENAI_API_KEY` in `backend/tests/.env.test` (gitignored); `pytest` must be run from `backend/`.
 - All API routes are declared at root; `_strip_api_prefix` middleware in `app/main.py` rewrites `/api/...` → root. New routes must be added **above** the SPA mount block at the bottom of `main.py`.
 - `AGENTS.md` is the Codex-facing mirror of this file — keep them in sync.
+
+## Branch workflow
+
+- Before starting work, run `git fetch --all --prune` and check `git status --short --branch` plus existing local/remote branches.
+- Start new work from the latest `main` unless the user explicitly asks to build on another branch.
+- Reuse an existing active topic branch when the requested work clearly belongs there; otherwise create one branch per coherent task.
+- Branch names should be short, lowercase, kebab-case, and scoped by intent: `feature/<scope>`, `fix/<scope>`, `refactor/<scope>`, `docs/<scope>`, `chore/<scope>`, or `iteration/<yyyy-mm-dd>-<scope>` for time-boxed integration work.
+- Avoid vague or disposable branch names such as `temp`, `test`, `update`, `latest`, or `work`.
+- Push new collaboration branches with upstream tracking (`git push -u origin <branch>`) once they need to be shared.
+- After a branch is merged into `main`, archive it instead of deleting it: move the branch to `archive/merged/<yyyy-mm-dd>/<original-branch-name>` locally and remotely, preserving the merged tip. Only archive branches confirmed merged; keep unmerged branches active unless the user explicitly approves archiving or removal.

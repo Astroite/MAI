@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { fetchEventSource } from "@microsoft/fetch-event-source";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useNavigate } from "react-router-dom";
 import { API_BASE } from "./api";
 import { toast } from "./components/Toaster";
 import { useI18n } from "./i18n";
@@ -34,10 +35,29 @@ export function upsertRoomMessage(state: RoomState | undefined, message: Message
   return { ...state, messages };
 }
 
+export function handleRoomDeletedEvent({
+  roomId,
+  queryClient,
+  clearRoomStreams,
+  navigateHome
+}: {
+  roomId: string;
+  queryClient: Pick<QueryClient, "removeQueries" | "invalidateQueries">;
+  clearRoomStreams: (roomId: string) => void;
+  navigateHome: () => void;
+}) {
+  queryClient.removeQueries({ queryKey: queryKeys.room(roomId), exact: true });
+  void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
+  clearRoomStreams(roomId);
+  navigateHome();
+}
+
 export function useRoomEvents(roomId?: string) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const appendChunk = useUIStore((state) => state.appendChunk);
   const finalizeStream = useUIStore((state) => state.finalizeStream);
+  const clearRoomStreams = useUIStore((state) => state.clearRoomStreams);
   const setConnectionStatus = useUIStore((state) => state.setConnectionStatus);
   const { t } = useI18n();
 
@@ -83,6 +103,20 @@ export function useRoomEvents(roomId?: string) {
       onmessage(event) {
         if (!event.data) return;
         const payload = JSON.parse(event.data) as EventPayload;
+        if (payload.type === "room.deleted") {
+          if (invalidateTimer != null) {
+            clearTimeout(invalidateTimer);
+            invalidateTimer = null;
+          }
+          handleRoomDeletedEvent({
+            roomId,
+            queryClient,
+            clearRoomStreams,
+            navigateHome: () => navigate("/", { replace: true })
+          });
+          controller.abort();
+          return;
+        }
         if (payload.type === "message.streaming" && payload.message_id && payload.persona_id && payload.chunk_text) {
           appendChunk(roomId, payload.message_id, payload.persona_id, payload.chunk_text, payload.chunk_index);
         }
@@ -159,5 +193,5 @@ export function useRoomEvents(roomId?: string) {
       if (invalidateTimer != null) clearTimeout(invalidateTimer);
       setConnectionStatus("connected", 0);
     };
-  }, [appendChunk, finalizeStream, queryClient, roomId, setConnectionStatus, t]);
+  }, [appendChunk, clearRoomStreams, finalizeStream, navigate, queryClient, roomId, setConnectionStatus, t]);
 }

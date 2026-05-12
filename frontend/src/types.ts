@@ -210,6 +210,7 @@ export type MessageType =
   | "speech"
   | "question"
   | "answer"
+  | "narration"
   | "summary"
   | "verdict"
   | "verdict_revoke"
@@ -217,6 +218,8 @@ export type MessageType =
   | "facilitator_signal"
   | "user_doc"
   | "tool_invocation"
+  | "participant.enter"
+  | "participant.exit"
   | "masquerade_reveal"
   | "silence"
   | "background_update"
@@ -346,6 +349,31 @@ export interface RoomState {
   decisions: Decision[];
   tool_invocations: ToolInvocation[];
   in_flight_partial: InFlightPartial[];
+}
+
+export interface LimitUpdate {
+  max_message_tokens?: number;
+  max_room_tokens?: number;
+  max_phase_rounds?: number;
+  max_account_daily_tokens?: number;
+  max_account_monthly_tokens?: number;
+  max_consecutive_ai_turns?: number;
+  auto_transition?: boolean;
+}
+
+export interface SceneMemoryScribeResult {
+  character_id: string;
+  character_name: string;
+  status: "success" | "skipped" | "failed";
+  episodes_count: number;
+  impressions_count: number;
+  vows_count: number;
+  error?: string | null;
+}
+
+export interface SceneSealResult {
+  scene: Room;
+  scribe_results: SceneMemoryScribeResult[];
 }
 
 export interface InFlightPartial {

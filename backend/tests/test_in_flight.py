@@ -2,7 +2,9 @@ import asyncio
 import threading
 import time
 
-from app.engine import ACTIVE_CALLS, InFlightCall
+import pytest
+
+from app.engine import ACTIVE_CALLS, InFlightCall, drain_active_calls
 from app.llm import llm_adapter
 from app import engine as engine_module
 
@@ -135,3 +137,44 @@ def test_chunk_idle_timeout_truncates_message(client, review_format, architect_p
     turn = client.post(f"/rooms/{room_id}/turn", json={"speaker_persona_id": architect_instance_id})
     assert turn.status_code == 200
     assert turn.json()[0]["truncated_reason"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_drain_active_calls_times_out_without_force_killing():
+    room_id = "pytest-drain-timeout"
+    release = asyncio.Event()
+
+    async def stubborn_call():
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            await release.wait()
+
+    task = asyncio.create_task(stubborn_call())
+    call = InFlightCall(
+        room_id=room_id,
+        message_id="msg-timeout",
+        persona_id="persona-timeout",
+        task=task,
+    )
+    ACTIVE_CALLS.setdefault(room_id, {})[call.message_id] = call
+    try:
+        await asyncio.sleep(0)
+        result = await drain_active_calls(
+            room_id,
+            "pytest_timeout",
+            timeout_seconds=0.01,
+            require_clean=True,
+        )
+        assert result.cancelled == ["msg-timeout"]
+        assert result.completed == []
+        assert "msg-timeout" in result.timed_out
+        assert result.clean is False
+        assert ACTIVE_CALLS[room_id]["msg-timeout"] is call
+    finally:
+        release.set()
+        try:
+            await asyncio.wait_for(task, timeout=1)
+        except asyncio.CancelledError:
+            pass
+        ACTIVE_CALLS.pop(room_id, None)

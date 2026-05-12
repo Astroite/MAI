@@ -815,6 +815,21 @@ class RoomSummaryOut(RoomOut):
     last_activity_at: datetime | None = None
 
 
+class SceneMemoryScribeResult(APIModel):
+    character_id: str
+    character_name: str
+    status: Literal["success", "skipped", "failed"]
+    episodes_count: int = 0
+    impressions_count: int = 0
+    vows_count: int = 0
+    error: str | None = None
+
+
+class SceneSealOut(APIModel):
+    scene: RoomOut
+    scribe_results: list[SceneMemoryScribeResult] = Field(default_factory=list)
+
+
 class RoomRuntimeOut(APIModel):
     room_id: str
     current_phase_instance_id: str | None = None

@@ -6,6 +6,10 @@ The persona-prompt baking is asserted by reading the resulting PersonaInstance,
 not by running a turn.
 """
 
+from app import engine as engine_module
+from app import main as main_module
+from app.engine import DrainResult
+
 
 def _make_world(client) -> dict:
     created = client.post("/worlds", json={"name": "pytest scene world", "synopsis": "测试场景的世界"}).json()
@@ -231,12 +235,13 @@ def test_scene_seal_is_idempotent_and_blocks_roster_changes(client, discussant_p
 
     # First seal sets the timestamp.
     sealed = client.post(f"/rooms/{scene_id}/seal").json()
-    assert sealed["sealed_at"] is not None
-    first_ts = sealed["sealed_at"]
+    assert sealed["scene"]["sealed_at"] is not None
+    assert "scribe_results" in sealed
+    first_ts = sealed["scene"]["sealed_at"]
 
     # Second seal is a no-op (returns same timestamp).
     sealed_again = client.post(f"/rooms/{scene_id}/seal").json()
-    assert sealed_again["sealed_at"] == first_ts
+    assert sealed_again["scene"]["sealed_at"] == first_ts
 
     # Roster mutations rejected after seal.
     enter = client.post(
@@ -266,7 +271,7 @@ def test_sealed_scene_room_is_read_only(client):
 
     sealed = client.post(f"/rooms/{scene_id}/seal")
     assert sealed.status_code == 200, sealed.text
-    assert sealed.json()["sealed_at"] is not None
+    assert sealed.json()["scene"]["sealed_at"] is not None
 
     phase_id = client.get("/templates/phases").json()[0]["id"]
     blocked_requests = [
@@ -315,3 +320,166 @@ def test_non_scene_routes_reject_normal_room(client):
     assert enter.status_code == 409
     members = client.get(f"/rooms/{room_id}/scene/members")
     assert members.status_code == 409
+
+
+def test_scene_rejects_discussion_room_only_endpoints(client, discussant_personas):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    ai_char = _make_ai_character(client, world["id"], template["id"])
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={"title": "语义隔离测试", "members": [{"world_character_id": ai_char["id"]}]},
+    ).json()
+    scene_id = scene["room"]["id"]
+
+    cases = [
+        ("post", f"/rooms/{scene_id}/verdicts", {"content": "Scene 不能裁决", "is_locked": False}),
+        ("post", f"/rooms/{scene_id}/verdicts", {"content": "Scene 不能标死路", "dead_end": True}),
+        ("post", f"/rooms/{scene_id}/facilitator", None),
+        ("post", f"/rooms/{scene_id}/subrooms", {"title": "Scene 子讨论", "persona_ids": []}),
+        ("post", f"/rooms/{scene_id}/masquerade", {"display_name": "群友", "content": "Scene 不能群友发言"}),
+    ]
+    for method, path, body in cases:
+        request = getattr(client, method)
+        response = request(path, json=body) if body is not None else request(path)
+        assert response.status_code == 409, f"{method.upper()} {path}: {response.text}"
+
+
+def test_discussion_room_only_endpoints_still_work_for_normal_rooms(client):
+    room = client.post("/rooms", json={"title": "pytest discussion endpoints", "persona_ids": []}).json()
+    room_id = room["room"]["id"]
+
+    verdict = client.post(f"/rooms/{room_id}/verdicts", json={"content": "普通房间仍可裁决。"})
+    assert verdict.status_code == 200, verdict.text
+
+    dead_end = client.post(
+        f"/rooms/{room_id}/verdicts",
+        json={"content": "普通房间仍可标记死路。", "dead_end": True},
+    )
+    assert dead_end.status_code == 200, dead_end.text
+
+    facilitator = client.post(f"/rooms/{room_id}/facilitator")
+    assert facilitator.status_code != 409
+
+    subroom = client.post(
+        f"/rooms/{room_id}/subrooms",
+        json={"title": "普通房间子讨论", "persona_ids": []},
+    )
+    assert subroom.status_code == 200, subroom.text
+
+    masquerade = client.post(
+        f"/rooms/{room_id}/masquerade",
+        json={"display_name": "群友", "content": "普通房间仍可群友发言。"},
+    )
+    assert masquerade.status_code == 200, masquerade.text
+
+
+def test_unclean_drain_blocks_delete_and_seal(client, discussant_personas, monkeypatch):
+    async def fake_unclean_drain(*args, **kwargs):
+        return DrainResult(
+            cancelled=["msg-stuck"],
+            completed=[],
+            timed_out=["msg-stuck"],
+            clean=False,
+        )
+
+    monkeypatch.setattr(main_module, "drain_active_calls", fake_unclean_drain)
+
+    room = client.post("/rooms", json={"title": "pytest delete blocked", "persona_ids": []}).json()
+    room_id = room["room"]["id"]
+    delete_resp = client.delete(f"/rooms/{room_id}")
+    assert delete_resp.status_code == 409
+    assert client.get(f"/rooms/{room_id}/state").status_code == 200
+
+    world = _make_world(client)
+    ai_char = _make_ai_character(client, world["id"], discussant_personas[0]["id"])
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={"title": "封幕阻断测试", "members": [{"world_character_id": ai_char["id"]}]},
+    ).json()
+    scene_id = scene["room"]["id"]
+    seal_resp = client.post(f"/rooms/{scene_id}/seal")
+    assert seal_resp.status_code == 409
+    state = client.get(f"/rooms/{scene_id}/state").json()
+    assert state["room"]["sealed_at"] is None
+
+
+def test_seal_scribe_reports_single_character_failure_without_blocking_others(
+    client, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_after(room_id, message):
+        return None
+
+    async def controlled_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=1200,
+        api_provider=None,
+    ):
+        assert tool_name == "scene_memory_distill"
+        character = payload["character"]
+        if character["name"] == "失败者":
+            raise RuntimeError("pytest scribe failure")
+        peer_id = payload["peers_on_stage"][0]["id"]
+        return {
+            "new_episodes": [
+                {"kind": "episode", "content": "记住了风雨夜的约定。", "salience": 0.7},
+                {"kind": "vow", "content": "发誓查清真相。", "salience": 0.8},
+            ],
+            "impressions": [
+                {
+                    "about_character_id": peer_id,
+                    "sentiment_delta": 0.2,
+                    "label": "同伴",
+                    "notes_append": "共同经历了风雨夜。",
+                }
+            ],
+            "reasoning": "pytest deterministic memory result",
+        }
+
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", noop_autodrive_after)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", controlled_complete_tool)
+
+    world = _make_world(client)
+    template = discussant_personas[0]
+    success_char = _make_ai_character(client, world["id"], template["id"], name="成功者")
+    failed_char = _make_ai_character(client, world["id"], template["id"], name="失败者")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "封幕结果测试",
+            "members": [
+                {"world_character_id": success_char["id"]},
+                {"world_character_id": failed_char["id"]},
+            ],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+    message = client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "风雨夜里，两人做出了不同选择。", "message_type": "narration"},
+    )
+    assert message.status_code == 200
+
+    seal = client.post(f"/rooms/{scene_id}/seal")
+    assert seal.status_code == 200, seal.text
+    payload = seal.json()
+    results = {item["character_name"]: item for item in payload["scribe_results"]}
+
+    assert results["成功者"]["status"] == "success"
+    assert results["成功者"]["episodes_count"] == 1
+    assert results["成功者"]["vows_count"] == 1
+    assert results["成功者"]["impressions_count"] == 1
+    assert results["失败者"]["status"] == "failed"
+    assert "pytest scribe failure" in results["失败者"]["error"]
+
+    memories = client.get(
+        f"/worlds/{world['id']}/characters/{success_char['id']}/memories"
+    ).json()
+    assert {memory["kind"] for memory in memories if memory["source_scene_id"] == scene_id} == {
+        "episode",
+        "vow",
+    }

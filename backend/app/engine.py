@@ -58,6 +58,7 @@ FACILITATOR_TOOL_DESCRIPTION = (
 )
 
 CHUNK_IDLE_TIMEOUT_SECONDS = 30.0
+DRAIN_ACTIVE_CALLS_TIMEOUT_SECONDS = 30.0
 
 # Casual ordering: how likely the autodrive chain continues after an AI reply.
 # Decays geometrically with consecutive_ai_turns so chains naturally taper off
@@ -138,6 +139,14 @@ class AutodriveScheduleResult:
     reason: AutodriveSkipReason | None = None
 
 
+@dataclass(frozen=True)
+class DrainResult:
+    cancelled: list[str]
+    completed: list[str]
+    timed_out: list[str]
+    clean: bool
+
+
 @dataclass
 class InFlightCall:
     room_id: str
@@ -154,7 +163,12 @@ class InFlightCall:
 
     def cancel(self, reason: str) -> None:
         self.cancel_reason = reason
-        self.task.cancel()
+        if isinstance(self.task, asyncio.Task):
+            self.task.cancel()
+            return
+        cancel = getattr(self.task, "cancel", None)
+        if callable(cancel):
+            cancel()
 
 
 ACTIVE_CALLS: dict[str, dict[str, InFlightCall]] = {}
@@ -177,24 +191,91 @@ def _unregister_active_call(call: InFlightCall) -> None:
         ACTIVE_CALLS.pop(call.room_id, None)
 
 
-async def drain_active_calls(room_id: str, reason: str) -> list[InFlightCall]:
+def _drain_result_payload(result: DrainResult, reason: str) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "cancelled": result.cancelled,
+        "completed": result.completed,
+        "timed_out": result.timed_out,
+        "clean": result.clean,
+    }
+
+
+async def drain_active_calls(
+    room_id: str,
+    reason: str,
+    *,
+    require_clean: bool = True,
+    timeout_seconds: float = DRAIN_ACTIVE_CALLS_TIMEOUT_SECONDS,
+    session: AsyncSession | None = None,
+) -> DrainResult:
     """Cancel and await all in-flight calls for a room.
 
     `task.cancel()` only schedules cancellation. Awaiting here lets streaming
     tasks append their partial/truncated messages and release DB sessions
-    before freeze/delete/seal continues.
+    before freeze/delete/seal continues. The wait is intentionally bounded:
+    asyncio cannot safely force-kill a task, so destructive callers must check
+    `clean` and abort if any cancelled task failed to exit cooperatively.
     """
     _request_autodrive_stop(room_id)
     active_calls = active_calls_for_room(room_id)
+    cancelled = [call.message_id for call in active_calls]
     for active_call in active_calls:
         active_call.cancel(reason)
-    if active_calls:
-        await asyncio.gather(
-            *(call.task for call in active_calls), return_exceptions=True
+
+    current = asyncio.current_task()
+    task_to_call = {
+        call.task: call
+        for call in active_calls
+        if isinstance(call.task, asyncio.Task) and call.task is not current
+    }
+    completed: list[str] = []
+    timed_out: list[str] = []
+    if task_to_call:
+        done, pending = await asyncio.wait(
+            set(task_to_call.keys()),
+            timeout=max(0.01, timeout_seconds),
         )
-    await _await_autodrive_runner(room_id, cancel=True)
-    ACTIVE_CALLS.pop(room_id, None)
-    return active_calls
+        completed.extend(task_to_call[task].message_id for task in done)
+        timed_out.extend(task_to_call[task].message_id for task in pending)
+        for task in done:
+            call = task_to_call[task]
+            _unregister_active_call(call)
+    # Non-Task placeholders are test/runtime artifacts; they cannot be
+    # cooperatively awaited and therefore count as not clean.
+    timed_out.extend(
+        call.message_id for call in active_calls if not isinstance(call.task, asyncio.Task)
+    )
+
+    runner_timed_out = False
+    runner = _AUTODRIVE_TASKS.get(room_id)
+    if runner is not None and not runner.done() and runner is not current:
+        runner.cancel()
+        done, pending = await asyncio.wait({runner}, timeout=max(0.01, timeout_seconds))
+        runner_timed_out = bool(pending)
+        if runner_timed_out:
+            timed_out.append("autodrive_runner")
+        elif done:
+            _AUTODRIVE_TASKS.pop(room_id, None)
+
+    clean = not timed_out
+    result = DrainResult(cancelled=cancelled, completed=completed, timed_out=timed_out, clean=clean)
+    if clean:
+        ACTIVE_CALLS.pop(room_id, None)
+    elif not require_clean:
+        for call in active_calls:
+            if call.message_id in completed:
+                _unregister_active_call(call)
+    if timed_out and session is not None:
+        await trace_record(
+            session,
+            room_id,
+            "active_call_drain_timeout",
+            "active calls did not stop before drain timeout",
+            _drain_result_payload(result, reason),
+        )
+        await session.flush()
+    return result
 
 
 # Per-room locks guarding auto-drive dispatch. A held lock means an autodrive
@@ -1390,16 +1471,32 @@ async def _scribe_memory_for_character(
     member: WorldSceneMember,
     character: WorldCharacter,
     peer_names: dict[str, str],
-) -> int:
+) -> dict[str, Any]:
     """Run the LLM tool-call for a single character and persist its output.
-    Returns the number of new memory rows created (0 if skipped/idempotent)."""
+    Returns a user-visible per-character result for the seal response."""
+    base = {
+        "character_id": character.id,
+        "character_name": character.name,
+        "episodes_count": 0,
+        "impressions_count": 0,
+        "vows_count": 0,
+        "error": None,
+    }
     if character.kind != "ai":
-        return 0
+        return {
+            **base,
+            "status": "skipped",
+            "error": "user characters do not run memory scribe",
+        }
     if await _scene_memory_already_written(session, character.id, scene.id):
-        return 0
+        return {
+            **base,
+            "status": "skipped",
+            "error": "scene memory already written for this character",
+        }
     witnessed = await _slice_messages_for_character(session, scene.id, member)
     if not witnessed:
-        return 0
+        return {**base, "status": "skipped", "error": "no witnessed messages"}
     existing = (
         await session.scalars(
             select(WorldCharacterMemory)
@@ -1465,33 +1562,40 @@ async def _scribe_memory_for_character(
             api_provider=scribe_provider,
         )
     except Exception as exc:
+        error = str(exc)
         await trace_record(
             session,
             scene.id,
             "scene_memory_failed",
             "scene memory distill failed for character",
-            {"character_id": character.id, "error": str(exc)},
+            {"character_id": character.id, "error": error},
         )
-        return 0
+        await session.flush()
+        return {**base, "status": "failed", "error": error}
     new_episodes = result.get("new_episodes") or []
-    written = 0
+    episodes_count = 0
+    vows_count = 0
     in_world_time = scene.in_world_time_start or scene.in_world_time_end or ""
     for entry in new_episodes:
         content = (entry.get("content") or "").strip()
         if not content:
             continue
+        kind = entry.get("kind") or "episode"
         memory = WorldCharacterMemory(
             id=new_id(),
             world_character_id=character.id,
             source_scene_id=scene.id,
             scene_index_at_write=scene.scene_index,
             in_world_time_at_event=in_world_time,
-            kind=entry.get("kind") or "episode",
+            kind=kind,
             content=content,
             salience=float(entry.get("salience", 0.5)),
         )
         session.add(memory)
-        written += 1
+        if kind == "vow":
+            vows_count += 1
+        else:
+            episodes_count += 1
     impressions = result.get("impressions") or []
     relations_touched = await _apply_impressions(
         session, scene, character, impressions, peer_names
@@ -1503,12 +1607,19 @@ async def _scribe_memory_for_character(
         "scene memory rows persisted",
         {
             "character_id": character.id,
-            "written": written,
+            "episodes_count": episodes_count,
+            "vows_count": vows_count,
             "relations_touched": relations_touched,
             "reasoning": result.get("reasoning"),
         },
     )
-    return written
+    return {
+        **base,
+        "status": "success",
+        "episodes_count": episodes_count,
+        "impressions_count": relations_touched,
+        "vows_count": vows_count,
+    }
 
 
 async def _apply_impressions(
@@ -1570,14 +1681,14 @@ async def _apply_impressions(
     return touched
 
 
-async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[str, int]:
-    """Scribe the scene per AI character, in parallel.
+async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> list[dict[str, Any]]:
+    """Scribe the scene per roster character.
 
-    Returns a {character_id: rows_written} dict for telemetry. Rooms that
-    aren't scenes (world_id IS NULL) are no-ops.
+    Returns per-character results for telemetry and the seal response. Rooms
+    that aren't scenes (world_id IS NULL) are no-ops.
     """
     if not is_scene_room(scene):
-        return {}
+        return []
     members = list(
         (
             await session.scalars(
@@ -1586,7 +1697,7 @@ async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[st
         ).all()
     )
     if not members:
-        return {}
+        return []
     char_ids = [m.world_character_id for m in members]
     characters = {
         c.id: c
@@ -1597,18 +1708,27 @@ async def run_scene_memory_scribe(session: AsyncSession, scene: Room) -> dict[st
         ).all()
     }
     peer_names = {c.id: c.name for c in characters.values()}
-    ai_pairs = [
-        (m, characters[m.world_character_id])
-        for m in members
-        if m.world_character_id in characters and characters[m.world_character_id].kind == "ai"
-    ]
     # Run sequentially — concurrent SQLAlchemy session use isn't safe and
     # parallel LLM calls would each need their own session. v2 can spawn
     # background tasks with separate sessions if latency becomes an issue.
-    results: dict[str, int] = {}
-    for member, character in ai_pairs:
-        results[character.id] = await _scribe_memory_for_character(
-            session, scene, member, character, peer_names
+    results: list[dict[str, Any]] = []
+    for member in members:
+        character = characters.get(member.world_character_id)
+        if character is None:
+            results.append(
+                {
+                    "character_id": member.world_character_id,
+                    "character_name": "",
+                    "status": "failed",
+                    "episodes_count": 0,
+                    "impressions_count": 0,
+                    "vows_count": 0,
+                    "error": "character not found",
+                }
+            )
+            continue
+        results.append(
+            await _scribe_memory_for_character(session, scene, member, character, peer_names)
         )
     await session.flush()
     return results
@@ -2155,9 +2275,14 @@ async def freeze_room(session: AsyncSession, room_id: str) -> None:
         raise ValueError("room not found")
     _request_autodrive_stop(room_id)
     await session.rollback()
-    active_calls = await drain_active_calls(room_id, "frozen")
-    await _await_autodrive_runner(room_id, cancel=True)
-    clear_autodrive_lock(room_id)
+    drain_result = await drain_active_calls(
+        room_id,
+        "frozen",
+        require_clean=False,
+        session=session,
+    )
+    if drain_result.clean:
+        clear_autodrive_lock(room_id)
     room = await session.get(Room, room_id, populate_existing=True)
     runtime = await session.get(RoomRuntimeState, room_id, populate_existing=True)
     if room is None or runtime is None:
@@ -2174,8 +2299,11 @@ async def freeze_room(session: AsyncSession, room_id: str) -> None:
         "room frozen",
         {
             "snapshot_id": snapshot.id,
-            "cancelled_message_id": active_calls[0].message_id if active_calls else None,
-            "cancelled_message_ids": [call.message_id for call in active_calls],
+            "cancelled_message_id": drain_result.cancelled[0] if drain_result.cancelled else None,
+            "cancelled_message_ids": drain_result.cancelled,
+            "completed_message_ids": drain_result.completed,
+            "timed_out_message_ids": drain_result.timed_out,
+            "drain_clean": drain_result.clean,
         },
     )
     await session.flush()

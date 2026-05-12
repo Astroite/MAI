@@ -6,6 +6,7 @@ import type {
   AppSettings,
   DebateFormat,
   Decision,
+  LimitUpdate,
   Message,
   PersonaInstance,
   PersonaTemplate,
@@ -13,10 +14,12 @@ import type {
   Recipe,
   Room,
   RoomState,
+  Runtime,
   Scenario,
   SceneCreateBody,
   SceneEnterBody,
   SceneExitBody,
+  SceneSealResult,
   SceneTimelineEntry,
   TemplateDraft,
   ToolInvocation,
@@ -305,8 +308,8 @@ export const api = {
       `/rooms/${roomId}/autodrive/resume`,
       { method: "POST" }
     ),
-  updateLimits: (roomId: string, body: unknown) =>
-    request(`/rooms/${roomId}/limits`, { method: "PATCH", body: JSON.stringify(body) }),
+  updateLimits: (roomId: string, body: LimitUpdate) =>
+    request<Runtime>(`/rooms/${roomId}/limits`, { method: "PATCH", body: JSON.stringify(body) }),
   upload: async (roomId: string, file: File) => {
     const data = new FormData();
     data.append("file", file);
@@ -443,7 +446,7 @@ export const api = {
       body: JSON.stringify(body)
     }),
   sealScene: (roomId: string) =>
-    request<Room>(`/rooms/${roomId}/seal`, { method: "POST" }),
+    request<SceneSealResult>(`/rooms/${roomId}/seal`, { method: "POST" }),
   sceneMembers: (roomId: string) =>
     request<WorldSceneMember[]>(`/rooms/${roomId}/scene/members`),
   sceneEnter: (roomId: string, body: SceneEnterBody) =>

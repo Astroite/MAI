@@ -11,6 +11,7 @@ import { UploadPanel } from "./panels/UploadPanel";
 import { SubroomPanel } from "./panels/SubroomPanel";
 import { ToolPanel } from "./panels/ToolPanel";
 import { useI18n } from "../../i18n";
+import { isSceneRoom } from "../../utils/scene";
 
 const TABS = [
   { key: "phase", labelKey: "room.panel.phase" },
@@ -24,6 +25,7 @@ const TABS = [
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
+const DISCUSSION_ONLY_TABS = new Set<TabKey>(["scribe", "facilitator", "decisions", "subroom"]);
 
 export function RoomSettingsDrawer({
   state,
@@ -37,10 +39,15 @@ export function RoomSettingsDrawer({
   const settingsParam = params.get("settings");
   const open = settingsParam !== null;
   const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
+  const isScene = isSceneRoom(state.room);
+  const visibleTabs = useMemo(
+    () => TABS.filter((entry) => !(isScene && DISCUSSION_ONLY_TABS.has(entry.key))),
+    [isScene]
+  );
   const tab: TabKey = useMemo(() => {
     const candidate = settingsParam as TabKey | null;
-    return TABS.some((entry) => entry.key === candidate) ? (candidate as TabKey) : "phase";
-  }, [settingsParam]);
+    return visibleTabs.some((entry) => entry.key === candidate) ? (candidate as TabKey) : "phase";
+  }, [settingsParam, visibleTabs]);
 
   const close = () => {
     const next = new URLSearchParams(params);
@@ -83,7 +90,7 @@ export function RoomSettingsDrawer({
           </button>
         </div>
         <nav className="flex flex-wrap items-center gap-1 border-b border-border bg-surface px-2 py-2">
-          {TABS.map((entry) => (
+          {visibleTabs.map((entry) => (
             <button
               key={entry.key}
               type="button"
@@ -99,15 +106,15 @@ export function RoomSettingsDrawer({
         <div className="min-h-0 flex-1 overflow-auto p-4">
           {tab === "phase" && <PhasePlanPanel state={state} />}
           {tab === "limits" && <LimitPanel roomId={state.room.id} runtime={state.runtime} readOnly={readOnly} />}
-          {tab === "scribe" && <ScribePanel state={state.scribe_state.current_state} />}
-          {tab === "facilitator" && (
+          {!isScene && tab === "scribe" && <ScribePanel state={state.scribe_state.current_state} />}
+          {!isScene && tab === "facilitator" && (
             <FacilitatorPanel
               roomId={state.room.id}
               frozen={readOnly}
               signals={state.facilitator_signals}
             />
           )}
-          {tab === "decisions" && (
+          {!isScene && tab === "decisions" && (
             <DecisionsPanel
               roomId={state.room.id}
               frozen={readOnly}
@@ -122,7 +129,7 @@ export function RoomSettingsDrawer({
             />
           )}
           {tab === "upload" && <UploadPanel roomId={state.room.id} frozen={readOnly} />}
-          {tab === "subroom" && (
+          {!isScene && tab === "subroom" && (
             <SubroomPanel
               roomId={state.room.id}
               parentRoomId={state.room.parent_room_id}

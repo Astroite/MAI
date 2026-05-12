@@ -44,4 +44,14 @@ describe("streaming UI store", () => {
     expect(useUIStore.getState().finalizedStreamIds["msg-1"]).toBeTypeOf("number");
     expect(useUIStore.getState().finalizedStreamIds["msg-2"]).toBeTypeOf("number");
   });
+
+  it("clears only streams for a deleted room", () => {
+    const store = useUIStore.getState();
+    store.hydrateStream("room-1", "msg-1", "persona-1", "one", 0);
+    store.hydrateStream("room-2", "msg-2", "persona-2", "two", 0);
+    useUIStore.getState().clearRoomStreams("room-1");
+
+    expect(useUIStore.getState().streaming["msg-1"]).toBeUndefined();
+    expect(useUIStore.getState().streaming["msg-2"].text).toBe("two");
+  });
 });
