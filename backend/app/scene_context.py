@@ -552,13 +552,17 @@ def compose_scene_runtime_context_prompt(context: SceneContextOut) -> str:
     lines.extend(
         [
             "",
-            "[Behavior Contract]",
-            "- 只扮演自己。",
-            "- 不代替其他角色说话或行动。",
-            "- 不做全知旁白。",
-            "- 只依据可见上下文。",
-            "- 不知道的信息就表现为不知道。",
-            "- 未被点名时可以简短观察或沉默。",
+            "[Behavior Contract / 角色行为契约]",
+            "- 只扮演自己。 / Play only yourself.",
+            "- 不代替其他角色说话或行动。 / Do not speak or act for other characters.",
+            "- 不做全知旁白。 / Do not narrate as an omniscient observer.",
+            "- 只依据可见上下文。 / Base responses only on visible context.",
+            "- 不知道的信息就表现为不知道。 / If you don't know something, behave as if you don't know it.",
+            "- 如果被点名，优先回应点名意图。 / When named, prioritize responding to the call.",
+            "- 未被点名时可以简短观察或沉默。 / When not named, you may briefly observe or stay silent.",
+            "- 导演指令是临时指导，不是故事事实，不是角色听到的话，不会进入长期记忆。"
+            " / A director instruction is temporary guidance, not a story fact, "
+            "not something your character heard, and will not enter long-term memory.",
         ]
     )
     return "\n".join(line for line in lines if line is not None).strip()

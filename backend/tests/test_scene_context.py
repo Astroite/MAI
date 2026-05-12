@@ -686,7 +686,7 @@ def test_scene_runtime_context_prompt_composer_keeps_private_boundaries():
     assert "[World State]" in prompt
     assert "[Stage State]" in prompt
     assert "[Your Private Context]" in prompt
-    assert "[Behavior Contract]" in prompt
+    assert "[Behavior Contract / 角色行为契约]" in prompt
     assert "永熙三年冬" in prompt
     assert "边城客栈" in prompt
     assert "旧盟约" in prompt
@@ -697,7 +697,13 @@ def test_scene_runtime_context_prompt_composer_keeps_private_boundaries():
     assert "不做全知旁白" in prompt
     assert "只依据可见上下文" in prompt
     assert "不知道的信息就表现为不知道" in prompt
+    assert "如果被点名" in prompt
+    assert "优先回应点名意图" in prompt
     assert "未被点名时可以简短观察或沉默" in prompt
+    assert "导演指令是临时指导" in prompt
+    assert "not a story fact" in prompt
+    assert "Play only yourself" in prompt
+    assert "Do not speak or act for other characters" in prompt
     assert "peer -> speaker" not in prompt
 
 
@@ -1149,9 +1155,132 @@ def test_exited_scene_ai_is_not_picked_by_scheduler(client, discussant_personas)
     assert result.persona_ids == [active_persona_id]
     assert exited_persona_id not in result.persona_ids
 
-    manual_exited = client.post(
-        f"/rooms/{scene_id}/turn",
-        json={"speaker_persona_id": exited_persona_id},
+
+def test_behavior_contract_contains_all_required_rules():
+    """Snapshot test: the behavior contract must include every rule from
+    the P1.6 spec. Update this list when the contract changes."""
+    minimal_context = SceneContextOut(
+        room_id="snap-1",
+        world=SceneWorldBibleCompactOut(
+            id="w1",
+            name="Test",
+            summary="",
+            background="",
+            current_date_label="",
+            current_location="",
+        ),
+        scene=SceneStageContextOut(id="snap-1", title="T"),
+        stage_characters=[],
     )
-    assert manual_exited.status_code == 200, manual_exited.text
-    assert manual_exited.json() == []
+    prompt = compose_scene_runtime_context_prompt(minimal_context)
+
+    required_rules = [
+        "只扮演自己",
+        "不代替其他角色说话或行动",
+        "不做全知旁白",
+        "只依据可见上下文",
+        "不知道的信息就表现为不知道",
+        "如果被点名",
+        "优先回应点名意图",
+        "未被点名时可以简短观察或沉默",
+        "导演指令是临时指导",
+        "not a story fact",
+        "Play only yourself",
+        "Do not speak or act for other characters",
+    ]
+    for rule in required_rules:
+        assert rule in prompt, f"Behavior contract missing rule: {rule}"
+
+
+def test_director_instruction_does_not_leak_into_seal_draft(
+    client, discussant_personas, monkeypatch
+):
+    """Director instruction is ephemeral: it must not appear in the seal
+    draft payload, memory updates, or relationship updates."""
+    ctx = _make_context_scene(client, discussant_personas)
+    instruction = "让苏离隐瞒密信下落。"
+
+    asyncio.run(
+        _insert_visible_message(
+            ctx["scene_id"],
+            "苏离和阿照在后院讨论密信。",
+            message_type="narration",
+        )
+    )
+
+    captured: list[str] = []
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured.append(kwargs.get("scene_context_prompt", ""))
+        yield type("Chunk", (), {"text": "苏离含糊回应。", "index": 0})()
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+
+    turn = client.post(
+        f"/rooms/{ctx['scene_id']}/turn",
+        json={
+            "speaker_persona_id": ctx["speaker_persona_id"],
+            "director_instruction": instruction,
+        },
+    )
+    assert turn.status_code == 200, turn.text
+    assert instruction in captured[0]
+
+    state = client.get(f"/rooms/{ctx['scene_id']}/state").json()
+    assert all(instruction not in m["content"] for m in state["messages"])
+
+    draft = client.post(f"/rooms/{ctx['scene_id']}/seal")
+    assert draft.status_code == 200, draft.text
+    draft_text = str(draft.json())
+    assert instruction not in draft_text
+
+
+def test_discussion_room_turn_does_not_include_behavior_contract(
+    client, discussant_personas, monkeypatch
+):
+    captured: list[str] = []
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured.append(kwargs.get("scene_context_prompt", "missing"))
+        yield type("Chunk", (), {"text": "普通讨论回复", "index": 0})()
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "普通讨论行为契约隔离测试",
+            "persona_ids": [discussant_personas[0]["id"]],
+        },
+    ).json()
+    speaker_id = next(
+        p["id"]
+        for p in room["personas"]
+        if p["template_id"] == discussant_personas[0]["id"]
+    )
+
+    response = client.post(
+        f"/rooms/{room['room']['id']}/turn",
+        json={"speaker_persona_id": speaker_id},
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured == [""]
