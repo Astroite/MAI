@@ -3,10 +3,12 @@ import type { ApiModel } from "../../types";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
 import { ROUTABLE_SLUGS, SUGGESTED_MODELS } from "../../providers";
+import { formatLocalDateTime } from "../../utils/time";
 
 type TFn = ReturnType<typeof useI18n>["t"];
 export function ProviderModelsPanel({
   t,
+  locale,
   formatRelativeTime,
   selectedProviderModels,
   editingModelId,
@@ -32,6 +34,7 @@ export function ProviderModelsPanel({
   providerSlug
 }: {
   t: TFn;
+  locale: string;
   formatRelativeTime: ReturnType<typeof useI18n>["formatRelativeTime"];
   selectedProviderModels: ApiModel[];
   editingModelId: string | null;
@@ -78,7 +81,7 @@ export function ProviderModelsPanel({
                 : "bg-muted";
           const modelTip =
             model.last_tested_ok === true
-              ? t("api.statusOk", { time: model.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
+              ? t("api.statusOk", { time: formatLocalDateTime(model.last_tested_at, locale) })
               : model.last_tested_ok === false
                 ? t("api.statusFailed", { error: model.last_tested_error ?? t("common.unknown") })
                 : t("api.statusUntested");

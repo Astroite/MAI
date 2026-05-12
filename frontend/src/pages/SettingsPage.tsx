@@ -25,6 +25,7 @@ import { queryKeys } from "../queryKeys";
 import { useUIStore } from "../store";
 import { apiModelFullLabel, renderApiModelOptions } from "../utils/modelLabels";
 import { getDesktopLogDir, isTauriRuntime, openDesktopLogDir } from "../utils/desktopDiagnostics";
+import { formatLocalDateTime } from "../utils/time";
 
 export function SettingsPage() {
   const health = useQuery({ queryKey: queryKeys.health, queryFn: api.health, refetchInterval: 10000 });
@@ -148,7 +149,7 @@ function UpdaterSection() {
 
 function DefaultApiSection() {
   const queryClient = useQueryClient();
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const settings = useQuery({ queryKey: queryKeys.appSettings, queryFn: api.appSettings });
   const providers = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
   const models = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
@@ -207,7 +208,7 @@ function DefaultApiSection() {
     status === true ? "bg-success" : status === false ? "bg-danger" : "bg-muted";
   const statusLabel =
     status === true
-      ? t("api.statusOk", { time: selectedModel?.last_tested_at?.slice(0, 19).replace("T", " ") })
+      ? t("api.statusOk", { time: formatLocalDateTime(selectedModel?.last_tested_at, locale) })
       : status === false
         ? t("api.statusFailed", { error: selectedModel?.last_tested_error ?? t("common.unknown") })
         : t("api.statusUntested");

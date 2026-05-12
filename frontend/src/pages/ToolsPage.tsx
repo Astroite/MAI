@@ -19,9 +19,10 @@ import { useConfirm } from "../components/ConfirmDialog";
 import { toast } from "../components/Toaster";
 import { useI18n } from "../i18n";
 import { queryKeys } from "../queryKeys";
+import { formatLocalDateTime } from "../utils/time";
 
 export function ToolsPage() {
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const tools = useQuery({ queryKey: queryKeys.tools, queryFn: api.tools });
@@ -178,7 +179,7 @@ export function ToolsPage() {
                           {server.last_synced_at && (
                             <span>
                               {t("tools.syncedAt", {
-                                time: server.last_synced_at.slice(0, 19).replace("T", " ")
+                                time: formatLocalDateTime(server.last_synced_at, locale)
                               })}
                             </span>
                           )}

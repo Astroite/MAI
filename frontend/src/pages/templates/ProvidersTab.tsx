@@ -12,11 +12,12 @@ import { queryKeys } from "../../queryKeys";
 import { splitTags } from "./shared/templateUtils";
 import { Header } from "./shared/TemplateChrome";
 import { ProviderModelsPanel } from "./ModelsTab";
+import { formatLocalDateTime } from "../../utils/time";
 const DRAFT_PROVIDER_ID = "__new__";
 
 export function ProvidersTab() {
   const queryClient = useQueryClient();
-  const { t, formatRelativeTime } = useI18n();
+  const { locale, t, formatRelativeTime } = useI18n();
   const confirm = useConfirm();
   const providers = useQuery({ queryKey: queryKeys.apiProviders, queryFn: api.apiProviders });
   const models = useQuery({ queryKey: queryKeys.apiModels, queryFn: () => api.apiModels() });
@@ -283,7 +284,7 @@ export function ProvidersTab() {
                 : "bg-muted";
           const tip =
             provider.last_tested_ok === true
-              ? t("api.statusOk", { time: provider.last_tested_at?.slice(0, 19).replace("T", " ") ?? "" })
+              ? t("api.statusOk", { time: formatLocalDateTime(provider.last_tested_at, locale) })
               : provider.last_tested_ok === false
                 ? t("api.statusFailed", { error: provider.last_tested_error ?? t("common.unknown") })
                 : t("api.statusUntested");
@@ -386,6 +387,7 @@ export function ProvidersTab() {
                   {/* Right column: models for this provider */}
                   <ProviderModelsPanel
                     t={t}
+                    locale={locale}
                     formatRelativeTime={formatRelativeTime}
                     selectedProviderModels={selectedProviderModels}
                     editingModelId={editingModelId}
