@@ -42,6 +42,7 @@ import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { SealResultsDialog } from "./SealResultsDialog";
+import { buildStoryComposerContext } from "./storyComposer";
 import { useI18n } from "../../i18n";
 import { formatLocalDateTime } from "../../utils/time";
 import { queryKeys } from "../../queryKeys";
@@ -180,18 +181,16 @@ export function RoomShell() {
     queryFn: () => api.sceneMembers(activeRoomId!),
     enabled: Boolean(worldId && activeRoomId)
   });
-  const storyContext = useMemo(() => {
-    if (!worldId || !worldQuery.data || !sceneMembersQuery.data) return null;
-    const onStageIds = new Set(
-      sceneMembersQuery.data
-        .filter((member) => member.exited_at_message_id === null)
-        .map((member) => member.world_character_id)
-    );
-    const userCharacters = worldQuery.data.characters.filter(
-      (character) => character.kind === "user" && onStageIds.has(character.id)
-    );
-    return { worldId, userCharacters };
-  }, [worldId, worldQuery.data, sceneMembersQuery.data]);
+  const storyContext = useMemo(
+    () =>
+      buildStoryComposerContext(
+        worldId,
+        worldQuery.data?.characters,
+        sceneMembersQuery.data,
+        state?.personas ?? []
+      ),
+    [worldId, worldQuery.data?.characters, sceneMembersQuery.data, state?.personas]
+  );
 
   const currentPhaseTemplate = phases.data?.find(
     (phase) => phase.id === state?.current_phase?.phase_template_id
