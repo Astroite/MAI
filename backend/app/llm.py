@@ -41,9 +41,17 @@ class LLMAdapter:
         room_background: str = "",
         peer_names: dict[str, str] | None = None,
         peer_identities: dict[str, str] | None = None,
+        scene_context_prompt: str = "",
     ) -> AsyncIterator[StreamChunk]:
         messages = self._build_messages(
-            persona, context, phase, scribe_state, room_background, peer_names, peer_identities
+            persona,
+            context,
+            phase,
+            scribe_state,
+            room_background,
+            peer_names,
+            peer_identities,
+            scene_context_prompt,
         )
 
         response = await acompletion(
@@ -76,9 +84,17 @@ class LLMAdapter:
         room_background: str = "",
         peer_names: dict[str, str] | None = None,
         peer_identities: dict[str, str] | None = None,
+        scene_context_prompt: str = "",
     ) -> ToolCompletion:
         messages = self._build_messages(
-            persona, context, phase, scribe_state, room_background, peer_names, peer_identities
+            persona,
+            context,
+            phase,
+            scribe_state,
+            room_background,
+            peer_names,
+            peer_identities,
+            scene_context_prompt,
         )
         tool_call_count = 0
         for _ in range(max_tool_rounds + 1):
@@ -354,10 +370,13 @@ class LLMAdapter:
         room_background: str = "",
         has_peers: bool = False,
         peer_roster: list[tuple[str, str]] | None = None,
+        scene_context_prompt: str = "",
     ) -> str:
         parts = [persona.system_prompt.strip()]
         if room_background and room_background.strip():
             parts.append(f"【场景设定】\n{room_background.strip()}")
+        if scene_context_prompt and scene_context_prompt.strip():
+            parts.append(f"【Scene Runtime Context】\n{scene_context_prompt.strip()}")
         if has_peers:
             # Tell the model how the transcript is labeled and that it must
             # NOT echo the convention back. Without this, multi-AI rooms blur
@@ -418,6 +437,7 @@ class LLMAdapter:
         room_background: str = "",
         peer_names: dict[str, str] | None = None,
         peer_identities: dict[str, str] | None = None,
+        scene_context_prompt: str = "",
     ) -> list[dict[str, Any]]:
         """Route history so each model sees the conversation from its own POV.
 
@@ -454,6 +474,7 @@ class LLMAdapter:
                     room_background,
                     has_peers=has_peers,
                     peer_roster=peer_roster,
+                    scene_context_prompt=scene_context_prompt,
                 ),
             }
         ]
