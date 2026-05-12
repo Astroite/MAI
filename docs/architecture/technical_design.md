@@ -270,6 +270,51 @@ P0 World State 兼容层：
 
 `autodrive` / `facilitator` / `freeze` 路径不变。
 
+### 4.5.1 Scene Context Builder（P1.1）
+
+`backend/app/scene_context.py` 为每个 Story Scene AI turn 构建只读 context：
+
+```text
+build_scene_context(session, room, speaker_persona_id)
+  -> SceneContextOut
+       world:  World Bible compact (name/summary/background/date/location/arc/rules/taboos/plot_hooks)
+       scene:  stage context (index/title/time/duration/background/sealed/frozen)
+       timeline: last 8 committed timeline events
+       stage_characters: roster with name/kind/role/is_present/can_speak
+       speaker:
+         memory_cues: top 6 by salience (>= 0.05)
+         relationship_cues: outgoing relations to active peers
+         visibility: message count + notes
+```
+
+`compose_scene_runtime_context_prompt(context)` 渲染为四段文本：`[World State]` / `[Stage State]` / `[Your Private Context]` / `[Behavior Contract]`。
+
+构建失败时 fallback 到 legacy prompt（非阻塞）。
+
+### 4.5.2 Transcript Visibility Slicing（P1.2b）
+
+`engine.py::visible_messages_for_scene_speaker` 基于 `WorldSceneMember` 的 `entered_at_message_id` / `exited_at_message_id` 做 interval slicing：
+
+- `entered_at_message_id IS NULL` → 从 scene open 可见
+- `exited_at_message_id IS NULL` → 到 scene 当前可见
+- 边界 inclusive：enter / exit 消息本身可见
+- fallback：persona 未绑定 character 或不在 roster 时返回完整 transcript
+
+封幕 pipeline 使用 `_slice_messages_for_character` 做相同过滤。
+
+### 4.5.3 Director Instruction（P1.5）
+
+`TurnRequest.director_instruction` 是 ephemeral runtime instruction：
+
+- `_normalize_ephemeral_director_instruction` 验证必须是 scene room 且非空
+- `append_ephemeral_director_instruction` 包裹为 bilingual block 追加到 scene_context_prompt 末尾
+- 只影响当次 LLM 调用，不持久化到 Message 表
+- 不进入 Seal Draft / Memory / World State
+
+### 4.5.4 Behavior Contract（P1.6）
+
+`compose_scene_runtime_context_prompt` 的 `[Behavior Contract / 角色行为契约]` 段包含 8 条双语规则，覆盖：角色边界、信息边界、点名回应、沉默策略、导演指令临时性。
+
 ### 4.6 JSON 跨方言
 
 `models.JSONType` 定义为：
@@ -585,6 +630,8 @@ Story World（详细见 [`../product/story_world.md`](../product/story_world.md)
 - `POST /rooms/{rid}/scene/enter`、`POST /rooms/{rid}/scene/exit`、`GET /rooms/{rid}/scene/members`
 - `POST /rooms/{rid}/seal`、`GET|POST /rooms/{rid}/seal-drafts`、`GET|PATCH /rooms/{rid}/seal-drafts/{draft_id}`、`POST /rooms/{rid}/seal-drafts/{draft_id}/retry|commit`
 - `POST /rooms/{rid}/messages` 多一个可选字段 `as_character_id`，让用户在多个 `kind=user` 角色之间挑身份发言
+- `POST /rooms/{rid}/turn`：AI turn，可带 `director_instruction`（ephemeral，不持久化）
+- `GET /rooms/{rid}/scene/context`：只读 Scene Context（World Bible compact、stage roster、speaker memory/relations、visibility preview）
 
 ## 10. 内置数据
 
