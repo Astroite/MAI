@@ -11,7 +11,6 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .engine import is_scene_room
 from .models import (
     Message,
     PersonaInstance,
@@ -45,6 +44,10 @@ _UNCOMMITTED_STATUSES = {"draft", "hidden", "discarded"}
 
 class SceneContextError(ValueError):
     """Raised when a scene context cannot be built for the given inputs."""
+
+
+def _is_scene_room(room: Room) -> bool:
+    return room.world_id is not None
 
 
 def _is_committed_json_item(item: object) -> bool:
@@ -384,7 +387,7 @@ async def build_scene_context(
     speaker_persona_id: str | None = None,
 ) -> SceneContextOut:
     """Build the current read-only stage context for a Story World scene."""
-    if not is_scene_room(scene):
+    if not _is_scene_room(scene):
         raise SceneContextError("room is not a Story World scene")
     world = await session.get(World, scene.world_id)
     if world is None:
@@ -421,3 +424,141 @@ async def build_scene_context(
         stage_characters=stage,
         speaker=speaker,
     )
+
+
+def _shorten(value: object, limit: int = 360) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "..."
+
+
+def _item_label(item: dict[str, Any]) -> str:
+    for key in ("title", "name", "label", "summary", "content"):
+        value = item.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return str(item)
+
+
+def _json_item_lines(items: list[dict[str, Any]], *, limit: int = 5) -> list[str]:
+    lines: list[str] = []
+    for item in items[:limit]:
+        label = _shorten(_item_label(item), 160)
+        status = item.get("status")
+        suffix = f" ({status})" if isinstance(status, str) and status.strip() else ""
+        lines.append(f"- {label}{suffix}")
+    return lines
+
+
+def _arc_line(arc: dict[str, Any]) -> str:
+    if not arc:
+        return ""
+    parts: list[str] = []
+    for key in ("title", "summary", "current_conflict", "current_goal", "status"):
+        value = arc.get(key)
+        if isinstance(value, str) and value.strip():
+            parts.append(value.strip())
+    return " / ".join(parts) or _shorten(arc)
+
+
+def compose_scene_runtime_context_prompt(context: SceneContextOut) -> str:
+    """Render a compact Scene runtime context block for one speaker.
+
+    The builder already enforces the private-data boundary; this renderer only
+    consumes the compact context it receives and keeps the output bounded.
+    """
+    lines: list[str] = ["[World State]"]
+    world = context.world
+    lines.append(f"World: {world.name}")
+    if world.summary:
+        lines.append(f"Summary: {_shorten(world.summary)}")
+    if world.background:
+        lines.append(f"Background: {_shorten(world.background)}")
+    if world.current_date_label:
+        lines.append(f"Current date: {_shorten(world.current_date_label, 120)}")
+    if world.current_location:
+        lines.append(f"Current location: {_shorten(world.current_location, 120)}")
+    arc = _arc_line(world.current_arc)
+    if arc:
+        lines.append(f"Current arc: {_shorten(arc)}")
+    if world.rules:
+        lines.append("Rules:")
+        lines.extend(_json_item_lines(world.rules, limit=4))
+    if world.taboos:
+        lines.append("Taboos:")
+        lines.extend(_json_item_lines(world.taboos, limit=4))
+    if world.plot_hooks:
+        lines.append("Plot hooks:")
+        lines.extend(_json_item_lines(world.plot_hooks, limit=5))
+    if context.timeline:
+        lines.append("Recent committed timeline:")
+        for event in context.timeline[-8:]:
+            date = f"{event.date_label} " if event.date_label else ""
+            summary = f": {_shorten(event.summary, 220)}" if event.summary else ""
+            lines.append(f"- {date}{event.title} [{event.type}/{event.source}]{summary}")
+
+    scene = context.scene
+    lines.extend(["", "[Stage State]"])
+    scene_bits = [f"Scene {scene.scene_index}" if scene.scene_index is not None else "Scene", scene.title]
+    lines.append(" - ".join(bit for bit in scene_bits if bit))
+    if scene.in_world_time_start:
+        time_line = scene.in_world_time_start
+        if scene.in_world_time_end:
+            time_line += f" -> {scene.in_world_time_end}"
+        lines.append(f"Scene time: {_shorten(time_line, 160)}")
+    if scene.in_world_duration_hint:
+        lines.append(f"Duration hint: {_shorten(scene.in_world_duration_hint, 120)}")
+    if scene.background:
+        lines.append(f"Scene background: {_shorten(scene.background)}")
+    present = [item for item in context.stage_characters if item.is_present]
+    if present:
+        lines.append("Active stage characters:")
+        for character in present[:12]:
+            role = f" - {character.role_in_scene}" if character.role_in_scene else ""
+            control = " user-playable" if character.can_user_speak_as else ""
+            lines.append(f"- {character.name} ({character.kind}){role}{control}")
+
+    lines.extend(["", "[Your Private Context]"])
+    speaker = context.speaker
+    if speaker is None:
+        lines.append("No speaker-specific private context was requested.")
+    else:
+        lines.append(f"You are: {speaker.name}")
+        if speaker.memory_cues:
+            lines.append("Your memories:")
+            for memory in speaker.memory_cues[:6]:
+                prefix = f"Scene {memory.scene_index_at_write}: " if memory.scene_index_at_write is not None else ""
+                lines.append(f"- [{memory.kind}] {prefix}{_shorten(memory.content, 260)}")
+        else:
+            lines.append("Your memories: none selected.")
+        if speaker.relationship_cues:
+            lines.append("Your outgoing relationships to active peers:")
+            for relation in speaker.relationship_cues[:8]:
+                label = relation.label or "unlabeled"
+                notes = f" - {_shorten(relation.notes, 220)}" if relation.notes else ""
+                lines.append(
+                    f"- To {relation.to_character_name or relation.to_character_id}: "
+                    f"{label} ({relation.sentiment:+.2f}){notes}"
+                )
+        else:
+            lines.append("Your outgoing relationships to active peers: none selected.")
+        if speaker.visibility.notes:
+            lines.append(
+                "Visibility preview: "
+                + "; ".join(_shorten(note, 120) for note in speaker.visibility.notes[:3])
+            )
+
+    lines.extend(
+        [
+            "",
+            "[Behavior Contract]",
+            "- 只扮演自己。",
+            "- 不代替其他角色说话或行动。",
+            "- 不做全知旁白。",
+            "- 只依据可见上下文。",
+            "- 不知道的信息就表现为不知道。",
+            "- 未被点名时可以简短观察或沉默。",
+        ]
+    )
+    return "\n".join(line for line in lines if line is not None).strip()

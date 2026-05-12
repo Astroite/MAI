@@ -37,6 +37,7 @@ from .models import (
     now_utc,
 )
 from .schemas import FacilitatorEvaluation, MemoryDistillation, ScribeUpdate
+from .scene_context import build_scene_context, compose_scene_runtime_context_prompt
 from .tools import execute_tool, list_tool_schemas, tool_definitions_for_llm, tool_result_as_text
 from .trace import trace_record
 
@@ -1036,7 +1037,31 @@ async def _stream_one_message(
 
     truncated_reason = None
     model_runtime: ResolvedModelRuntime | None = None
+    scene_context_prompt = ""
     try:
+        if is_scene_room(room):
+            try:
+                scene_context = await build_scene_context(
+                    session,
+                    room,
+                    speaker_persona_id=persona.id,
+                )
+                scene_context_prompt = compose_scene_runtime_context_prompt(scene_context)
+                await trace_record(
+                    session,
+                    room.id,
+                    "scene_context_shadow",
+                    "scene runtime context built",
+                    _scene_context_trace_payload(scene_context, scene_context_prompt),
+                )
+            except Exception as exc:  # noqa: BLE001 - context is non-critical
+                await trace_record(
+                    session,
+                    room.id,
+                    "scene_context_warning",
+                    "scene runtime context unavailable; falling back to legacy prompt",
+                    {"persona_id": persona.id, "error": repr(exc)},
+                )
         persona, model_runtime = await _runtime_view_for_persona(session, persona)
         await trace_record(
             session,
@@ -1083,6 +1108,7 @@ async def _stream_one_message(
                     room_background=room.background or "",
                     peer_names=peer_names,
                     peer_identities=peer_identities,
+                    scene_context_prompt=scene_context_prompt,
                 ),
                 timeout=max(CHUNK_IDLE_TIMEOUT_SECONDS, 180.0),
             )
@@ -1114,6 +1140,7 @@ async def _stream_one_message(
                 room_background=room.background or "",
                 peer_names=peer_names,
                 peer_identities=peer_identities,
+                scene_context_prompt=scene_context_prompt,
             ).__aiter__()
             try:
                 while True:
@@ -2820,6 +2847,33 @@ def format_truncated_partial(partial: str, reason: str) -> str:
 
 def estimate_tokens(text: str) -> int:
     return max(1, len(text) // 4) if text else 0
+
+
+def _scene_context_trace_payload(context: Any, prompt: str) -> dict[str, Any]:
+    world = context.world
+    speaker = context.speaker
+    return {
+        "world_fields_present": {
+            "summary": bool(world.summary),
+            "background": bool(world.background),
+            "current_date_label": bool(world.current_date_label),
+            "current_location": bool(world.current_location),
+            "current_arc": bool(world.current_arc),
+            "rules": bool(world.rules),
+            "taboos": bool(world.taboos),
+            "plot_hooks": bool(world.plot_hooks),
+        },
+        "timeline_count": len(context.timeline),
+        "stage_character_count": len(context.stage_characters),
+        "speaker_persona_id": speaker.persona_instance_id if speaker else None,
+        "speaker_world_character_id": speaker.world_character_id if speaker else None,
+        "memory_cue_count": len(speaker.memory_cues) if speaker else 0,
+        "relationship_cue_count": len(speaker.relationship_cues) if speaker else 0,
+        "visible_message_count_preview": (
+            speaker.visibility.visible_message_count if speaker else 0
+        ),
+        "prompt_tokens_estimate": estimate_tokens(prompt),
+    }
 
 
 def message_to_tool_payload(message: Message) -> dict[str, Any]:
