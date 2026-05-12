@@ -47,7 +47,7 @@ import { formatLocalDateTime } from "../../utils/time";
 import { queryKeys } from "../../queryKeys";
 import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
 import { isSceneRoom } from "../../utils/scene";
-import type { SceneSealResult } from "../../types";
+import type { SceneSealDraft } from "../../types";
 
 export function RoomShell() {
   const { roomId, subId } = useParams();
@@ -64,7 +64,7 @@ export function RoomShell() {
   const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
   const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [showRoomsDrawer, setShowRoomsDrawer] = useState(false);
-  const [sealResult, setSealResult] = useState<SceneSealResult | null>(null);
+  const [sealDraft, setSealDraft] = useState<SceneSealDraft | null>(null);
   const [params, setParams] = useSearchParams();
   const state = room.data;
   const sceneSealed = Boolean(state?.room.sealed_at);
@@ -106,11 +106,15 @@ export function RoomShell() {
     invalidate();
     void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
     const currentWorldId = state?.room.world_id;
-    if (currentWorldId) void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(currentWorldId) });
+    if (currentWorldId) {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(currentWorldId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.worldState(currentWorldId) });
+    }
   };
   const invalidateSceneCollections = () => {
     invalidateRoomCollections();
     void queryClient.invalidateQueries({ queryKey: queryKeys.sceneMembers(activeRoomId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sealDrafts(activeRoomId) });
   };
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
   const continuePhase = useMutation({ mutationFn: () => api.continuePhase(activeRoomId!), onSuccess: invalidate });
@@ -119,10 +123,10 @@ export function RoomShell() {
   const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidateRoomCollections });
   const sealScene = useMutation({
     mutationFn: () => api.sealScene(activeRoomId!),
-    onSuccess: (result) => {
+    onSuccess: (draft) => {
       invalidateSceneCollections();
-      setSealResult(result);
-      toast.success(t("room.scene.sealSuccess"));
+      setSealDraft(draft);
+      toast.success(t("room.scene.sealDraftReady"));
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
@@ -154,6 +158,18 @@ export function RoomShell() {
   // uses this to offer 旁白 / 扮演 modes with a user-character picker.
   const isScene = isSceneRoom(state?.room);
   const worldId = state?.room.world_id ?? null;
+  const sealDraftsQuery = useQuery({
+    queryKey: queryKeys.sealDrafts(activeRoomId),
+    queryFn: () => api.sealDrafts(activeRoomId!),
+    enabled: Boolean(isScene && activeRoomId && !sceneSealed)
+  });
+  const activeSealDraft = useMemo(
+    () =>
+      sealDraftsQuery.data?.find(
+        (draft) => draft.status !== "committed" && draft.status !== "discarded"
+      ) ?? null,
+    [sealDraftsQuery.data]
+  );
   const worldQuery = useQuery({
     queryKey: queryKeys.world(worldId),
     queryFn: () => api.world(worldId!),
@@ -302,10 +318,23 @@ export function RoomShell() {
                 </div>
                 {!sceneSealed &&
                   (state.runtime.frozen ? (
-                    <button className="btn" type="button" onClick={() => unfreeze.mutate()} disabled={unfreeze.isPending}>
-                      <Unlock size={16} />
-                      {t("room.unfreeze")}
-                    </button>
+                    isScene && activeSealDraft ? (
+                      <button
+                        className="btn btn-primary"
+                        type="button"
+                        onClick={() => setSealDraft(activeSealDraft)}
+                        disabled={sealDraftsQuery.isLoading}
+                        title={t("room.scene.openSealDraftTitle")}
+                      >
+                        <FileText size={16} />
+                        {t("room.scene.openSealDraft")}
+                      </button>
+                    ) : (
+                      <button className="btn" type="button" onClick={() => unfreeze.mutate()} disabled={unfreeze.isPending}>
+                        <Unlock size={16} />
+                        {t("room.unfreeze")}
+                      </button>
+                    )
                   ) : (
                     <button
                       className="btn btn-danger"
@@ -318,7 +347,7 @@ export function RoomShell() {
                       {t("room.freeze")}
                     </button>
                   ))}
-                {isScene && !state.room.sealed_at && (
+                {isScene && !state.room.sealed_at && !activeSealDraft && (
                   <button
                     className="btn"
                     type="button"
@@ -407,7 +436,16 @@ export function RoomShell() {
       </div>
 
       {state && <RoomSettingsDrawer state={state} childRooms={childRooms} />}
-      <SealResultsDialog result={sealResult} onClose={() => setSealResult(null)} />
+      <SealResultsDialog
+        roomId={activeRoomId}
+        draft={sealDraft}
+        onDraftChange={setSealDraft}
+        onClose={() => setSealDraft(null)}
+        onCommitted={() => {
+          invalidateSceneCollections();
+          setSealDraft(null);
+        }}
+      />
 
       {showRoomsDrawer && (
         <div className="fixed inset-0 z-40 flex md:hidden">

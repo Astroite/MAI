@@ -20,6 +20,15 @@ def _world_with_ai_character(client, discussant_personas, name="忆主"):
     return world, character
 
 
+def _seal_and_commit(client, scene_id: str):
+    draft = client.post(f"/rooms/{scene_id}/seal")
+    assert draft.status_code == 200, draft.text
+    payload = draft.json()
+    commit = client.post(f"/rooms/{scene_id}/seal-drafts/{payload['id']}/commit")
+    assert commit.status_code == 200, commit.text
+    return commit
+
+
 def test_backstory_is_protected_from_decay(client, discussant_personas):
     world, character = _world_with_ai_character(client, discussant_personas)
 
@@ -39,8 +48,7 @@ def test_backstory_is_protected_from_decay(client, discussant_personas):
             "members": [{"world_character_id": character["id"]}],
         },
     ).json()
-    seal = client.post(f"/rooms/{scene['room']['id']}/seal")
-    assert seal.status_code == 200
+    _seal_and_commit(client, scene["room"]["id"])
 
     # Backstory salience must be untouched.
     after = client.get(
@@ -154,8 +162,7 @@ def test_unused_episode_decays_when_outside_grace_window(
     # Seal the 4th scene — at scene_index 4 with grace 3, threshold = 1.
     # Our memory has wrote_idx=None and used_idx=None → both branches skip
     # → decay applies.
-    seal = client.post(f"/rooms/{seal_targets[-1]}/seal")
-    assert seal.status_code == 200
+    _seal_and_commit(client, seal_targets[-1])
 
     after = client.get(
         f"/worlds/{world['id']}/characters/{character['id']}/memories"
@@ -199,8 +206,7 @@ def test_memory_cap_drops_lowest_salience(client, discussant_personas, monkeypat
             "members": [{"world_character_id": other_char["id"]}],
         },
     ).json()
-    seal = client.post(f"/rooms/{scene['room']['id']}/seal")
-    assert seal.status_code == 200
+    _seal_and_commit(client, scene["room"]["id"])
 
     after = client.get(
         f"/worlds/{world['id']}/characters/{character['id']}/memories"

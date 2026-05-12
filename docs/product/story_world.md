@@ -27,7 +27,7 @@ Story World 在 Room + Persona 之上抽出 **World** 一级实体，把 Room �
 
 - **N1**：World 是 Room 的容器；删除 World 级联删 Scene 与 Character。删除单个 Scene 不影响 World。
 - **N2**：同一 World 内 `scene_index` 严格单调递增，无分支。新 Scene 总是 `max + 1`。
-- **N3**：角色记忆只在 Scene 之间流动；Scene 进行中产出的消息不会实时改写其他 Scene 的记忆——记忆固化发生在「封幕」(`POST /rooms/{rid}/seal`)。
+- **N3**：角色记忆只在 Scene 之间流动；Scene 进行中产出的消息不会实时改写其他 Scene 的记忆——`POST /rooms/{rid}/seal` 只生成可编辑草稿，记忆固化发生在 Seal Draft commit。
 - **N4**：`kind=user` 角色没有 episodic 管线；用户的记忆是用户自己的。系统只存档案 + 关系卡片（卡片由 AI 角色单边维护）。
 - **N5**：入场 / 离场是 append-only 事件——`participant.enter` / `participant.exit` 系统消息（visible to models），同步更新 `WorldSceneMember.entered_at_message_id` / `exited_at_message_id`。每个角色每个 Scene 至多一进一出（v1 不支持回流）。
 
@@ -42,10 +42,14 @@ Story World 在 Room + Persona 之上抽出 **World** 一级实体，把 Room �
 | `world_scene_members` | Scene 名册（PK = `(scene_id, world_character_id)`）+ entered/exited 区间 + `speak_as_user` |
 | `world_character_memories` | Episodic 记忆条目（`kind∈{episode, impression, vow, fact, backstory}`）+ salience + `last_used_scene_index` |
 | `world_character_relations` | A 视角下对 B 的关系卡片（单向，AI 单边维护） |
+| `world_timeline_events` | World 级时间轴事件：历史背景、记忆/关系/伏笔/主线/地点/阵营变化；Scene 节点仍以 `Room` 为源 |
+| `world_scene_seal_drafts` | 两阶段封幕草稿：摘要、时间轴事件、记忆更新、关系更新、警告、重试来源和 commit 状态 |
 
 `Room` 加列：`world_id` / `scene_index` / `in_world_time_start` / `in_world_time_end` / `in_world_duration_hint` / `sealed_at`。`world_id IS NULL` 的房间走全部现有行为；非空房间是 Scene。
 
 `PersonaInstance` 加列 `world_character_id`，让 engine 在 Scene 中能反查回 character（拉记忆 / 关系入 prompt）。
+
+`World.config.world_bible` 是 P0 World State 的兼容层，保存当前世界设定集：`summary`、`background`、当前故事时间、当前地点、当前主线 `current_arc`、地点、阵营、规则、禁忌和伏笔等。`World.synopsis` / `setting` 继续保留并与 Bible 的 summary / background 同步，兼容旧列表和 prompt 路径。
 
 ## 4. 记忆管线（三层）
 
@@ -57,16 +61,18 @@ Story World 在 Room + Persona 之上抽出 **World** 一级实体，把 Room �
 
 Retrieval v1 简化为 `salience DESC, scene_index DESC` 的 top-K，未引入 BM25 / embedding。每次被选入新 scene prompt 的条目会更新 `last_used_scene_index`，驱动衰减（`engine.decay_unused_memories`）。每角色 episodic 有硬上限（`engine.enforce_memory_cap`）。
 
-封幕 pipeline（`engine.run_scene_memory_scribe`）：
+封幕 pipeline 是两阶段提交：
 
-1. 取该角色「在场区间内」的所有消息。
-2. tool-call 严格 schema 输出：`new_episodes` / `impressions` / `vows`。
-3. 写入 `world_character_memories` + `world_character_relations`，幂等（同 `source_scene_id` 已写过则拒绝重复跑）。
+1. `POST /rooms/{rid}/seal` 先暂停/冻结 Scene 并生成 `WorldSceneSealDraft`，不写入长期世界状态；存在未提交/未废弃草稿时不能解冻继续改写本幕。
+2. `engine.generate_scene_seal_draft_payload` 取每个 AI 角色「在场区间内」的消息，用严格 schema tool-call 生成记忆和关系草稿。
+3. Scene-end Inspector 中用户可编辑摘要、勾选 / 取消时间轴事件、记忆和关系变化，也可整体重试生成新草稿。
+4. `POST /rooms/{rid}/seal-drafts/{draft_id}/commit` 才写入 `sealed_at`、`world_timeline_events`、`world_character_memories`、`world_character_relations`，并执行 decay / cap。写入项保留 `scene_id` 与 `seal_draft_id` / `last_updated_seal_draft_id` 以便追溯来源。
+5. Commit 幂等：同一 draft 重复提交不会重复写入；同一 Scene 只允许一个 committed draft。
 
 封幕只触发于：
 
-- 用户显式调用 `POST /rooms/{rid}/seal`。
-- Room freeze 后 5 秒前端弹「是否封幕」UI 提示——**不**自动封幕（不可逆）。
+- 用户显式调用 `POST /rooms/{rid}/seal` 暂停 Scene 并生成草稿。
+- Room freeze 后前端提示是否生成封幕草稿；系统不会自动写入长期状态。
 
 ## 5. Engine 改动点
 
@@ -74,7 +80,9 @@ Retrieval v1 简化为 `salience DESC, scene_index DESC` 的 top-K，未引入 B
 
 - `pick_next_speaker`：Scene 模式下，候选集来自当前在场（`exited_at_message_id IS NULL` 且 `entered_at_message_id` 已发生）的 `world_scene_members`。`kind=user` 角色出现在轮转里时变成 `wait`。
 - `_build_messages`：在 system prompt 头部 prepend World synopsis + character 档案 + retrieved episodic + 同场关系卡片。
-- `run_scene_memory_scribe` / `decay_unused_memories` / `enforce_memory_cap`：封幕路径的三个核心函数。
+- `generate_scene_seal_draft_payload`：生成可编辑封幕草稿，不写入长期状态。
+- `run_scene_memory_scribe`：保留为底层兼容函数；正式 UI 路径通过 SealDraft commit 写入。
+- `decay_unused_memories` / `enforce_memory_cap`：SealDraft commit 后执行的记忆维护函数。
 - Scene 内默认**关闭** Room scribe（`run_scribe_update` 在 `world_id IS NOT NULL` 的房间里早退）；character memory scribe 是唯一的折叠路径。
 
 `autodrive` / `facilitator` 仍沿用主引擎路径；`pause` / `freeze` 也走 Room 级控制（pause 等当前角色说完后冻结，freeze 立即取消 in-flight）。
@@ -100,21 +108,33 @@ DELETE /worlds/{wid}/characters/{cid}/memories/{mid}
 
 POST   /worlds/{wid}/scenes                            创建 Scene（自动 scene_index = max+1）
 GET    /worlds/{wid}/timeline                          按 scene_index 顺序的场景一览
+GET    /worlds/{wid}/state                             World Detail 主控台状态（Bible / Timeline Events / Scenes / Memories / Relations）
+PATCH  /worlds/{wid}/bible                             编辑 World Bible 兼容层
+GET    /worlds/{wid}/timeline-events                   World 级时间轴事件
+POST   /worlds/{wid}/timeline-events                   手动添加历史/状态事件
+PATCH  /worlds/{wid}/timeline-events/{eid}             编辑事件
+DELETE /worlds/{wid}/timeline-events/{eid}             删除事件
 
 POST   /rooms/{rid}/scene/enter                        角色入场（追加 system 消息 + 更新 member）
 POST   /rooms/{rid}/scene/exit                         角色离场
 GET    /rooms/{rid}/scene/members                      在场名册
-POST   /rooms/{rid}/seal                               封幕：触发 scene-end scribe，状态 → sealed
+POST   /rooms/{rid}/seal                               生成封幕草稿（不写入长期状态）
+GET    /rooms/{rid}/seal-drafts                        草稿列表
+POST   /rooms/{rid}/seal-drafts                        生成新草稿
+GET    /rooms/{rid}/seal-drafts/{draft_id}             查看草稿
+PATCH  /rooms/{rid}/seal-drafts/{draft_id}             编辑草稿 / 勾选项
+POST   /rooms/{rid}/seal-drafts/{draft_id}/retry       基于当前草稿整体重试
+POST   /rooms/{rid}/seal-drafts/{draft_id}/commit      确认写入世界状态，Scene → sealed
 ```
 
 `POST /rooms/{rid}/messages` 增加可选字段 `as_character_id`——当用户挂多个 user 角色时，指明本次以谁的身份发言。
 
 ## 7. 前端
 
-新页面：
+页面：
 
 - `WorldListPage.tsx` —— 与 `/` 同级，左 rail 加入口。
-- `WorldPage.tsx` —— 三栏：[角色列表] [时间线 + Scene 卡] [世界设定]。
+- `WorldDetailPage.tsx` —— World State 主控台：Header + 状态卡 + Tabs（Overview / Timeline / World Bible / Characters / Relationships / Memories / Scenes）。
 - `world/CharacterEditor.tsx` / `CharacterMemoryPanel.tsx` / `SceneCreator.tsx` / `TimelineColumn.tsx`。
 
 `RoomShell.tsx` 已小幅改造：检测到 `world_id` 时 title bar 显示「世界 / 第 N 幕」；Composer 增加两类模式：
@@ -122,7 +142,15 @@ POST   /rooms/{rid}/seal                               封幕：触发 scene-end
 - **旁白（narration）**：用户以「导演」身份描写场景或角色动作，落库为 system 消息。
 - **扮演（act-as）**：用户挑选 `kind=user` 的角色，以该角色身份发言。
 
-封幕后，**Scene-end inspector** 对话框可逐角色查看本幕产出的 episodic / impressions / vows，必要时可重跑。
+封幕草稿生成后，**Scene-end Inspector** 对话框展示本幕摘要、时间轴事件、角色记忆更新、关系变化与警告。用户确认 commit 后，这些内容才会进入长期世界状态。
+
+World Detail 的 P0 主控台能力：
+
+- Header 展示世界简介、当前故事时间、当前主线阶段、当前地点，并给出“继续当前 Scene / 开启下一幕”入口。
+- Timeline Tab 合并显示 `world_timeline_events` 历史事件与 Scene 节点，并提供类型筛选。
+- World Bible Tab 支持编辑世界概述、背景、当前故事时间、当前地点和当前主线状态。
+- Memories / Relationships Tab 以可读列表展示现有 `world_character_memories` 与 `world_character_relations`，并标注来源（手动 / 封幕写入）。
+- P0.4 两阶段封幕已切换：`Seal Draft -> Inspector -> Commit`。
 
 ## 8. 测试覆盖
 
@@ -132,6 +160,7 @@ POST   /rooms/{rid}/seal                               封幕：触发 scene-end
 - `tests/test_memory_decay.py` —— `last_used_scene_index` 衰减 + episodic cap 折叠。
 - `tests/test_relations.py` —— 关系卡片单向维护。
 - `tests/test_room_export.py` —— Scene 导出。
+- `tests/test_world_state.py` —— World State 聚合、World Bible 编辑、Timeline Event CRUD 与链接校验。
 
 ## 9. v2 候选（不在 v1）
 
@@ -146,7 +175,7 @@ POST   /rooms/{rid}/seal                               封幕：触发 scene-end
 
 ## 10. 已知风险与处理
 
-- **R1 封幕失败**：封幕状态机 `unsealed → sealing → sealed | sealing_failed`；失败可重试，封幕期间禁止以同一名册开新场景。
+- **R1 封幕失败**：两阶段状态为 `unsealed → draft_ready|draft_failed → committed`；失败或质量不佳可整体重试生成新草稿。草稿审阅期间 Scene 保持暂停/冻结，避免 transcript 改动导致草稿失真。
 - **R2 修改 core_identity 是否回算 episodic**：不回算，记忆是历史事实。UI 提示。
 - **R3 删除 character**：软删除（`status=retired`），关系卡片保留。
 - **R4 PersonaTemplate 升级污染**：`WorldCharacter` 已拷贝 color / icon / identity；动态依赖只剩 `system_prompt`。`persona_template_version` 字段为后续「是否同步新版」提示留位。

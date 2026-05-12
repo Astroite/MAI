@@ -32,12 +32,12 @@ from .engine import (
     estimate_tokens,
     extend_current_phase,
     freeze_room,
+    generate_scene_seal_draft_payload,
     is_autodrive_active,
     is_scene_room,
     pause_room,
     run_manual_facilitator_eval,
     run_room_turn,
-    run_scene_memory_scribe,
     schedule_autodrive,
     transition_to_next_phase,
     unfreeze_room,
@@ -70,7 +70,9 @@ from .models import (
     WorldCharacter,
     WorldCharacterMemory,
     WorldCharacterRelation,
+    WorldSceneSealDraft,
     WorldSceneMember,
+    WorldTimelineEvent,
 )
 from .prompts import compose_scene_persona_prompt
 from .schemas import (
@@ -139,6 +141,8 @@ from .schemas import (
     SceneEnterRequest,
     SceneExitRequest,
     SceneRosterEntry,
+    SceneSealDraftOut,
+    SceneSealDraftUpdate,
     SceneTimelineEntry,
     WorldCharacterCreate,
     WorldCharacterMemoryCreate,
@@ -149,11 +153,19 @@ from .schemas import (
     WorldCharacterRelationUpdate,
     WorldCharacterRelationUpsert,
     WorldCharacterUpdate,
+    WorldBibleOut,
+    WorldBibleUpdate,
     WorldCreate,
     WorldDetailOut,
+    WorldMemoryOverviewOut,
     WorldOut,
+    WorldRelationshipEdgeOut,
     WorldSceneMemberOut,
     WorldSummaryOut,
+    WorldStateOut,
+    WorldTimelineEventCreate,
+    WorldTimelineEventOut,
+    WorldTimelineEventUpdate,
     WorldUpdate,
 )
 from .llm import LITELLM_ROUTABLE_SLUGS, llm_adapter
@@ -1972,6 +1984,10 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
 async def unfreeze(room_id: str, session: AsyncSession = Depends(get_session)):
     room, _runtime = await _room_runtime_or_404(session, room_id)
     _ensure_not_sealed(room)
+    if is_scene_room(room):
+        active_draft_id = await _active_seal_draft_id(session, room_id)
+        if active_draft_id:
+            raise HTTPException(409, "scene has an active seal draft")
     await unfreeze_room(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
@@ -2130,6 +2146,254 @@ async def _get_character_or_404(
     return character
 
 
+def _normalize_world_bible(world: World) -> dict:
+    config = dict(world.config or {})
+    raw_config = config.get("world_bible")
+    raw = dict(raw_config) if isinstance(raw_config, dict) else {}
+    current_arc = raw["current_arc"] if "current_arc" in raw else config.get("current_arc")
+    plot_hooks = raw["plot_hooks"] if "plot_hooks" in raw else config.get("plot_hooks", [])
+    return {
+        "summary": raw.get("summary") or world.synopsis or "",
+        "genre": raw.get("genre") or "",
+        "tone": raw.get("tone") or "",
+        "era": raw.get("era") or "",
+        "current_date_label": raw.get("current_date_label") or "",
+        "current_location": raw.get("current_location") or "",
+        "background": raw.get("background") or world.setting or "",
+        "history": list(raw.get("history") or []),
+        "locations": list(raw.get("locations") or []),
+        "factions": list(raw.get("factions") or []),
+        "rules": list(raw.get("rules") or []),
+        "taboos": list(raw.get("taboos") or []),
+        "current_arc": dict(current_arc) if isinstance(current_arc, dict) else None,
+        "plot_hooks": list(plot_hooks) if isinstance(plot_hooks, list) else [],
+    }
+
+
+async def _world_detail_out(session: AsyncSession, world: World) -> WorldDetailOut:
+    characters = (
+        await session.scalars(
+            select(WorldCharacter)
+            .where(WorldCharacter.world_id == world.id)
+            .order_by(WorldCharacter.created_at)
+        )
+    ).all()
+    detail = WorldDetailOut.model_validate(world)
+    detail.characters = [WorldCharacterOut.model_validate(c) for c in characters]
+    return detail
+
+
+async def _build_scene_timeline_entries(
+    session: AsyncSession, world_id: str
+) -> list[SceneTimelineEntry]:
+    scenes = (
+        await session.scalars(
+            select(Room)
+            .where(Room.world_id == world_id, Room.scene_index.is_not(None))
+            .order_by(Room.scene_index)
+        )
+    ).all()
+    if not scenes:
+        return []
+    scene_ids = [scene.id for scene in scenes]
+    member_counts = dict(
+        (
+            await session.execute(
+                select(WorldSceneMember.scene_id, func.count(WorldSceneMember.world_character_id))
+                .where(WorldSceneMember.scene_id.in_(scene_ids))
+                .group_by(WorldSceneMember.scene_id)
+            )
+        ).all()
+    )
+    message_counts = dict(
+        (
+            await session.execute(
+                select(Message.room_id, func.count(Message.id))
+                .where(Message.room_id.in_(scene_ids))
+                .group_by(Message.room_id)
+            )
+        ).all()
+    )
+    return [
+        SceneTimelineEntry(
+            id=scene.id,
+            scene_index=scene.scene_index or 0,
+            title=scene.title,
+            status=scene.status,  # type: ignore[arg-type]
+            sealed_at=scene.sealed_at,
+            in_world_time_start=scene.in_world_time_start,
+            in_world_time_end=scene.in_world_time_end,
+            in_world_duration_hint=scene.in_world_duration_hint,
+            member_count=int(member_counts.get(scene.id, 0)),
+            message_count=int(message_counts.get(scene.id, 0)),
+            created_at=scene.created_at,
+        )
+        for scene in scenes
+    ]
+
+
+async def _world_timeline_events(
+    session: AsyncSession, world_id: str
+) -> list[WorldTimelineEvent]:
+    return list(
+        (
+            await session.scalars(
+                select(WorldTimelineEvent)
+                .where(WorldTimelineEvent.world_id == world_id)
+                .order_by(WorldTimelineEvent.order, WorldTimelineEvent.created_at)
+            )
+        ).all()
+    )
+
+
+async def _validate_event_links(
+    session: AsyncSession,
+    world_id: str,
+    *,
+    scene_id: str | None = None,
+    character_ids: list[str] | None = None,
+) -> None:
+    if scene_id:
+        scene = await session.get(Room, scene_id)
+        if scene is None or scene.world_id != world_id:
+            raise HTTPException(422, "scene_id is not in this world")
+    if character_ids:
+        existing = set(
+            (
+                await session.scalars(
+                    select(WorldCharacter.id).where(
+                        WorldCharacter.world_id == world_id,
+                        WorldCharacter.id.in_(character_ids),
+                    )
+                )
+            ).all()
+        )
+        missing = [cid for cid in character_ids if cid not in existing]
+        if missing:
+            raise HTTPException(422, f"character ids not in this world: {missing}")
+
+
+async def _world_memory_overview(
+    session: AsyncSession, world_id: str
+) -> list[WorldMemoryOverviewOut]:
+    characters = list(
+        (
+            await session.scalars(
+                select(WorldCharacter).where(WorldCharacter.world_id == world_id)
+            )
+        ).all()
+    )
+    by_id = {character.id: character for character in characters}
+    if not by_id:
+        return []
+    rows = list(
+        (
+            await session.scalars(
+                select(WorldCharacterMemory)
+                .where(WorldCharacterMemory.world_character_id.in_(list(by_id)))
+                .order_by(
+                    WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
+                    WorldCharacterMemory.created_at.desc(),
+                )
+            )
+        ).all()
+    )
+    out: list[WorldMemoryOverviewOut] = []
+    for row in rows:
+        character = by_id.get(row.world_character_id)
+        if character is None:
+            continue
+        out.append(
+            WorldMemoryOverviewOut(
+                id=row.id,
+                character_id=character.id,
+                character_name=character.name,
+                character_identity=character.identity,
+                character_color=character.color,
+                character_icon=character.icon,
+                kind=row.kind,  # type: ignore[arg-type]
+                content=row.content,
+                source_scene_id=row.source_scene_id,
+                seal_draft_id=row.seal_draft_id,
+                scene_index_at_write=row.scene_index_at_write,
+                in_world_time_at_event=row.in_world_time_at_event,
+                salience=row.salience,
+                source="seal_committed" if row.source_scene_id else "manual",
+                created_at=row.created_at,
+            )
+        )
+    return out
+
+
+async def _world_relationship_edges(
+    session: AsyncSession, world_id: str
+) -> list[WorldRelationshipEdgeOut]:
+    characters = list(
+        (
+            await session.scalars(
+                select(WorldCharacter).where(WorldCharacter.world_id == world_id)
+            )
+        ).all()
+    )
+    by_id = {character.id: character for character in characters}
+    if not by_id:
+        return []
+    rows = list(
+        (
+            await session.scalars(
+                select(WorldCharacterRelation)
+                .where(
+                    WorldCharacterRelation.from_character_id.in_(list(by_id)),
+                    WorldCharacterRelation.to_character_id.in_(list(by_id)),
+                )
+                .order_by(WorldCharacterRelation.updated_at.desc())
+            )
+        ).all()
+    )
+    out: list[WorldRelationshipEdgeOut] = []
+    for row in rows:
+        from_character = by_id.get(row.from_character_id)
+        to_character = by_id.get(row.to_character_id)
+        if from_character is None or to_character is None:
+            continue
+        out.append(
+            WorldRelationshipEdgeOut(
+                id=row.id,
+                from_character_id=from_character.id,
+                from_character_name=from_character.name,
+                from_character_color=from_character.color,
+                from_character_icon=from_character.icon,
+                to_character_id=to_character.id,
+                to_character_name=to_character.name,
+                to_character_color=to_character.color,
+                to_character_icon=to_character.icon,
+                label=row.label,
+                sentiment=row.sentiment,
+                notes=row.notes,
+                last_updated_scene_id=row.last_updated_scene_id,
+                last_updated_seal_draft_id=row.last_updated_seal_draft_id,
+                source="seal_committed" if row.last_updated_scene_id else "manual",
+                updated_at=row.updated_at,
+            )
+        )
+    return out
+
+
+def _count_unresolved_hooks(bible: dict) -> int:
+    hooks: list[dict] = []
+    if isinstance(bible.get("plot_hooks"), list):
+        hooks.extend([item for item in bible["plot_hooks"] if isinstance(item, dict)])
+    current_arc = bible.get("current_arc")
+    if isinstance(current_arc, dict) and isinstance(current_arc.get("unresolved_hooks"), list):
+        hooks.extend([item for item in current_arc["unresolved_hooks"] if isinstance(item, dict)])
+    unresolved = [
+        hook
+        for hook in hooks
+        if (hook.get("status") or "open") not in {"resolved", "dropped", "closed"}
+    ]
+    return len(unresolved)
+
+
 async def _validate_persona_template_for_character(
     session: AsyncSession, kind: str, persona_template_id: str | None
 ) -> tuple[str | None, int | None]:
@@ -2216,16 +2480,7 @@ async def create_world(body: WorldCreate, session: AsyncSession = Depends(get_se
 @app.get("/worlds/{world_id}", response_model=WorldDetailOut)
 async def get_world(world_id: str, session: AsyncSession = Depends(get_session)):
     world = await _get_world_or_404(session, world_id)
-    characters = (
-        await session.scalars(
-            select(WorldCharacter)
-            .where(WorldCharacter.world_id == world_id)
-            .order_by(WorldCharacter.created_at)
-        )
-    ).all()
-    detail = WorldDetailOut.model_validate(world)
-    detail.characters = [WorldCharacterOut.model_validate(c) for c in characters]
-    return detail
+    return await _world_detail_out(session, world)
 
 
 @app.patch("/worlds/{world_id}", response_model=WorldDetailOut)
@@ -2238,16 +2493,168 @@ async def update_world(
         setattr(world, field, value)
     await session.commit()
     await session.refresh(world)
-    characters = (
-        await session.scalars(
-            select(WorldCharacter)
-            .where(WorldCharacter.world_id == world_id)
-            .order_by(WorldCharacter.created_at)
+    return await _world_detail_out(session, world)
+
+
+@app.get("/worlds/{world_id}/state", response_model=WorldStateOut)
+async def get_world_state(world_id: str, session: AsyncSession = Depends(get_session)):
+    world = await _get_world_or_404(session, world_id)
+    detail = await _world_detail_out(session, world)
+    bible = _normalize_world_bible(world)
+    scenes = await _build_scene_timeline_entries(session, world_id)
+    timeline_events = [
+        WorldTimelineEventOut.model_validate(event)
+        for event in await _world_timeline_events(session, world_id)
+    ]
+    memories = await _world_memory_overview(session, world_id)
+    relationships = await _world_relationship_edges(session, world_id)
+    recent_scene = scenes[-1] if scenes else None
+    open_scene = next(
+        (
+            scene
+            for scene in reversed(scenes)
+            if scene.sealed_at is None and scene.status != "archived"
+        ),
+        None,
+    )
+    recent_relationship_changes_count = (
+        len(
+            [
+                relation
+                for relation in relationships
+                if recent_scene and relation.last_updated_scene_id == recent_scene.id
+            ]
         )
-    ).all()
-    detail = WorldDetailOut.model_validate(world)
-    detail.characters = [WorldCharacterOut.model_validate(c) for c in characters]
-    return detail
+        if recent_scene
+        else 0
+    )
+    return WorldStateOut(
+        world=detail,
+        bible=WorldBibleOut(**bible),
+        scenes=scenes,
+        timeline_events=timeline_events,
+        memories=memories,
+        relationships=relationships,
+        recent_scene=recent_scene,
+        open_scene=open_scene,
+        unresolved_hooks_count=_count_unresolved_hooks(bible),
+        recent_relationship_changes_count=recent_relationship_changes_count,
+    )
+
+
+@app.patch("/worlds/{world_id}/bible", response_model=WorldBibleOut)
+async def update_world_bible(
+    world_id: str, body: WorldBibleUpdate, session: AsyncSession = Depends(get_session)
+):
+    world = await _get_world_or_404(session, world_id)
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    bible = _normalize_world_bible(world)
+    for field, value in changes.items():
+        bible[field] = value
+    if "summary" in changes:
+        world.synopsis = changes["summary"] or ""
+    if "background" in changes:
+        world.setting = changes["background"] or ""
+    config = dict(world.config or {})
+    config["world_bible"] = bible
+    world.config = config
+    await session.commit()
+    await session.refresh(world)
+    return WorldBibleOut(**_normalize_world_bible(world))
+
+
+@app.get("/worlds/{world_id}/timeline-events", response_model=list[WorldTimelineEventOut])
+async def list_world_timeline_events(
+    world_id: str, session: AsyncSession = Depends(get_session)
+):
+    await _get_world_or_404(session, world_id)
+    return await _world_timeline_events(session, world_id)
+
+
+@app.post("/worlds/{world_id}/timeline-events", response_model=WorldTimelineEventOut)
+async def create_world_timeline_event(
+    world_id: str,
+    body: WorldTimelineEventCreate,
+    session: AsyncSession = Depends(get_session),
+):
+    await _get_world_or_404(session, world_id)
+    await _validate_event_links(
+        session,
+        world_id,
+        scene_id=body.scene_id,
+        character_ids=body.related_character_ids,
+    )
+    event_order = body.order
+    if event_order is None:
+        current_max = await session.scalar(
+            select(func.max(WorldTimelineEvent.order)).where(
+                WorldTimelineEvent.world_id == world_id
+            )
+        )
+        event_order = int(current_max or 0) + 1
+    event = WorldTimelineEvent(
+        id=new_id(),
+        world_id=world_id,
+        type=body.type,
+        title=body.title,
+        summary=body.summary,
+        date_label=body.date_label,
+        order=event_order,
+        source=body.source,
+        status=body.status,
+        scene_id=body.scene_id,
+        related_character_ids=list(body.related_character_ids or []),
+        related_location_ids=list(body.related_location_ids or []),
+        related_faction_ids=list(body.related_faction_ids or []),
+        related_memory_ids=list(body.related_memory_ids or []),
+        related_relationship_ids=list(body.related_relationship_ids or []),
+        related_hook_ids=list(body.related_hook_ids or []),
+    )
+    session.add(event)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+@app.patch(
+    "/worlds/{world_id}/timeline-events/{event_id}",
+    response_model=WorldTimelineEventOut,
+)
+async def update_world_timeline_event(
+    world_id: str,
+    event_id: str,
+    body: WorldTimelineEventUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    await _get_world_or_404(session, world_id)
+    event = await session.get(WorldTimelineEvent, event_id)
+    if event is None or event.world_id != world_id:
+        raise HTTPException(404, "timeline event not found")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    await _validate_event_links(
+        session,
+        world_id,
+        scene_id=changes.get("scene_id", event.scene_id),
+        character_ids=changes.get("related_character_ids", event.related_character_ids),
+    )
+    for field, value in changes.items():
+        setattr(event, field, value)
+    await session.commit()
+    await session.refresh(event)
+    return event
+
+
+@app.delete("/worlds/{world_id}/timeline-events/{event_id}")
+async def delete_world_timeline_event(
+    world_id: str, event_id: str, session: AsyncSession = Depends(get_session)
+):
+    await _get_world_or_404(session, world_id)
+    event = await session.get(WorldTimelineEvent, event_id)
+    if event is None or event.world_id != world_id:
+        raise HTTPException(404, "timeline event not found")
+    await session.delete(event)
+    await session.commit()
+    return {"status": "deleted"}
 
 
 @app.delete("/worlds/{world_id}")
@@ -2864,52 +3271,7 @@ async def create_scene(
 @app.get("/worlds/{world_id}/timeline", response_model=list[SceneTimelineEntry])
 async def get_world_timeline(world_id: str, session: AsyncSession = Depends(get_session)):
     await _get_world_or_404(session, world_id)
-    scenes = (
-        await session.scalars(
-            select(Room)
-            .where(Room.world_id == world_id, Room.scene_index.is_not(None))
-            .order_by(Room.scene_index)
-        )
-    ).all()
-    if not scenes:
-        return []
-    scene_ids = [scene.id for scene in scenes]
-    member_counts = dict(
-        (
-            await session.execute(
-                select(WorldSceneMember.scene_id, func.count(WorldSceneMember.world_character_id))
-                .where(WorldSceneMember.scene_id.in_(scene_ids))
-                .group_by(WorldSceneMember.scene_id)
-            )
-        ).all()
-    )
-    message_counts = dict(
-        (
-            await session.execute(
-                select(Message.room_id, func.count(Message.id))
-                .where(Message.room_id.in_(scene_ids))
-                .group_by(Message.room_id)
-            )
-        ).all()
-    )
-    out: list[SceneTimelineEntry] = []
-    for scene in scenes:
-        out.append(
-            SceneTimelineEntry(
-                id=scene.id,
-                scene_index=scene.scene_index or 0,
-                title=scene.title,
-                status=scene.status,  # type: ignore[arg-type]
-                sealed_at=scene.sealed_at,
-                in_world_time_start=scene.in_world_time_start,
-                in_world_time_end=scene.in_world_time_end,
-                in_world_duration_hint=scene.in_world_duration_hint,
-                member_count=int(member_counts.get(scene.id, 0)),
-                message_count=int(message_counts.get(scene.id, 0)),
-                created_at=scene.created_at,
-            )
-        )
-    return out
+    return await _build_scene_timeline_entries(session, world_id)
 
 
 async def _scene_or_404(session: AsyncSession, room_id: str) -> Room:
@@ -3056,23 +3418,109 @@ async def scene_exit(
     return member
 
 
-@app.post("/rooms/{room_id}/seal", response_model=SceneSealOut)
-async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session)):
-    """Mark a scene as sealed and run the per-character memory scribe.
+async def _seal_draft_out(
+    session: AsyncSession,
+    draft: WorldSceneSealDraft,
+) -> SceneSealDraftOut:
+    out = SceneSealDraftOut.model_validate(draft)
+    scene = await session.get(Room, draft.scene_id)
+    out.scene = RoomOut.model_validate(scene) if scene is not None else None
+    return out
 
-    The scribe is synchronous: each AI character on the roster gets one LLM
-    tool-call that distills 0–6 episode/vow rows into world_character_memories.
-    Failures per character are logged via trace; the scene still seals so the
-    user isn't blocked. Re-sealing a sealed scene is a no-op (idempotent at
-    both the seal-stamp and per-character memory layers).
-    """
+
+async def _get_seal_draft_or_404(
+    session: AsyncSession,
+    room_id: str,
+    draft_id: str,
+) -> WorldSceneSealDraft:
+    draft = await session.get(WorldSceneSealDraft, draft_id)
+    if draft is None or draft.scene_id != room_id:
+        raise HTTPException(404, "seal draft not found")
+    return draft
+
+
+async def _active_seal_draft_id(session: AsyncSession, room_id: str) -> str | None:
+    return await session.scalar(
+        select(WorldSceneSealDraft.id)
+        .where(
+            WorldSceneSealDraft.scene_id == room_id,
+            ~WorldSceneSealDraft.status.in_(["committed", "discarded"]),
+        )
+        .order_by(WorldSceneSealDraft.created_at.desc())
+        .limit(1)
+    )
+
+
+def _selected_draft_items(items: list[dict] | None) -> list[dict]:
+    return [
+        item
+        for item in (items or [])
+        if isinstance(item, dict) and item.get("selected", True) is not False
+    ]
+
+
+def _draft_value(item: dict, *keys: str, default: str = "") -> str:
+    for key in keys:
+        value = item.get(key)
+        if isinstance(value, str):
+            return value
+    return default
+
+
+def _draft_character_ids(item: dict) -> list[str]:
+    raw = item.get("relatedCharacterIds", item.get("related_character_ids", []))
+    return [value for value in raw if isinstance(value, str)] if isinstance(raw, list) else []
+
+
+def _memory_kind_from_draft(value: str) -> str:
+    mapping = {
+        "episodic": "episode",
+        "episode": "episode",
+        "promise": "vow",
+        "vow": "vow",
+        "current_state": "fact",
+        "goal": "fact",
+        "core_identity": "backstory",
+        "secret": "fact",
+        "belief": "fact",
+        "knowledge": "fact",
+        "trauma": "episode",
+    }
+    return mapping.get(value or "", "episode")
+
+
+def _salience_from_draft(item: dict) -> float:
+    raw = item.get("salience")
+    try:
+        if raw is not None:
+            return max(0.0, min(1.0, float(raw)))
+    except (TypeError, ValueError):
+        pass
+    return {
+        "critical": 0.95,
+        "high": 0.8,
+        "medium": 0.55,
+        "low": 0.3,
+    }.get(item.get("importance"), 0.5)
+
+
+async def _create_seal_draft(
+    room_id: str,
+    session: AsyncSession,
+    *,
+    retry_of_draft_id: str | None = None,
+) -> SceneSealDraftOut:
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
-        return {"scene": scene, "scribe_results": []}
+        raise HTTPException(409, "scene is already sealed")
+    if retry_of_draft_id:
+        retry_of = await _get_seal_draft_or_404(session, room_id, retry_of_draft_id)
+        if retry_of.status == "committed":
+            raise HTTPException(409, "committed seal draft cannot be retried")
     await session.rollback()
     drain_result = await drain_active_calls(
         room_id,
-        "scene_sealed",
+        "scene_seal_draft",
         require_clean=True,
         session=session,
     )
@@ -3088,21 +3536,246 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     clear_autodrive_lock(room_id, clear_stop=True)
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
-        return {"scene": scene, "scribe_results": []}
-    scene.sealed_at = datetime.now(timezone.utc)
-    await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
-    # Hold the sealed_at write so even if the scribe crashes, the seal sticks.
-    await session.flush()
-    results = await run_scene_memory_scribe(session, scene)
-    decayed = await decay_unused_memories(session, scene)
-    dropped = await enforce_memory_cap(session, scene)
+        raise HTTPException(409, "scene is already sealed")
+    runtime = await session.get(RoomRuntimeState, room_id)
+    if runtime is not None:
+        runtime.frozen = True
+    scene.status = "frozen"
+    scene.frozen_at = scene.frozen_at or datetime.now(timezone.utc)
+    payload = await generate_scene_seal_draft_payload(session, scene)
+    draft = WorldSceneSealDraft(
+        id=new_id(),
+        world_id=scene.world_id or "",
+        scene_id=scene.id,
+        status="failed" if payload.get("error") else "ready",
+        scene_summary=payload.get("scene_summary") or "",
+        title_suggestion=payload.get("title_suggestion") or scene.title,
+        date_label=payload.get("date_label") or "",
+        location=payload.get("location") or "",
+        timeline_events=list(payload.get("timeline_events") or []),
+        memory_updates=list(payload.get("memory_updates") or []),
+        relationship_updates=list(payload.get("relationship_updates") or []),
+        plot_hook_updates=list(payload.get("plot_hook_updates") or []),
+        world_bible_suggestions=list(payload.get("world_bible_suggestions") or []),
+        next_scene_suggestions=list(payload.get("next_scene_suggestions") or []),
+        warnings=list(payload.get("warnings") or []),
+        error=payload.get("error") or "",
+        llm_run_id=new_id(),
+        retry_of_draft_id=retry_of_draft_id,
+    )
+    session.add(draft)
     await trace_record(
         session,
         scene.id,
-        "scene_memory_summary",
-        "per-character memory scribe completed",
-        {"results": results, "decayed": decayed, "dropped": dropped},
+        "seal_draft_created",
+        "scene seal draft generated",
+        {
+            "draft_id": draft.id,
+            "status": draft.status,
+            "retry_of_draft_id": retry_of_draft_id,
+            "timeline_events": len(draft.timeline_events or []),
+            "memory_updates": len(draft.memory_updates or []),
+            "relationship_updates": len(draft.relationship_updates or []),
+            "warnings": len(draft.warnings or []),
+        },
     )
+    await session.commit()
+    await session.refresh(draft)
+    await event_bus.publish(
+        scene.id,
+        {"type": "scene.seal_draft.created", "draft_id": draft.id, "status": draft.status},
+    )
+    await event_bus.publish(scene.id, {"type": "room.frozen"})
+    return await _seal_draft_out(session, draft)
+
+
+async def _commit_seal_draft(
+    room_id: str,
+    draft_id: str,
+    session: AsyncSession,
+) -> SceneSealOut:
+    scene = await _scene_or_404(session, room_id)
+    draft = await _get_seal_draft_or_404(session, room_id, draft_id)
+    if draft.status == "committed":
+        return {"scene": scene, "scribe_results": []}
+    if draft.status != "ready":
+        raise HTTPException(409, "only ready seal drafts can be committed")
+    await session.rollback()
+    drain_result = await drain_active_calls(
+        room_id,
+        "scene_seal_commit",
+        require_clean=True,
+        session=session,
+    )
+    if not drain_result.clean:
+        await session.commit()
+        raise HTTPException(
+            409,
+            {
+                "message": "active calls did not stop before scene seal commit",
+                "drain": drain_result.__dict__,
+            },
+        )
+    clear_autodrive_lock(room_id, clear_stop=True)
+    scene = await _scene_or_404(session, room_id)
+    draft = await _get_seal_draft_or_404(session, room_id, draft_id)
+    if draft.status == "committed":
+        return {"scene": scene, "scribe_results": []}
+    if draft.status != "ready":
+        raise HTTPException(409, "only ready seal drafts can be committed")
+    if scene.sealed_at is not None:
+        raise HTTPException(409, "scene is already sealed")
+    existing_committed = await session.scalar(
+        select(WorldSceneSealDraft.id)
+        .where(
+            WorldSceneSealDraft.scene_id == scene.id,
+            WorldSceneSealDraft.status == "committed",
+            WorldSceneSealDraft.id != draft.id,
+        )
+        .limit(1)
+    )
+    if existing_committed:
+        raise HTTPException(409, "scene already has a committed seal draft")
+    world_id = scene.world_id or ""
+    characters = {
+        character.id: character
+        for character in (
+            await session.scalars(select(WorldCharacter).where(WorldCharacter.world_id == world_id))
+        ).all()
+    }
+    current_max_order = await session.scalar(
+        select(func.max(WorldTimelineEvent.order)).where(WorldTimelineEvent.world_id == world_id)
+    )
+    next_order = int(current_max_order or 0) + 1
+    for item in _selected_draft_items(draft.timeline_events):
+        event_type = _draft_value(item, "type", default="arc_update")
+        if event_type == "scene":
+            continue
+        title = _draft_value(item, "title").strip()
+        if not title:
+            continue
+        session.add(
+            WorldTimelineEvent(
+                id=new_id(),
+                world_id=world_id,
+                type=event_type,
+                title=title[:200],
+                summary=_draft_value(item, "summary"),
+                date_label=_draft_value(item, "dateLabel", "date_label"),
+                order=next_order,
+                source="seal_committed",
+                status="committed",
+                scene_id=scene.id,
+                seal_draft_id=draft.id,
+                related_character_ids=_draft_character_ids(item),
+            )
+        )
+        next_order += 1
+    result_by_character: dict[str, dict[str, object]] = {}
+
+    def character_result(character_id: str) -> dict[str, object]:
+        character = characters.get(character_id)
+        return result_by_character.setdefault(
+            character_id,
+            {
+                "character_id": character_id,
+                "character_name": character.name if character else "",
+                "status": "success",
+                "episodes_count": 0,
+                "impressions_count": 0,
+                "vows_count": 0,
+                "error": None,
+            },
+        )
+
+    in_world_time = draft.date_label or scene.in_world_time_end or scene.in_world_time_start or ""
+    for item in _selected_draft_items(draft.memory_updates):
+        character_id = _draft_value(item, "characterId", "character_id")
+        character = characters.get(character_id)
+        content = _draft_value(item, "content").strip()
+        if character is None or not content:
+            continue
+        kind = _memory_kind_from_draft(_draft_value(item, "type"))
+        session.add(
+            WorldCharacterMemory(
+                id=new_id(),
+                world_character_id=character.id,
+                source_scene_id=scene.id,
+                seal_draft_id=draft.id,
+                scene_index_at_write=scene.scene_index,
+                in_world_time_at_event=in_world_time,
+                kind=kind,
+                content=content,
+                salience=_salience_from_draft(item),
+            )
+        )
+        result = character_result(character.id)
+        if kind == "vow":
+            result["vows_count"] = int(result["vows_count"]) + 1
+        else:
+            result["episodes_count"] = int(result["episodes_count"]) + 1
+    for item in _selected_draft_items(draft.relationship_updates):
+        from_id = _draft_value(item, "fromCharacterId", "from_character_id")
+        to_id = _draft_value(item, "toCharacterId", "to_character_id")
+        if from_id == to_id or from_id not in characters or to_id not in characters:
+            continue
+        try:
+            delta = float(item.get("sentimentDelta", item.get("sentiment_delta", 0.0)) or 0.0)
+        except (TypeError, ValueError):
+            delta = 0.0
+        delta = max(-1.0, min(1.0, delta))
+        label = _draft_value(item, "label").strip()
+        description = _draft_value(item, "description", "evidence").strip()
+        relation = await session.scalar(
+            select(WorldCharacterRelation).where(
+                WorldCharacterRelation.from_character_id == from_id,
+                WorldCharacterRelation.to_character_id == to_id,
+            )
+        )
+        if relation is None:
+            relation = WorldCharacterRelation(
+                id=new_id(),
+                from_character_id=from_id,
+                to_character_id=to_id,
+                label=label,
+                sentiment=delta,
+                notes="",
+                last_updated_scene_id=scene.id,
+                last_updated_seal_draft_id=draft.id,
+            )
+            session.add(relation)
+        else:
+            relation.sentiment = max(-1.0, min(1.0, relation.sentiment + delta))
+            if label:
+                relation.label = label
+            relation.last_updated_scene_id = scene.id
+            relation.last_updated_seal_draft_id = draft.id
+        if description:
+            scene_tag = f"第{scene.scene_index}幕" if scene.scene_index is not None else "本幕"
+            existing = (relation.notes or "").rstrip()
+            block = f"[{scene_tag}] {description}"
+            relation.notes = f"{existing}\n{block}".lstrip("\n")
+        result = character_result(from_id)
+        result["impressions_count"] = int(result["impressions_count"]) + 1
+    scene.sealed_at = datetime.now(timezone.utc)
+    draft.status = "committed"
+    draft.committed_at = scene.sealed_at
+    decayed = await decay_unused_memories(session, scene)
+    dropped = await enforce_memory_cap(session, scene)
+    results = [dict(item) for item in result_by_character.values()]
+    await trace_record(
+        session,
+        scene.id,
+        "seal_committed",
+        "scene seal draft committed",
+        {
+            "draft_id": draft.id,
+            "results": results,
+            "decayed": decayed,
+            "dropped": dropped,
+        },
+    )
+    await session.flush()
     await session.commit()
     await session.refresh(scene)
     await event_bus.publish(
@@ -3110,6 +3783,80 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
         {"type": "scene.sealed", "scene": RoomOut.model_validate(scene).model_dump(mode="json")},
     )
     return {"scene": scene, "scribe_results": results}
+
+
+@app.post("/rooms/{room_id}/seal", response_model=SceneSealDraftOut)
+async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Generate an editable seal draft without committing world state."""
+    return await _create_seal_draft(room_id, session)
+
+
+@app.get("/rooms/{room_id}/seal-drafts", response_model=list[SceneSealDraftOut])
+async def list_seal_drafts(room_id: str, session: AsyncSession = Depends(get_session)):
+    await _scene_or_404(session, room_id)
+    drafts = (
+        await session.scalars(
+            select(WorldSceneSealDraft)
+            .where(WorldSceneSealDraft.scene_id == room_id)
+            .order_by(WorldSceneSealDraft.created_at.desc())
+        )
+    ).all()
+    return [await _seal_draft_out(session, draft) for draft in drafts]
+
+
+@app.post("/rooms/{room_id}/seal-drafts", response_model=SceneSealDraftOut)
+async def create_seal_draft(room_id: str, session: AsyncSession = Depends(get_session)):
+    return await _create_seal_draft(room_id, session)
+
+
+@app.get("/rooms/{room_id}/seal-drafts/{draft_id}", response_model=SceneSealDraftOut)
+async def get_seal_draft(
+    room_id: str,
+    draft_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    await _scene_or_404(session, room_id)
+    draft = await _get_seal_draft_or_404(session, room_id, draft_id)
+    return await _seal_draft_out(session, draft)
+
+
+@app.patch("/rooms/{room_id}/seal-drafts/{draft_id}", response_model=SceneSealDraftOut)
+async def update_seal_draft(
+    room_id: str,
+    draft_id: str,
+    body: SceneSealDraftUpdate,
+    session: AsyncSession = Depends(get_session),
+):
+    await _scene_or_404(session, room_id)
+    draft = await _get_seal_draft_or_404(session, room_id, draft_id)
+    if draft.status == "committed":
+        raise HTTPException(409, "committed seal draft cannot be edited")
+    changes = body.model_dump(mode="json", exclude_unset=True)
+    for field, value in changes.items():
+        setattr(draft, field, value)
+    await session.commit()
+    await session.refresh(draft)
+    return await _seal_draft_out(session, draft)
+
+
+@app.post("/rooms/{room_id}/seal-drafts/{draft_id}/retry", response_model=SceneSealDraftOut)
+async def retry_seal_draft(
+    room_id: str,
+    draft_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    await _scene_or_404(session, room_id)
+    await _get_seal_draft_or_404(session, room_id, draft_id)
+    return await _create_seal_draft(room_id, session, retry_of_draft_id=draft_id)
+
+
+@app.post("/rooms/{room_id}/seal-drafts/{draft_id}/commit", response_model=SceneSealOut)
+async def commit_seal_draft(
+    room_id: str,
+    draft_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    return await _commit_seal_draft(room_id, draft_id, session)
 
 
 @app.get("/rooms/{room_id}/scene/members", response_model=list[WorldSceneMemberOut])

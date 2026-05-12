@@ -128,6 +128,13 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "world_character_memories": [
         ("last_used_scene_index", "integer", "INTEGER"),
+        ("seal_draft_id", "varchar(36)", "VARCHAR(36)"),
+    ],
+    "world_character_relations": [
+        ("last_updated_seal_draft_id", "varchar(36)", "VARCHAR(36)"),
+    ],
+    "world_timeline_events": [
+        ("seal_draft_id", "varchar(36)", "VARCHAR(36)"),
     ],
 }
 
