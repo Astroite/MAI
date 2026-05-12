@@ -3098,6 +3098,10 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     )
     await session.commit()
     await session.refresh(scene)
+    await event_bus.publish(
+        scene.id,
+        {"type": "scene.sealed", "scene": RoomOut.model_validate(scene).model_dump(mode="json")},
+    )
     return {"scene": scene, "scribe_results": results}
 
 

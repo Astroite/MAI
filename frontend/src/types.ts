@@ -1,8 +1,11 @@
 export type PersonaKind = "discussant" | "scribe" | "facilitator";
+export type TemplateStatus = "draft" | "published";
 
 export interface PersonaTemplate {
   id: string;
   version: number;
+  schema_version: number;
+  status: TemplateStatus;
   kind: PersonaKind;
   name: string;
   identity: string;
@@ -29,6 +32,8 @@ export interface PersonaInstance {
   room_id: string;
   template_id: string;
   template_version: number;
+  schema_version: number;
+  status: TemplateStatus;
   position: number;
   kind: PersonaKind;
   name: string;
@@ -102,6 +107,8 @@ export interface AppSettings {
 export interface PhaseTemplate {
   id: string;
   version: number;
+  schema_version: number;
+  status: TemplateStatus;
   name: string;
   description: string;
   declared_variables: Array<{ name: string; description: string; cardinality: "one" | "many"; required: boolean }>;
@@ -124,6 +131,8 @@ export interface FormatPhaseSlot {
 export interface DebateFormat {
   id: string;
   version: number;
+  schema_version: number;
+  status: TemplateStatus;
   name: string;
   description: string;
   phase_sequence: FormatPhaseSlot[];
@@ -134,6 +143,8 @@ export interface DebateFormat {
 export interface Recipe {
   id: string;
   version: number;
+  schema_version: number;
+  status: TemplateStatus;
   name: string;
   description: string;
   persona_ids: string[];
@@ -147,11 +158,14 @@ export interface Recipe {
 export interface Room {
   id: string;
   parent_room_id?: string | null;
+  owner_user_id?: string | null;
   title: string;
   background: string;
   status: "active" | "frozen" | "archived";
   recipe_id?: string | null;
   format_id?: string | null;
+  format_version?: number | null;
+  frozen_at?: string | null;
   // Story World scene fields (non-null world_id marks the room as a scene).
   world_id?: string | null;
   scene_index?: number | null;
@@ -174,6 +188,8 @@ export interface Runtime {
   token_counter_total: number;
   cost_counter_usd: number;
   auto_transition: boolean;
+  current_user_mode: string;
+  current_masquerade_persona_id?: string | null;
   max_message_tokens: number;
   max_room_tokens: number;
   max_phase_rounds: number;
@@ -224,6 +240,96 @@ export type MessageType =
   | "silence"
   | "background_update"
   | "meta";
+
+export type UserMessageType = Extract<MessageType, "speech" | "question" | "answer" | "narration">;
+
+export type AllowedSpeakers =
+  | { type: "all" }
+  | { type: "variables"; variable_names: string[] }
+  | { type: "specific"; persona_ids: string[] };
+
+export type OrderingRule = { type: string } & Record<string, unknown>;
+export type ExitCondition = { type: string } & Record<string, unknown>;
+
+export interface FormatPhaseSlotInput {
+  phase_template_id: string;
+  phase_template_version: number;
+  transitions?: Array<Record<string, unknown>>;
+}
+
+export interface PersonaTemplateCreate {
+  kind?: PersonaKind;
+  name: string;
+  identity?: string;
+  description?: string;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
+  backing_model?: string;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
+  api_provider_id?: string | null;
+  api_model_id?: string | null;
+  system_prompt: string;
+  temperature?: number;
+  talkativeness?: number;
+  color?: string;
+  icon?: string;
+  config?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export type PersonaTemplateUpdate = Partial<Omit<PersonaTemplateCreate, "kind">>;
+
+export interface PersonaInstanceUpdate {
+  identity?: string;
+  description?: string;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
+  backing_model?: string;
+  /** @deprecated Legacy fallback snapshot. New writes should use api_model_id. */
+  api_provider_id?: string | null;
+  api_model_id?: string | null;
+  system_prompt?: string;
+  temperature?: number;
+  talkativeness?: number;
+  color?: string;
+  icon?: string;
+  config?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export interface DebateFormatCreate {
+  name: string;
+  description?: string;
+  phase_sequence?: FormatPhaseSlotInput[];
+  tags?: string[];
+}
+
+export type DebateFormatUpdate = Partial<DebateFormatCreate>;
+
+export interface RecipeCreate {
+  name: string;
+  description?: string;
+  persona_ids?: string[];
+  format_id?: string | null;
+  format_version?: number | null;
+  initial_settings?: Record<string, unknown>;
+  tags?: string[];
+}
+
+export type RecipeUpdate = Partial<RecipeCreate>;
+
+export interface PhaseTemplateCreate {
+  name: string;
+  description?: string;
+  declared_variables?: Array<{ name: string; description: string; cardinality: "one" | "many"; required: boolean }>;
+  allowed_speakers?: AllowedSpeakers;
+  ordering_rule?: OrderingRule;
+  exit_conditions?: ExitCondition[];
+  auto_discuss?: boolean;
+  role_constraints?: string;
+  prompt_template?: string;
+  tags?: string[];
+}
+
+export type PhaseTemplateUpdate = Partial<PhaseTemplateCreate>;
 
 export interface ToolSchema {
   name: string;
@@ -300,7 +406,11 @@ export interface Message {
   visibility: string;
   visibility_to_models: boolean;
   content: string;
+  content_chunks_count: number;
   truncated_reason?: string | null;
+  prompt_tokens?: number | null;
+  completion_tokens?: number | null;
+  cost_usd?: number | null;
   user_revealed_at?: string | null;
   tool_invocation?: ToolInvocation | null;
   created_at: string;
@@ -318,6 +428,8 @@ export interface ScribeState {
 export interface FacilitatorSignal {
   id: string;
   room_id: string;
+  message_id: string;
+  trigger_after_message_id: string;
   signals: Array<{ tag: string; severity: string; reasoning: string; evidence_message_ids: string[] }>;
   overall_health: string;
   pacing_note: string;

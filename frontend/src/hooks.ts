@@ -42,14 +42,38 @@ export function handleRoomDeletedEvent({
   navigateHome
 }: {
   roomId: string;
-  queryClient: Pick<QueryClient, "removeQueries" | "invalidateQueries">;
+  queryClient: Pick<QueryClient, "getQueryData" | "removeQueries" | "invalidateQueries">;
   clearRoomStreams: (roomId: string) => void;
   navigateHome: () => void;
 }) {
+  const worldId = queryClient.getQueryData<RoomState>(queryKeys.room(roomId))?.room.world_id ?? null;
   queryClient.removeQueries({ queryKey: queryKeys.room(roomId), exact: true });
+  queryClient.removeQueries({ queryKey: queryKeys.sceneMembers(roomId), exact: true });
   void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
+  if (worldId) void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(worldId) });
   clearRoomStreams(roomId);
   navigateHome();
+}
+
+function invalidateCurrentRoomDependents({
+  roomId,
+  queryClient,
+  includeRooms = false,
+  includeSceneMembers = false,
+  includeWorldTimeline = false
+}: {
+  roomId: string;
+  queryClient: Pick<QueryClient, "getQueryData" | "invalidateQueries">;
+  includeRooms?: boolean;
+  includeSceneMembers?: boolean;
+  includeWorldTimeline?: boolean;
+}) {
+  if (includeRooms) void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
+  if (includeSceneMembers) void queryClient.invalidateQueries({ queryKey: queryKeys.sceneMembers(roomId) });
+  if (includeWorldTimeline) {
+    const worldId = queryClient.getQueryData<RoomState>(queryKeys.room(roomId))?.room.world_id ?? null;
+    if (worldId) void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(worldId) });
+  }
 }
 
 export function useRoomEvents(roomId?: string) {
@@ -124,6 +148,15 @@ export function useRoomEvents(roomId?: string) {
           queryClient.setQueryData<RoomState>(queryKeys.room(roomId), (current) =>
             upsertRoomMessage(current, payload.message!)
           );
+          if (payload.message.message_type === "participant.enter" || payload.message.message_type === "participant.exit") {
+            invalidateCurrentRoomDependents({
+              roomId,
+              queryClient,
+              includeRooms: true,
+              includeSceneMembers: true,
+              includeWorldTimeline: true
+            });
+          }
         }
         if (payload.type === "message.appended" || payload.type === "message.cancelled") {
           const id = payload.message_id ?? payload.message?.id;
@@ -142,10 +175,31 @@ export function useRoomEvents(roomId?: string) {
             "room.frozen",
             "room.unfrozen",
             "persona.instance.updated",
-            "persona.instance.removed"
+            "persona.instance.removed",
+            "scene.sealed"
           ].includes(payload.type)
         ) {
           scheduleInvalidate();
+        }
+        if (payload.type === "room.frozen" || payload.type === "room.unfrozen") {
+          invalidateCurrentRoomDependents({
+            roomId,
+            queryClient,
+            includeRooms: true,
+            includeWorldTimeline: true
+          });
+        }
+        if (payload.type === "persona.instance.updated" || payload.type === "persona.instance.removed") {
+          invalidateCurrentRoomDependents({ roomId, queryClient, includeRooms: true });
+        }
+        if (payload.type === "scene.sealed") {
+          invalidateCurrentRoomDependents({
+            roomId,
+            queryClient,
+            includeRooms: true,
+            includeSceneMembers: true,
+            includeWorldTimeline: true
+          });
         }
         if (payload.type === "system.error") {
           // Always log so devs can inspect regardless of toast verbosity.

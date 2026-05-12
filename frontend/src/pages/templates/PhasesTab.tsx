@@ -2,7 +2,7 @@ import { useState, type MouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Layers, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../../api";
-import type { PhaseTemplate } from "../../types";
+import type { PhaseTemplate, PhaseTemplateCreate } from "../../types";
 import { StatusPill } from "../../components/StatusPill";
 import { toast } from "../../components/Toaster";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -52,7 +52,7 @@ export function PhasesTab() {
     facilitatorExit,
     facilitatorTags
   });
-  const phasePayload = () => ({
+  const phasePayload = (): PhaseTemplateCreate => ({
     name,
     description,
     declared_variables:

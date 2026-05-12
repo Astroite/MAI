@@ -31,6 +31,7 @@ describe("frontend contracts", () => {
   });
 
   it("handles room.deleted by clearing room state and returning home", () => {
+    const getQueryData = vi.fn().mockReturnValue({ room: { world_id: "world-1" } });
     const removeQueries = vi.fn();
     const invalidateQueries = vi.fn();
     const clearRoomStreams = vi.fn();
@@ -38,16 +39,22 @@ describe("frontend contracts", () => {
 
     handleRoomDeletedEvent({
       roomId: "room-deleted",
-      queryClient: { removeQueries, invalidateQueries },
+      queryClient: { getQueryData, removeQueries, invalidateQueries },
       clearRoomStreams,
       navigateHome
     });
 
+    expect(getQueryData).toHaveBeenCalledWith(queryKeys.room("room-deleted"));
     expect(removeQueries).toHaveBeenCalledWith({
       queryKey: queryKeys.room("room-deleted"),
       exact: true
     });
+    expect(removeQueries).toHaveBeenCalledWith({
+      queryKey: queryKeys.sceneMembers("room-deleted"),
+      exact: true
+    });
     expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.rooms });
+    expect(invalidateQueries).toHaveBeenCalledWith({ queryKey: queryKeys.worldTimeline("world-1") });
     expect(clearRoomStreams).toHaveBeenCalledWith("room-deleted");
     expect(navigateHome).toHaveBeenCalledTimes(1);
   });

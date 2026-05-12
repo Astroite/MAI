@@ -5,13 +5,22 @@ import type {
   ApiModel,
   AppSettings,
   DebateFormat,
+  DebateFormatCreate,
+  DebateFormatUpdate,
   Decision,
   LimitUpdate,
   Message,
   PersonaInstance,
+  PersonaInstanceUpdate,
   PersonaTemplate,
+  PersonaTemplateCreate,
+  PersonaTemplateUpdate,
   PhaseTemplate,
+  PhaseTemplateCreate,
+  PhaseTemplateUpdate,
   Recipe,
+  RecipeCreate,
+  RecipeUpdate,
   Room,
   RoomState,
   Runtime,
@@ -25,6 +34,7 @@ import type {
   ToolInvocation,
   ToolSchema,
   ToolServer,
+  UserMessageType,
   World,
   WorldCharacter,
   WorldCharacterCreateBody,
@@ -118,9 +128,9 @@ export const api = {
     const qs = params.toString();
     return request<PersonaTemplate[]>(`/templates/personas${qs ? `?${qs}` : ""}`);
   },
-  createPersonaTemplate: (body: unknown) =>
+  createPersonaTemplate: (body: PersonaTemplateCreate) =>
     request<PersonaTemplate>("/templates/personas", { method: "POST", body: JSON.stringify(body) }),
-  updatePersonaTemplate: (templateId: string, body: unknown) =>
+  updatePersonaTemplate: (templateId: string, body: PersonaTemplateUpdate) =>
     request<PersonaTemplate>(`/templates/personas/${templateId}`, { method: "PATCH", body: JSON.stringify(body) }),
   duplicatePersonaTemplate: (templateId: string) =>
     request<PersonaTemplate>(`/templates/personas/${templateId}/duplicate`, { method: "POST" }),
@@ -131,7 +141,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ template_ids })
     }),
-  updatePersonaInstance: (roomId: string, instanceId: string, body: unknown) =>
+  updatePersonaInstance: (roomId: string, instanceId: string, body: PersonaInstanceUpdate) =>
     request<PersonaInstance>(`/rooms/${roomId}/persona-instances/${instanceId}`, {
       method: "PATCH",
       body: JSON.stringify(body)
@@ -228,8 +238,8 @@ export const api = {
     request<PhaseTemplate[]>(`/templates/phases${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
   formats: (builtin?: boolean) =>
     request<DebateFormat[]>(`/templates/formats${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
-  createFormat: (body: unknown) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),
-  updateFormat: (formatId: string, body: unknown) =>
+  createFormat: (body: DebateFormatCreate) => request<DebateFormat>("/templates/formats", { method: "POST", body: JSON.stringify(body) }),
+  updateFormat: (formatId: string, body: DebateFormatUpdate) =>
     request<DebateFormat>(`/templates/formats/${formatId}`, { method: "PATCH", body: JSON.stringify(body) }),
   duplicateFormat: (formatId: string) =>
     request<DebateFormat>(`/templates/formats/${formatId}/duplicate`, { method: "POST" }),
@@ -237,15 +247,15 @@ export const api = {
     request<{ status: string }>(`/templates/formats/${formatId}`, { method: "DELETE" }),
   recipes: (builtin?: boolean) =>
     request<Recipe[]>(`/templates/recipes${builtin !== undefined ? `?builtin=${String(builtin)}` : ""}`),
-  createRecipe: (body: unknown) => request<Recipe>("/templates/recipes", { method: "POST", body: JSON.stringify(body) }),
-  updateRecipe: (recipeId: string, body: unknown) =>
+  createRecipe: (body: RecipeCreate) => request<Recipe>("/templates/recipes", { method: "POST", body: JSON.stringify(body) }),
+  updateRecipe: (recipeId: string, body: RecipeUpdate) =>
     request<Recipe>(`/templates/recipes/${recipeId}`, { method: "PATCH", body: JSON.stringify(body) }),
   duplicateRecipe: (recipeId: string) =>
     request<Recipe>(`/templates/recipes/${recipeId}/duplicate`, { method: "POST" }),
   deleteRecipe: (recipeId: string) =>
     request<{ status: string }>(`/templates/recipes/${recipeId}`, { method: "DELETE" }),
-  createPhase: (body: unknown) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),
-  updatePhase: (phaseId: string, body: unknown) =>
+  createPhase: (body: PhaseTemplateCreate) => request<PhaseTemplate>("/templates/phases", { method: "POST", body: JSON.stringify(body) }),
+  updatePhase: (phaseId: string, body: PhaseTemplateUpdate) =>
     request<PhaseTemplate>(`/templates/phases/${phaseId}`, { method: "PATCH", body: JSON.stringify(body) }),
   duplicatePhase: (phaseId: string) =>
     request<PhaseTemplate>(`/templates/phases/${phaseId}/duplicate`, { method: "POST" }),
@@ -254,7 +264,7 @@ export const api = {
   appendMessage: (
     roomId: string,
     content: string,
-    options?: { message_type?: string; as_character_id?: string | null }
+    options?: { message_type?: UserMessageType; as_character_id?: string | null }
   ) =>
     request<Message>(`/rooms/${roomId}/messages`, {
       method: "POST",

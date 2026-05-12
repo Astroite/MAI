@@ -101,15 +101,25 @@ export function RoomShell() {
   }, []);
 
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: queryKeys.room(activeRoomId) });
+  const invalidateRoomCollections = () => {
+    invalidate();
+    void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
+    const currentWorldId = state?.room.world_id;
+    if (currentWorldId) void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(currentWorldId) });
+  };
+  const invalidateSceneCollections = () => {
+    invalidateRoomCollections();
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sceneMembers(activeRoomId) });
+  };
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
   const continuePhase = useMutation({ mutationFn: () => api.continuePhase(activeRoomId!), onSuccess: invalidate });
   const extendPhase = useMutation({ mutationFn: () => api.extendPhase(activeRoomId!), onSuccess: invalidate });
-  const freeze = useMutation({ mutationFn: () => api.freeze(activeRoomId!), onSuccess: invalidate });
-  const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidate });
+  const freeze = useMutation({ mutationFn: () => api.freeze(activeRoomId!), onSuccess: invalidateRoomCollections });
+  const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidateRoomCollections });
   const sealScene = useMutation({
     mutationFn: () => api.sealScene(activeRoomId!),
     onSuccess: (result) => {
-      invalidate();
+      invalidateSceneCollections();
       setSealResult(result);
       toast.success(t("room.scene.sealSuccess"));
     },

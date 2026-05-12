@@ -1,3 +1,5 @@
+import type { ExitCondition } from "../../../types";
+
 export function buildExitConditions(options: {
   roundsExit: boolean;
   roundsN: number;
@@ -9,8 +11,8 @@ export function buildExitConditions(options: {
   tokenBudget: number;
   facilitatorExit: boolean;
   facilitatorTags: string;
-}): Array<Record<string, unknown>> {
-  const conditions: Array<Record<string, unknown>> = [];
+}): ExitCondition[] {
+  const conditions: ExitCondition[] = [];
   if (options.roundsExit) conditions.push({ type: "rounds", n: Math.max(1, options.roundsN) });
   if (options.allSpokenExit) conditions.push({ type: "all_spoken", min_each: Math.max(1, options.minEach) });
   if (options.allVotedExit) conditions.push({ type: "all_voted" });

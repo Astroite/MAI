@@ -149,6 +149,19 @@ def test_freeze_cancels_active_turn(client, review_format, architect_persona):
     assert state["room"]["status"] == "frozen"
 
 
+def test_append_message_rejects_unknown_message_type(client):
+    room = client.post("/rooms", json={"title": "pytest message type contract", "persona_ids": []})
+    assert room.status_code == 200
+    room_id = room.json()["room"]["id"]
+
+    rejected = client.post(
+        f"/rooms/{room_id}/messages",
+        json={"content": "非法消息类型。", "message_type": "contract_drift"},
+    )
+
+    assert rejected.status_code == 422
+
+
 def test_pause_waits_for_active_turn_without_truncating(
     client, discussant_personas, monkeypatch
 ):

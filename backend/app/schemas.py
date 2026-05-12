@@ -8,6 +8,29 @@ class APIModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
 
+MessageType = Literal[
+    "speech",
+    "question",
+    "answer",
+    "narration",
+    "summary",
+    "verdict",
+    "verdict_revoke",
+    "dead_end",
+    "facilitator_signal",
+    "user_doc",
+    "tool_invocation",
+    "participant.enter",
+    "participant.exit",
+    "masquerade_reveal",
+    "silence",
+    "background_update",
+    "meta",
+]
+
+UserMessageType = Literal["speech", "question", "answer", "narration"]
+
+
 class VariableDeclaration(APIModel):
     name: str
     description: str
@@ -261,6 +284,8 @@ class PersonaInstanceOut(APIModel):
     room_id: str
     template_id: str
     template_version: int
+    schema_version: int = 1
+    status: Literal["draft", "published"] = "published"
     position: int
     kind: Literal["discussant", "scribe", "facilitator"]
     name: str
@@ -924,7 +949,7 @@ class MessageOut(APIModel):
 
 class MessageCreate(APIModel):
     content: str
-    message_type: str = "speech"
+    message_type: UserMessageType = "speech"
     parent_message_id: str | None = None
     # Story World only: when set, the user is speaking AS this WorldCharacter
     # (which must be kind=user and on the scene's roster with
@@ -944,7 +969,7 @@ class MasqueradeCreate(APIModel):
     persona_id: str | None = None
     display_name: str | None = None
     content: str
-    message_type: str = "speech"
+    message_type: UserMessageType = "speech"
 
 
 class TurnRequest(APIModel):
