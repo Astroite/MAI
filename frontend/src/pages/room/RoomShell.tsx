@@ -41,10 +41,12 @@ import { SpeakerStateBar } from "./SpeakerStateBar";
 import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
+import { SealResultsDialog } from "./SealResultsDialog";
 import { useI18n } from "../../i18n";
 import { queryKeys } from "../../queryKeys";
 import { PhaseStepper, type PhaseStep } from "../../components/PhaseStepper";
 import { isSceneRoom } from "../../utils/scene";
+import type { SceneSealResult } from "../../types";
 
 export function RoomShell() {
   const { roomId, subId } = useParams();
@@ -61,6 +63,7 @@ export function RoomShell() {
   const rooms = useQuery({ queryKey: queryKeys.rooms, queryFn: api.rooms });
   const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [showRoomsDrawer, setShowRoomsDrawer] = useState(false);
+  const [sealResult, setSealResult] = useState<SceneSealResult | null>(null);
   const [params, setParams] = useSearchParams();
   const state = room.data;
   const sceneSealed = Boolean(state?.room.sealed_at);
@@ -105,8 +108,9 @@ export function RoomShell() {
   const unfreeze = useMutation({ mutationFn: () => api.unfreeze(activeRoomId!), onSuccess: invalidate });
   const sealScene = useMutation({
     mutationFn: () => api.sealScene(activeRoomId!),
-    onSuccess: () => {
+    onSuccess: (result) => {
       invalidate();
+      setSealResult(result);
       toast.success(t("room.scene.sealSuccess"));
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
@@ -273,7 +277,7 @@ export function RoomShell() {
                     the 4 primary shortcuts show, the rest fold into the
                     Settings drawer's tab list. */}
                 <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1 xl:hidden">
-                  {PANEL_SHORTCUTS.map((entry, index) => (
+                  {PANEL_SHORTCUTS.filter((entry) => !(isScene && entry.discussionOnly)).map((entry, index) => (
                     <button
                       key={entry.key}
                       className={`btn h-9 w-9 px-0 ${index >= 4 ? "max-md:hidden" : ""}`}
@@ -392,6 +396,7 @@ export function RoomShell() {
       </div>
 
       {state && <RoomSettingsDrawer state={state} childRooms={childRooms} />}
+      <SealResultsDialog result={sealResult} onClose={() => setSealResult(null)} />
 
       {showRoomsDrawer && (
         <div className="fixed inset-0 z-40 flex md:hidden">
@@ -406,14 +411,14 @@ export function RoomShell() {
 }
 
 const PANEL_SHORTCUTS = [
-  { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen },
-  { key: "decisions", labelKey: "room.panel.decisions", icon: Scale },
-  { key: "tools", labelKey: "room.panel.tools", icon: Wrench },
-  { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield },
-  { key: "phase", labelKey: "room.panel.phase", icon: Layers },
-  { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus },
-  { key: "upload", labelKey: "room.panel.upload", icon: FileText },
-  { key: "limits", labelKey: "room.panel.limits", icon: Settings2 }
+  { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen, discussionOnly: true },
+  { key: "decisions", labelKey: "room.panel.decisions", icon: Scale, discussionOnly: true },
+  { key: "tools", labelKey: "room.panel.tools", icon: Wrench, discussionOnly: false },
+  { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield, discussionOnly: true },
+  { key: "phase", labelKey: "room.panel.phase", icon: Layers, discussionOnly: false },
+  { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus, discussionOnly: true },
+  { key: "upload", labelKey: "room.panel.upload", icon: FileText, discussionOnly: false },
+  { key: "limits", labelKey: "room.panel.limits", icon: Settings2, discussionOnly: false }
 ] as const;
 
 function shortId(id: string): string {

@@ -116,6 +116,7 @@ from .schemas import (
     RoomMemberPreview,
     RoomOut,
     RoomSummaryOut,
+    SceneSealOut,
     RoomPhaseInstanceOut,
     RoomPhasePlanOut,
     RoomRuntimeOut,
@@ -1600,6 +1601,7 @@ async def append_user_message(room_id: str, body: MessageCreate, session: AsyncS
 @app.post("/rooms/{room_id}/verdicts", response_model=MessageOut)
 async def create_verdict(room_id: str, body: VerdictCreate, session: AsyncSession = Depends(get_session)):
     room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_scene(room)
     _ensure_room_writable(room, runtime)
     message = await append_verdict(session, room_id, body.content, body.is_locked, body.dead_end, body.revoke_message_id)
     await session.commit()
@@ -1655,6 +1657,7 @@ async def update_decision_lock(
 @app.post("/rooms/{room_id}/masquerade", response_model=MessageOut)
 async def create_masquerade(room_id: str, body: MasqueradeCreate, session: AsyncSession = Depends(get_session)):
     room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_scene(room)
     _ensure_room_writable(room, runtime)
     # body.persona_id is a TEMPLATE id; resolve to the room's instance.
     instance: PersonaInstance | None = None
@@ -1698,6 +1701,7 @@ async def create_masquerade(room_id: str, body: MasqueradeCreate, session: Async
 @app.post("/rooms/{room_id}/messages/{message_id}/reveal", response_model=MessageOut)
 async def reveal_masquerade(room_id: str, message_id: str, session: AsyncSession = Depends(get_session)):
     room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_scene(room)
     _ensure_room_writable(room, runtime)
     message = await session.get(Message, message_id)
     if not message or message.room_id != room_id:
@@ -1758,7 +1762,7 @@ async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_ses
     skipped + reason when the chain cannot be scheduled.
     """
     room, runtime = await _room_runtime_or_404(session, room_id)
-    _ensure_room_writable(room, runtime)
+    _ensure_not_sealed(room)
     try:
         result = await schedule_autodrive(session, room_id)
     except ValueError as exc:
@@ -1801,6 +1805,7 @@ async def extend_phase(room_id: str, session: AsyncSession = Depends(get_session
 @app.post("/rooms/{room_id}/facilitator", response_model=RoomState)
 async def ask_facilitator(room_id: str, session: AsyncSession = Depends(get_session)):
     room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_scene(room)
     _ensure_room_writable(room, runtime)
     try:
         await run_manual_facilitator_eval(session, room_id)
@@ -1894,8 +1899,26 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     # Cancel any in-flight LLM streams AND wait for them to actually unwind
     # before issuing DELETEs. This lets background tasks release DB sessions
     # and avoids racing SQLite write locks.
-    await drain_active_calls(room_id, "room_deleted")
+    await session.rollback()
+    drain_result = await drain_active_calls(
+        room_id,
+        "room_deleted",
+        require_clean=True,
+        session=session,
+    )
+    if not drain_result.clean:
+        await session.commit()
+        raise HTTPException(
+            409,
+            {
+                "message": "active calls did not stop before room delete",
+                "drain": drain_result.__dict__,
+            },
+        )
     clear_autodrive_lock(room_id, clear_stop=True)
+    room = await session.get(Room, room_id, populate_existing=True)
+    if not room:
+        raise HTTPException(404, "room not found")
     # Order matters: clear children before parents to satisfy FKs even when
     # ON DELETE CASCADE isn't declared.
     from .models import (
@@ -2017,6 +2040,7 @@ async def message_from_upload(room_id: str, body: FromUploadRequest, session: As
 @app.post("/rooms/{room_id}/subrooms", response_model=RoomState)
 async def create_subroom(room_id: str, body: RoomCreate, session: AsyncSession = Depends(get_session)):
     room, runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_scene(room)
     _ensure_room_writable(room, runtime)
     body.parent_room_id = room_id
     return await create_room(body, session)
@@ -3025,7 +3049,7 @@ async def scene_exit(
     return member
 
 
-@app.post("/rooms/{room_id}/seal", response_model=RoomOut)
+@app.post("/rooms/{room_id}/seal", response_model=SceneSealOut)
 async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session)):
     """Mark a scene as sealed and run the per-character memory scribe.
 
@@ -3037,9 +3061,27 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     """
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
-        return scene
-    await drain_active_calls(room_id, "scene_sealed")
+        return {"scene": scene, "scribe_results": []}
+    await session.rollback()
+    drain_result = await drain_active_calls(
+        room_id,
+        "scene_sealed",
+        require_clean=True,
+        session=session,
+    )
+    if not drain_result.clean:
+        await session.commit()
+        raise HTTPException(
+            409,
+            {
+                "message": "active calls did not stop before scene seal",
+                "drain": drain_result.__dict__,
+            },
+        )
     clear_autodrive_lock(room_id, clear_stop=True)
+    scene = await _scene_or_404(session, room_id)
+    if scene.sealed_at is not None:
+        return {"scene": scene, "scribe_results": []}
     scene.sealed_at = datetime.now(timezone.utc)
     await trace_record(session, scene.id, "state_mutation", "scene sealed", {})
     # Hold the sealed_at write so even if the scribe crashes, the seal sticks.
@@ -3056,7 +3098,7 @@ async def seal_scene(room_id: str, session: AsyncSession = Depends(get_session))
     )
     await session.commit()
     await session.refresh(scene)
-    return scene
+    return {"scene": scene, "scribe_results": results}
 
 
 @app.get("/rooms/{room_id}/scene/members", response_model=list[WorldSceneMemberOut])
@@ -3415,6 +3457,11 @@ def _ensure_not_frozen(runtime: RoomRuntimeState) -> None:
 def _ensure_not_sealed(room: Room) -> None:
     if room.sealed_at is not None:
         raise HTTPException(409, "scene is sealed")
+
+
+def _ensure_not_scene(room: Room) -> None:
+    if is_scene_room(room):
+        raise HTTPException(409, "not available in Story World scenes")
 
 
 def _ensure_room_writable(room: Room, runtime: RoomRuntimeState) -> None:

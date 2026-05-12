@@ -23,6 +23,7 @@ interface UIState {
   appendChunk: (roomId: string, messageId: string, personaId: string, text: string, chunkIndex?: number) => void;
   hydrateStream: (roomId: string, messageId: string, personaId: string, text: string, lastChunkIndex: number) => void;
   clearStream: (messageId: string) => void;
+  clearRoomStreams: (roomId: string) => void;
   finalizeStream: (messageId: string) => void;
   finalizeStreams: (messageIds: string[]) => void;
   setConnectionStatus: (status: ConnectionStatus, retries?: number) => void;
@@ -107,6 +108,13 @@ export const useUIStore = create<UIState>()(
         set((state) => {
           const next = { ...state.streaming };
           delete next[messageId];
+          return { streaming: next };
+        }),
+      clearRoomStreams: (roomId) =>
+        set((state) => {
+          const next = Object.fromEntries(
+            Object.entries(state.streaming).filter(([, entry]) => entry.roomId !== roomId)
+          );
           return { streaming: next };
         }),
       finalizeStream: (messageId) =>

@@ -26,6 +26,7 @@ import { UploadPanel } from "./panels/UploadPanel";
 import { SubroomPanel } from "./panels/SubroomPanel";
 import { ToolPanel } from "./panels/ToolPanel";
 import { useI18n } from "../../i18n";
+import { isSceneRoom } from "../../utils/scene";
 
 type SummaryKey = "scribe" | "decisions" | "facilitator" | "phase";
 type CollapsibleKey = "tools" | "upload" | "subroom" | "limits";
@@ -37,6 +38,7 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
   const expandedKey = params.get("panel") as AnyKey | null;
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
+  const isScene = isSceneRoom(state.room);
 
   useEffect(() => {
     if (!expandedKey) return;
@@ -66,65 +68,71 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
       <MembersSidebar roomId={state.room.id} personas={state.personas} compact />
 
       <div className="flex flex-col gap-3 px-3 py-3">
-        <SummarySection
-          ref={registerRef("scribe")}
-          tone="brand"
-          icon={<BookOpen size={14} />}
-          title={t("room.panel.scribe")}
-          expanded={isExpanded("scribe")}
-          onToggle={() => setExpanded(isExpanded("scribe") ? null : "scribe")}
-          summary={<ScribePanel state={state.scribe_state.current_state} mode="summary" />}
-          detail={<ScribePanel state={state.scribe_state.current_state} mode="full" />}
-        />
+        {!isScene && (
+          <SummarySection
+            ref={registerRef("scribe")}
+            tone="brand"
+            icon={<BookOpen size={14} />}
+            title={t("room.panel.scribe")}
+            expanded={isExpanded("scribe")}
+            onToggle={() => setExpanded(isExpanded("scribe") ? null : "scribe")}
+            summary={<ScribePanel state={state.scribe_state.current_state} mode="summary" />}
+            detail={<ScribePanel state={state.scribe_state.current_state} mode="full" />}
+          />
+        )}
 
-        <SummarySection
-          ref={registerRef("decisions")}
-          tone="info"
-          icon={<Scale size={14} />}
-          title={t("room.panel.decisions")}
-          expanded={isExpanded("decisions")}
-          onToggle={() => setExpanded(isExpanded("decisions") ? null : "decisions")}
-          summary={
-            <DecisionsPanel
-              roomId={state.room.id}
-              frozen={readOnly}
-              decisions={state.decisions ?? []}
-              limit={3}
-              hideLabel
-            />
-          }
-          detail={
-            <DecisionsPanel
-              roomId={state.room.id}
-              frozen={readOnly}
-              decisions={state.decisions ?? []}
-            />
-          }
-        />
+        {!isScene && (
+          <SummarySection
+            ref={registerRef("decisions")}
+            tone="info"
+            icon={<Scale size={14} />}
+            title={t("room.panel.decisions")}
+            expanded={isExpanded("decisions")}
+            onToggle={() => setExpanded(isExpanded("decisions") ? null : "decisions")}
+            summary={
+              <DecisionsPanel
+                roomId={state.room.id}
+                frozen={readOnly}
+                decisions={state.decisions ?? []}
+                limit={3}
+                hideLabel
+              />
+            }
+            detail={
+              <DecisionsPanel
+                roomId={state.room.id}
+                frozen={readOnly}
+                decisions={state.decisions ?? []}
+              />
+            }
+          />
+        )}
 
-        <SummarySection
-          ref={registerRef("facilitator")}
-          tone="warning"
-          icon={<Shield size={14} />}
-          title={t("room.panel.facilitator")}
-          expanded={isExpanded("facilitator")}
-          onToggle={() => setExpanded(isExpanded("facilitator") ? null : "facilitator")}
-          summary={
-            <FacilitatorPanel
-              roomId={state.room.id}
-              frozen={readOnly}
-              signals={state.facilitator_signals}
-              compact
-            />
-          }
-          detail={
-            <FacilitatorPanel
-              roomId={state.room.id}
-              frozen={readOnly}
-              signals={state.facilitator_signals}
-            />
-          }
-        />
+        {!isScene && (
+          <SummarySection
+            ref={registerRef("facilitator")}
+            tone="warning"
+            icon={<Shield size={14} />}
+            title={t("room.panel.facilitator")}
+            expanded={isExpanded("facilitator")}
+            onToggle={() => setExpanded(isExpanded("facilitator") ? null : "facilitator")}
+            summary={
+              <FacilitatorPanel
+                roomId={state.room.id}
+                frozen={readOnly}
+                signals={state.facilitator_signals}
+                compact
+              />
+            }
+            detail={
+              <FacilitatorPanel
+                roomId={state.room.id}
+                frozen={readOnly}
+                signals={state.facilitator_signals}
+              />
+            }
+          />
+        )}
 
         <SummarySection
           ref={registerRef("phase")}
@@ -161,24 +169,26 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
           <UploadPanel roomId={state.room.id} frozen={readOnly} />
         </CollapsibleSection>
 
-        <CollapsibleSection
-          ref={registerRef("subroom")}
-          icon={<GitBranchPlus size={14} />}
-          title={t("room.panel.subroom")}
-          open={isExpanded("subroom")}
-          onToggle={() => setExpanded(isExpanded("subroom") ? null : "subroom")}
-        >
-          <SubroomPanel
-            roomId={state.room.id}
-            parentRoomId={state.room.parent_room_id}
-            title={state.room.title}
-            recipeId={state.room.recipe_id ?? null}
-            formatId={state.room.format_id ?? undefined}
-            personaIds={discussantIds}
-            childRooms={childRooms}
-            frozen={readOnly}
-          />
-        </CollapsibleSection>
+        {!isScene && (
+          <CollapsibleSection
+            ref={registerRef("subroom")}
+            icon={<GitBranchPlus size={14} />}
+            title={t("room.panel.subroom")}
+            open={isExpanded("subroom")}
+            onToggle={() => setExpanded(isExpanded("subroom") ? null : "subroom")}
+          >
+            <SubroomPanel
+              roomId={state.room.id}
+              parentRoomId={state.room.parent_room_id}
+              title={state.room.title}
+              recipeId={state.room.recipe_id ?? null}
+              formatId={state.room.format_id ?? undefined}
+              personaIds={discussantIds}
+              childRooms={childRooms}
+              frozen={readOnly}
+            />
+          </CollapsibleSection>
+        )}
 
         <CollapsibleSection
           ref={registerRef("limits")}
