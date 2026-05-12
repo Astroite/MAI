@@ -296,10 +296,10 @@ export const api = {
     }),
   reveal: (roomId: string, messageId: string) =>
     request<Message>(`/rooms/${roomId}/messages/${messageId}/reveal`, { method: "POST" }),
-  runTurn: (roomId: string, speaker_persona_id?: string) =>
+  runTurn: (roomId: string, speaker_persona_id?: string, director_instruction?: string) =>
     request<Message[]>(`/rooms/${roomId}/turn`, {
       method: "POST",
-      body: JSON.stringify({ speaker_persona_id })
+      body: JSON.stringify({ speaker_persona_id, director_instruction })
     }),
   nextPhase: (roomId: string, target_position?: number) =>
     request<RoomState>(`/rooms/${roomId}/phase/next`, {

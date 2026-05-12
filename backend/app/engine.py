@@ -733,6 +733,34 @@ async def visible_messages_for_scene_speaker(
     return filtered
 
 
+def _normalize_ephemeral_director_instruction(
+    room: Room,
+    director_instruction: str | None,
+) -> str | None:
+    if not is_scene_room(room) or not director_instruction:
+        return None
+    normalized = director_instruction.strip()
+    return normalized or None
+
+
+def append_ephemeral_director_instruction(
+    scene_context_prompt: str,
+    director_instruction: str,
+) -> str:
+    block = (
+        "【临时导演指令 / Ephemeral Director Instruction】\n"
+        "以下内容只用于指导你下一次回应，不是故事事实，不是旁白，不是角色听到的话，也不会写入长期记忆。\n"
+        "This instruction is temporary guidance for your next response only. "
+        "It is not a fact in the story world. Do not quote it as narration unless naturally responding through your character. "
+        "Do not treat it as something your character necessarily heard. "
+        "Keep role boundaries: only play yourself, do not speak or act for other characters, and do not use information your character cannot perceive.\n"
+        f"{director_instruction.strip()}"
+    )
+    if scene_context_prompt and scene_context_prompt.strip():
+        return f"{scene_context_prompt.strip()}\n\n{block}"
+    return block
+
+
 async def get_room_system_persona(
     session: AsyncSession, room_id: str, kind: Literal["scribe", "facilitator"]
 ) -> PersonaInstance:
@@ -1067,6 +1095,8 @@ async def run_room_turn(
     session: AsyncSession,
     room_id: str,
     requested_persona_id: str | None = None,
+    *,
+    director_instruction: str | None = None,
 ) -> list[Message]:
     if requested_persona_id is None and _autodrive_stop_requested(room_id):
         return []
@@ -1093,30 +1123,68 @@ async def run_room_turn(
     if result.kind == "wait":
         return []
 
+    ephemeral_director_instruction = _normalize_ephemeral_director_instruction(
+        room,
+        director_instruction,
+    )
+
     if result.kind == "parallel":
-        return await _stream_parallel_messages(room.id, result.persona_ids)
+        return await _stream_parallel_messages(
+            room.id,
+            result.persona_ids,
+            director_instruction=ephemeral_director_instruction,
+        )
 
     messages: list[Message] = []
     for persona_id in result.persona_ids:
-        message = await _stream_one_message(session, room, runtime, persona_id)
+        message = await _stream_one_message(
+            session,
+            room,
+            runtime,
+            persona_id,
+            director_instruction=ephemeral_director_instruction,
+        )
         messages.append(message)
     return messages
 
 
-async def _stream_parallel_messages(room_id: str, persona_ids: list[str]) -> list[Message]:
+async def _stream_parallel_messages(
+    room_id: str,
+    persona_ids: list[str],
+    *,
+    director_instruction: str | None = None,
+) -> list[Message]:
     if not persona_ids:
         return []
-    tasks = [_stream_one_message_in_new_session(room_id, persona_id) for persona_id in persona_ids]
+    tasks = [
+        _stream_one_message_in_new_session(
+            room_id,
+            persona_id,
+            director_instruction=director_instruction,
+        )
+        for persona_id in persona_ids
+    ]
     return list(await asyncio.gather(*tasks))
 
 
-async def _stream_one_message_in_new_session(room_id: str, persona_id: str) -> Message:
+async def _stream_one_message_in_new_session(
+    room_id: str,
+    persona_id: str,
+    *,
+    director_instruction: str | None = None,
+) -> Message:
     async with SessionLocal() as session:
         room = await session.get(Room, room_id)
         runtime = await session.get(RoomRuntimeState, room_id)
         if room is None or runtime is None:
             raise ValueError("room not found")
-        return await _stream_one_message(session, room, runtime, persona_id)
+        return await _stream_one_message(
+            session,
+            room,
+            runtime,
+            persona_id,
+            director_instruction=director_instruction,
+        )
 
 
 async def _stream_one_message(
@@ -1124,6 +1192,8 @@ async def _stream_one_message(
     room: Room,
     runtime: RoomRuntimeState,
     persona_id: str,
+    *,
+    director_instruction: str | None = None,
 ) -> Message:
     # `persona_id` is a PersonaInstance.id (room-scoped); the engine never
     # consumes raw template ids past pick_next_speaker.
@@ -1197,6 +1267,22 @@ async def _stream_one_message(
                     "scene_context_warning",
                     "scene runtime context unavailable; falling back to legacy prompt",
                     {"persona_id": persona.id, "error": repr(exc)},
+                )
+            if director_instruction:
+                scene_context_prompt = append_ephemeral_director_instruction(
+                    scene_context_prompt,
+                    director_instruction,
+                )
+                await trace_record(
+                    session,
+                    room.id,
+                    "ephemeral_director_instruction",
+                    "ephemeral director instruction attached for next turn",
+                    {
+                        "persona_id": persona.id,
+                        "has_director_instruction": True,
+                        "director_instruction_length": len(director_instruction),
+                    },
                 )
         persona, model_runtime = await _runtime_view_for_persona(session, persona)
         await trace_record(

@@ -19,6 +19,7 @@ import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
 import {
   inferDirectorTargetPersona,
+  directorInstructionForTurn,
   type StoryComposerContext,
   type StoryComposerMode
 } from "./storyComposer";
@@ -104,7 +105,7 @@ export function Composer({
             directorTargetPersonaId,
             story.presentAiPersonas
           );
-          return api.runTurn(roomId, target?.id);
+          return api.runTurn(roomId, target?.id, directorInstructionForTurn(content));
         }
         return api.appendMessage(roomId, content, { as_character_id: actCharacterId });
       }
@@ -241,7 +242,7 @@ export function Composer({
           ? t("composer.story.speakAs", { name: activeActCharacter.name })
           : t("composer.story.actAs")
         : directorTarget
-          ? t("composer.story.directResponse")
+          ? t("composer.story.directResponse", { name: directorTarget.name })
           : t("composer.story.nextBeat")
     : t("composer.send");
 
@@ -250,7 +251,7 @@ export function Composer({
       <div className="mx-auto max-w-5xl rounded-lg border border-border/90 bg-panel p-3 shadow-card">
         <div className="flex flex-wrap items-center justify-between gap-3">
           {story ? (
-            // Story World mode bar — narration vs act-as. Discussion modes
+            // Story World mode bar — narration, act-as, and director. Discussion modes
             // (judge/dead_end/masquerade) intentionally don't appear: the
             // story shell isn't a deliberation room.
             <div className="flex flex-wrap items-center gap-1 rounded-md border border-border/80 bg-surface p-1">
@@ -404,6 +405,24 @@ export function Composer({
         </div>
         {storyModeUnavailable && (
           <div className="mt-2 text-xs text-muted">{storyModeUnavailable}</div>
+        )}
+        {story && storyMode === "director" && (
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <span>{t("composer.story.directorEphemeralHint")}</span>
+            <button
+              type="button"
+              className="text-brand underline hover:text-brand-strong"
+              onClick={() => setStoryMode("narration")}
+              disabled={frozen}
+            >
+              {t("composer.story.switchToNarration")}
+            </button>
+            {content.trim() && (
+              <span className="rounded bg-brand/10 px-1.5 py-0.5 text-brand">
+                {t("composer.story.temporaryInstruction")}
+              </span>
+            )}
+          </div>
         )}
         <div className="mt-3 flex items-end gap-2 max-sm:flex-col max-sm:items-stretch">
           <div className="relative flex-1">

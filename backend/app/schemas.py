@@ -1018,6 +1018,7 @@ class MasqueradeCreate(APIModel):
 
 class TurnRequest(APIModel):
     speaker_persona_id: str | None = None
+    director_instruction: str | None = None
 
 
 class PhaseTransitionRequest(APIModel):

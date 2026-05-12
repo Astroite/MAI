@@ -31,13 +31,15 @@ export function SpeakerStateBar({
   runtime,
   personas,
   frozen,
-  sealed = false
+  sealed = false,
+  isScene = false
 }: {
   roomId: string;
   runtime: Runtime;
   personas: PersonaInstance[];
   frozen: boolean;
   sealed?: boolean;
+  isScene?: boolean;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -53,6 +55,11 @@ export function SpeakerStateBar({
     .filter((p: PersonaInstance | undefined): p is PersonaInstance => Boolean(p));
   const consecutive = runtime.consecutive_ai_turns ?? 0;
   const cap = runtime.max_consecutive_ai_turns ?? 0;
+  const resumeLabel = isScene ? t("speaker.scene.resume") : t("speaker.resume");
+  const resumeTitle = isScene ? t("speaker.scene.resumeTitle") : t("speaker.resumeTitle");
+  const pauseLabel = isScene ? t("speaker.scene.pause") : t("speaker.pause");
+  const pauseTitle = isScene ? t("speaker.scene.pauseTitle") : t("speaker.pauseTitle");
+  const unfreezeLabel = isScene ? t("speaker.scene.resume") : t("speaker.unfreeze");
 
   const resume = useMutation({
     mutationFn: () => api.resumeAutodrive(roomId),
@@ -127,10 +134,10 @@ export function SpeakerStateBar({
             type="button"
             onClick={() => resume.mutate()}
             disabled={resume.isPending}
-            title={t("speaker.resumeTitle")}
+            title={resumeTitle}
           >
             <Play size={12} />
-            {t("speaker.resume")}
+            {resumeLabel}
           </button>
         )}
         {(state === "speaking" || state === "scheduling") && (
@@ -139,10 +146,10 @@ export function SpeakerStateBar({
             type="button"
             onClick={() => pause.mutate()}
             disabled={pause.isPending}
-            title={t("speaker.pauseTitle")}
+            title={pauseTitle}
           >
             <Pause size={12} />
-            {t("speaker.pause")}
+            {pauseLabel}
           </button>
         )}
         {state === "frozen" && (
@@ -153,7 +160,7 @@ export function SpeakerStateBar({
             disabled={unfreeze.isPending}
           >
             <Square size={12} />
-            {t("speaker.unfreeze")}
+            {unfreezeLabel}
           </button>
         )}
       </div>
