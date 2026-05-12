@@ -157,6 +157,10 @@ from .schemas import (
     WorldUpdate,
 )
 from .llm import LITELLM_ROUTABLE_SLUGS, llm_adapter
+from .model_runtime import (
+    resolve_default_model_runtime,
+    template_assistant_persona_view,
+)
 from .seed import seed_builtins
 from .tools import execute_tool, list_tool_schemas, sync_mcp_server
 from .trace import trace_record
@@ -505,7 +509,10 @@ async def draft_template(body: TemplateDraftRequest, session: AsyncSession = Dep
     see the real reason instead of a silent fallback that looks like the
     button did nothing.
     """
-    llm_persona, provider = await _template_assistant_runtime(session)
+    try:
+        llm_persona, provider = await _template_assistant_runtime(session)
+    except ValueError as exc:
+        raise HTTPException(status_code=502, detail=f"AI 起草模型配置无效: {exc}") from exc
     if llm_persona is None:
         # No assistant model is configured at all — fall back deterministically
         # so a brand-new install still gets *something* in the form. The
@@ -3171,31 +3178,16 @@ async def _scenario_catalog(session: AsyncSession) -> list[ScenarioOut]:
 
 
 async def _template_assistant_runtime(session: AsyncSession):
-    row = await _get_or_create_app_settings(session)
-    model_name = ""
-    provider = None
-    if row.default_api_model_id:
-        api_model = await session.get(ApiModel, row.default_api_model_id)
-        if api_model and api_model.enabled:
-            model_name = api_model.model_name
-            provider = await session.get(ApiProvider, api_model.api_provider_id)
-    if not model_name and row.default_backing_model and row.default_api_provider_id:
-        model_name = row.default_backing_model
-        provider = await session.get(ApiProvider, row.default_api_provider_id)
-    if not model_name:
+    await _get_or_create_app_settings(session)
+    try:
+        runtime = await resolve_default_model_runtime(session)
+    except ValueError as exc:
+        if str(exc).startswith("no model configured"):
+            return None, None
+        raise
+    if not runtime.model_name:
         return None, None
-    return (
-        SimpleNamespace(
-            backing_model=model_name,
-            temperature=0.2,
-            config={},
-            system_prompt=(
-                "你是 MAI 模板起草助手。根据用户的自然语言需求，输出可直接保存的模板字段。"
-                "不要编造外部事实；优先给出简洁、可执行、中文字段。"
-            ),
-        ),
-        provider,
-    )
+    return template_assistant_persona_view(runtime), runtime
 
 
 def _fallback_template_draft(kind: str, prompt: str) -> TemplateDraftOut:

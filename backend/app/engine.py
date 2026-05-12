@@ -12,10 +12,12 @@ from .db import SessionLocal
 from .event_bus import event_bus
 from .ids import new_id
 from .llm import llm_adapter
+from .model_runtime import (
+    ResolvedModelRuntime,
+    resolve_model_runtime,
+    runtime_persona_view,
+)
 from .models import (
-    ApiProvider,
-    ApiModel,
-    AppSettings,
     Decision,
     FacilitatorSignal,
     Message,
@@ -549,27 +551,10 @@ async def get_phase_template(session: AsyncSession, phase_instance: RoomPhaseIns
     return await session.get(PhaseTemplate, phase_instance.phase_template_id)
 
 
-async def resolve_api_provider(session: AsyncSession, persona: PersonaInstance) -> ApiProvider | None:
-    if persona.api_model_id:
-        api_model = await session.get(ApiModel, persona.api_model_id)
-        if api_model is not None:
-            return await session.get(ApiProvider, api_model.api_provider_id)
-    settings_row = await session.get(AppSettings, 1)
-    if settings_row and settings_row.default_api_model_id:
-        api_model = await session.get(ApiModel, settings_row.default_api_model_id)
-        if api_model is not None:
-            return await session.get(ApiProvider, api_model.api_provider_id)
-    if not persona.api_provider_id:
-        if settings_row and settings_row.default_api_provider_id:
-            return await session.get(ApiProvider, settings_row.default_api_provider_id)
-        return None
-    return await session.get(ApiProvider, persona.api_provider_id)
-
-
-async def resolve_persona_runtime(
+async def _runtime_view_for_persona(
     session: AsyncSession, persona: PersonaInstance
-) -> tuple[PersonaInstance, ApiProvider | None]:
-    """Overlay resolved model/provider settings without persisting them.
+) -> tuple[object, ResolvedModelRuntime]:
+    """Resolve model/provider settings into an immutable runtime view.
 
     Resolution order:
       api_model_id:     persona.api_model_id || settings.default_api_model_id
@@ -579,46 +564,8 @@ async def resolve_persona_runtime(
     provider — the engine treats this as a "system not configured yet" error
     that surfaces clearly to the user (no env-var fallback).
     """
-    settings_row = await session.get(AppSettings, 1)
-    default_model_id = settings_row.default_api_model_id if settings_row else None
-    default_model = (settings_row.default_backing_model or "").strip() if settings_row else ""
-    default_provider_id = settings_row.default_api_provider_id if settings_row else None
-
-    effective_api_model_id = persona.api_model_id or default_model_id
-    effective_model = (persona.backing_model or "").strip()
-    effective_provider_id = persona.api_provider_id
-
-    if effective_api_model_id:
-        api_model = await session.get(ApiModel, effective_api_model_id)
-        if api_model is None:
-            raise ValueError(f"api model {effective_api_model_id} not found")
-        if not api_model.enabled:
-            raise ValueError(f"api model {api_model.display_name} is disabled")
-        effective_model = api_model.model_name
-        effective_provider_id = api_model.api_provider_id
-    else:
-        effective_model = effective_model or default_model
-        effective_provider_id = effective_provider_id or default_provider_id
-
-    if not effective_model:
-        raise ValueError(
-            "no model configured: select persona.api_model_id or AppSettings.default_api_model_id"
-        )
-    if not effective_provider_id:
-        raise ValueError(
-            "no API provider configured: select a model with an API provider"
-        )
-
-    provider = await session.get(ApiProvider, effective_provider_id)
-    if provider is None:
-        raise ValueError(f"api provider {effective_provider_id} not found")
-
-    # Detach + overlay so llm_adapter sees resolved values via duck-typing.
-    session.expunge(persona)
-    persona.backing_model = effective_model
-    persona.api_provider_id = provider.id
-    persona.api_model_id = effective_api_model_id
-    return persona, provider
+    runtime = await resolve_model_runtime(session, persona)
+    return runtime_persona_view(persona, runtime), runtime
 
 
 async def get_room_discussants(session: AsyncSession, room_id: str) -> list[PersonaInstance]:
@@ -1087,18 +1034,23 @@ async def _stream_one_message(
     call = InFlightCall(room_id=room.id, message_id=tmp_message_id, persona_id=persona.id, task=task)
     _register_active_call(call)
 
-    await trace_record(
-        session,
-        room.id,
-        "llm_call_started",
-        f"{persona.name} started",
-        {"persona_id": persona.id, "phase": template.name if template else None, "context_message_count": len(context)},
-    )
-    await session.commit()
-
     truncated_reason = None
-    persona, api_provider = await resolve_persona_runtime(session, persona)
+    model_runtime: ResolvedModelRuntime | None = None
     try:
+        persona, model_runtime = await _runtime_view_for_persona(session, persona)
+        await trace_record(
+            session,
+            room.id,
+            "llm_call_started",
+            f"{persona.name} started",
+            {
+                "persona_id": persona.id,
+                "phase": template.name if template else None,
+                "context_message_count": len(context),
+                "model_runtime": model_runtime.trace_payload(),
+            },
+        )
+        await session.commit()
         tools_enabled = bool((persona.config or {}).get("tools_enabled"))
         tools_allow_write = bool((persona.config or {}).get("tools_allow_write"))
         tool_schemas = await list_tool_schemas(session) if tools_enabled else []
@@ -1127,7 +1079,7 @@ async def _stream_one_message(
                     tool_definitions,
                     _execute_llm_tool,
                     scribe_state,
-                    api_provider=api_provider,
+                    api_provider=model_runtime,
                     room_background=room.background or "",
                     peer_names=peer_names,
                     peer_identities=peer_identities,
@@ -1158,7 +1110,7 @@ async def _stream_one_message(
                 template,
                 runtime.max_message_tokens,
                 scribe_state,
-                api_provider=api_provider,
+                api_provider=model_runtime,
                 room_background=room.background or "",
                 peer_names=peer_names,
                 peer_identities=peer_identities,
@@ -1222,7 +1174,13 @@ async def _stream_one_message(
                 room.id,
                 "llm_call_error",
                 f"{persona.name} stream failed: {exc!r}",
-                {"persona_id": persona.id, "error": repr(exc), "detail": detail, "traceback": tb},
+                {
+                    "persona_id": persona.id,
+                    "error": repr(exc),
+                    "detail": detail,
+                    "traceback": tb,
+                    "model_runtime": model_runtime.trace_payload() if model_runtime else None,
+                },
             )
             await session.commit()
         except Exception:  # noqa: BLE001
@@ -1292,7 +1250,12 @@ async def _stream_one_message(
         room.id,
         "llm_call_completed" if truncated_reason is None else "llm_call_cancelled",
         f"{persona.name} appended",
-        {"message_id": message.id, "completion": partial, "truncated_reason": truncated_reason},
+        {
+            "message_id": message.id,
+            "completion": partial,
+            "truncated_reason": truncated_reason,
+            "model_runtime": model_runtime.trace_payload() if model_runtime else None,
+        },
     )
     await session.commit()
     if truncated_reason:
@@ -1373,7 +1336,7 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
                 break
     new_messages = messages[start_index:]
     scribe = await get_room_system_persona(session, room_id, "scribe")
-    scribe, scribe_provider = await resolve_persona_runtime(session, scribe)
+    scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
     update = await llm_adapter.complete_tool(
         scribe,
         "scribe_update",
@@ -1384,12 +1347,22 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
             "latest_message_id": latest_message_id,
             "messages": [message_to_tool_payload(message) for message in new_messages],
         },
-        api_provider=scribe_provider,
+        api_provider=scribe_runtime,
     )
     current = apply_scribe_update(current, update)
     state.current_state = current
     state.last_event_message_id = new_messages[-1].id if new_messages else state.last_event_message_id or latest_message_id
-    await trace_record(session, room_id, "scribe_update", "ScribeState tool folded", {"update": update, "state": current})
+    await trace_record(
+        session,
+        room_id,
+        "scribe_update",
+        "ScribeState tool folded",
+        {
+            "update": update,
+            "state": current,
+            "model_runtime": scribe_runtime.trace_payload(),
+        },
+    )
     await session.flush()
     await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
 
@@ -1509,7 +1482,7 @@ async def _scribe_memory_for_character(
         )
     ).all()
     scribe = await get_room_system_persona(session, scene.id, "scribe")
-    scribe, scribe_provider = await resolve_persona_runtime(session, scribe)
+    scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
     peer_ids = [pid for pid in peer_names if pid != character.id]
     existing_relations = (
         await session.scalars(
@@ -1559,7 +1532,7 @@ async def _scribe_memory_for_character(
             SCENE_MEMORY_TOOL_DESCRIPTION,
             MemoryDistillation,
             payload,
-            api_provider=scribe_provider,
+            api_provider=scribe_runtime,
         )
     except Exception as exc:
         error = str(exc)
@@ -1568,7 +1541,11 @@ async def _scribe_memory_for_character(
             scene.id,
             "scene_memory_failed",
             "scene memory distill failed for character",
-            {"character_id": character.id, "error": error},
+            {
+                "character_id": character.id,
+                "error": error,
+                "model_runtime": scribe_runtime.trace_payload(),
+            },
         )
         await session.flush()
         return {**base, "status": "failed", "error": error}
@@ -1611,6 +1588,7 @@ async def _scribe_memory_for_character(
             "vows_count": vows_count,
             "relations_touched": relations_touched,
             "reasoning": result.get("reasoning"),
+            "model_runtime": scribe_runtime.trace_payload(),
         },
     )
     return {
@@ -1909,8 +1887,7 @@ async def run_facilitator_eval(
             )
         ).all()
     )
-    facilitator_provider = None
-    facilitator, facilitator_provider = await resolve_persona_runtime(session, facilitator)
+    facilitator, facilitator_runtime = await _runtime_view_for_persona(session, facilitator)
     evaluation = await llm_adapter.complete_tool(
         facilitator,
         "facilitator_evaluation",
@@ -1923,7 +1900,7 @@ async def run_facilitator_eval(
             "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
             "manual_request": force,
         },
-        api_provider=facilitator_provider,
+        api_provider=facilitator_runtime,
     )
     signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
     signals = (await limit_facilitator_signals(session, runtime, phase, template, latest_message_id)) + signals
@@ -1960,7 +1937,16 @@ async def run_facilitator_eval(
         pacing_note=pacing,
     )
     session.add(item)
-    await trace_record(session, room_id, "facilitator_signal", overall, {"evaluation": evaluation})
+    await trace_record(
+        session,
+        room_id,
+        "facilitator_signal",
+        overall,
+        {
+            "evaluation": evaluation,
+            "model_runtime": facilitator_runtime.trace_payload(),
+        },
+    )
     await session.flush()
     await event_bus.publish(
         room_id,

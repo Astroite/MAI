@@ -150,7 +150,7 @@ app_settings
 
 `api_model_id` 是新 UI 的主路径。为了兼容旧数据，`backing_model` 和 `api_provider_id` 仍保留在 persona template / instance 上，但新写入只写 `api_model_id`；legacy 字段只作为旧行读取 fallback，删除 Provider / Model 时会被清理。
 
-模型解析顺序在 `engine.py` 中集中处理：
+模型解析顺序在 `backend/app/model_runtime.py` 中集中处理：
 
 ```text
 persona_instance.api_model_id

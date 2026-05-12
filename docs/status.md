@@ -81,6 +81,8 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 
 旧字段 `backing_model` 和 `api_provider_id` 仍保留为兼容 fallback；新写入只保存 `api_model_id`。`migrate_api_models.py` 会把旧数据补成 `api_models`。
 
+当前模型运行时解析已集中到 `backend/app/model_runtime.py`，trace 会记录解析来源（`persona` / `settings` / `legacy_persona` / `legacy_settings`）但不记录 API key。`backing_model` / `api_provider_id` 仍处于软退役兼容期；真正删除字段需要等 trace 观察确认 legacy source 使用量可忽略后再进入单独阶段。
+
 ### 3.3 国际化
 
 前端新增 `frontend/src/i18n.tsx`：
