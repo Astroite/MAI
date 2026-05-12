@@ -38,6 +38,9 @@ export const queryKeys = {
   worldTimelineEvents: (worldId: string | null | undefined) =>
     ["world-timeline-events", worldId] as const,
   sceneMembers: (roomId: string | null | undefined) => ["scene-members", roomId] as const,
+  sceneContexts: (roomId: string | null | undefined) => ["scene-context", roomId] as const,
+  sceneContext: (roomId: string | null | undefined, speakerPersonaId?: string | null) =>
+    ["scene-context", roomId, speakerPersonaId ?? null] as const,
   sealDrafts: (roomId: string | null | undefined) => ["seal-drafts", roomId] as const,
   characterMemories: (worldId: string, characterId: string) =>
     ["character-memories", worldId, characterId] as const,

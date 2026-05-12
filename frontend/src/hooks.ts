@@ -49,6 +49,7 @@ export function handleRoomDeletedEvent({
   const worldId = queryClient.getQueryData<RoomState>(queryKeys.room(roomId))?.room.world_id ?? null;
   queryClient.removeQueries({ queryKey: queryKeys.room(roomId), exact: true });
   queryClient.removeQueries({ queryKey: queryKeys.sceneMembers(roomId), exact: true });
+  queryClient.removeQueries({ queryKey: queryKeys.sceneContexts(roomId) });
   void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
   if (worldId) void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(worldId) });
   clearRoomStreams(roomId);
@@ -69,7 +70,10 @@ function invalidateCurrentRoomDependents({
   includeWorldTimeline?: boolean;
 }) {
   if (includeRooms) void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
-  if (includeSceneMembers) void queryClient.invalidateQueries({ queryKey: queryKeys.sceneMembers(roomId) });
+  if (includeSceneMembers) {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sceneMembers(roomId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sceneContexts(roomId) });
+  }
   if (includeWorldTimeline) {
     const worldId = queryClient.getQueryData<RoomState>(queryKeys.room(roomId))?.room.world_id ?? null;
     if (worldId) void queryClient.invalidateQueries({ queryKey: queryKeys.worldTimeline(worldId) });

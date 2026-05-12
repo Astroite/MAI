@@ -42,7 +42,9 @@ import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { SealResultsDialog } from "./SealResultsDialog";
+import { SceneStageConsole } from "./SceneStageConsole";
 import { buildStoryComposerContext } from "./storyComposer";
+import { buildStagePresenceView } from "./stagePresence";
 import { useI18n } from "../../i18n";
 import { formatLocalDateTime } from "../../utils/time";
 import { queryKeys } from "../../queryKeys";
@@ -66,6 +68,7 @@ export function RoomShell() {
   const phases = useQuery({ queryKey: queryKeys.phases.all, queryFn: () => api.phases() });
   const [showRoomsDrawer, setShowRoomsDrawer] = useState(false);
   const [sealDraft, setSealDraft] = useState<SceneSealDraft | null>(null);
+  const [selectedStageCharacterId, setSelectedStageCharacterId] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
   const state = room.data;
   const sceneSealed = Boolean(state?.room.sealed_at);
@@ -115,6 +118,7 @@ export function RoomShell() {
   const invalidateSceneCollections = () => {
     invalidateRoomCollections();
     void queryClient.invalidateQueries({ queryKey: queryKeys.sceneMembers(activeRoomId) });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sceneContexts(activeRoomId) });
     void queryClient.invalidateQueries({ queryKey: queryKeys.sealDrafts(activeRoomId) });
   };
   const nextPhase = useMutation({ mutationFn: () => api.nextPhase(activeRoomId!), onSuccess: invalidate });
@@ -156,7 +160,8 @@ export function RoomShell() {
 
   // Story World scene context: when this room is a scene, fetch the world
   // (for character details) and roster (for who's on stage). The composer
-  // uses this to offer 旁白 / 扮演 modes with a user-character picker.
+  // uses this for narration / act-as / director controls, while the stage
+  // console uses the compact Scene Context endpoint for current cues.
   const isScene = isSceneRoom(state?.room);
   const worldId = state?.room.world_id ?? null;
   const sealDraftsQuery = useQuery({
@@ -181,6 +186,11 @@ export function RoomShell() {
     queryFn: () => api.sceneMembers(activeRoomId!),
     enabled: Boolean(worldId && activeRoomId)
   });
+  const sceneContextQuery = useQuery({
+    queryKey: queryKeys.sceneContext(activeRoomId),
+    queryFn: () => api.sceneContext(activeRoomId!),
+    enabled: Boolean(isScene && activeRoomId)
+  });
   const storyContext = useMemo(
     () =>
       buildStoryComposerContext(
@@ -191,6 +201,45 @@ export function RoomShell() {
       ),
     [worldId, worldQuery.data?.characters, sceneMembersQuery.data, state?.personas]
   );
+  const stagePresenceView = useMemo(
+    () =>
+      state && isScene
+        ? buildStagePresenceView({
+            room: state.room,
+            context: sceneContextQuery.data,
+            world: worldQuery.data,
+            members: sceneMembersQuery.data,
+            personas: state.personas
+          })
+        : null,
+    [isScene, sceneContextQuery.data, sceneMembersQuery.data, state, worldQuery.data]
+  );
+  useEffect(() => {
+    if (!stagePresenceView) {
+      setSelectedStageCharacterId(null);
+      return;
+    }
+    if (
+      selectedStageCharacterId &&
+      stagePresenceView.characters.some((character) => character.id === selectedStageCharacterId)
+    ) {
+      return;
+    }
+    setSelectedStageCharacterId(
+      stagePresenceView.presentCharacters[0]?.id ?? stagePresenceView.characters[0]?.id ?? null
+    );
+  }, [selectedStageCharacterId, stagePresenceView]);
+  const selectedStageCharacter =
+    stagePresenceView?.characters.find((character) => character.id === selectedStageCharacterId) ??
+    stagePresenceView?.presentCharacters[0] ??
+    stagePresenceView?.characters[0] ??
+    null;
+  const selectedSpeakerPersonaId = selectedStageCharacter?.personaInstanceId ?? null;
+  const selectedSceneCueQuery = useQuery({
+    queryKey: queryKeys.sceneContext(activeRoomId, selectedSpeakerPersonaId),
+    queryFn: () => api.sceneContext(activeRoomId!, selectedSpeakerPersonaId),
+    enabled: Boolean(isScene && activeRoomId && selectedSpeakerPersonaId)
+  });
 
   const currentPhaseTemplate = phases.data?.find(
     (phase) => phase.id === state?.current_phase?.phase_template_id
@@ -378,6 +427,17 @@ export function RoomShell() {
               </div>
             </header>
             <ConnectionBanner />
+            {isScene && stagePresenceView && (
+              <SceneStageConsole
+                view={stagePresenceView}
+                selectedCharacterId={selectedStageCharacter?.id ?? null}
+                speakerContext={selectedSceneCueQuery.data?.speaker}
+                loading={sceneContextQuery.isLoading}
+                cueLoading={selectedSceneCueQuery.isLoading}
+                contextError={sceneContextQuery.isError}
+                onSelectCharacter={setSelectedStageCharacterId}
+              />
+            )}
             <CollapsiblePhaseOverview
               roomId={activeRoomId!}
               steps={phaseSteps}

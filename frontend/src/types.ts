@@ -797,6 +797,112 @@ export interface WorldSceneMember {
   joined_at: string;
 }
 
+export interface SceneWorldBibleCompact {
+  id: string;
+  name: string;
+  summary: string;
+  background: string;
+  current_date_label: string;
+  current_location: string;
+  current_arc: Record<string, unknown>;
+  rules: Array<Record<string, unknown>>;
+  taboos: Array<Record<string, unknown>>;
+  plot_hooks: Array<Record<string, unknown>>;
+}
+
+export interface SceneStageContext {
+  id: string;
+  scene_index: number | null;
+  title: string;
+  background: string;
+  in_world_time_start: string;
+  in_world_time_end: string;
+  in_world_duration_hint: string;
+  sealed: boolean;
+  frozen: boolean;
+}
+
+export interface SceneTimelineEventCompact {
+  id: string;
+  type: TimelineEventType;
+  title: string;
+  summary: string;
+  date_label: string;
+  order: number;
+  source: TimelineEventSource;
+}
+
+export interface SceneStageCharacter {
+  world_character_id: string;
+  persona_instance_id: string | null;
+  name: string;
+  kind: WorldCharacterKind;
+  role_in_scene: string;
+  speak_as_user: boolean;
+  entry_order: number;
+  joined_at: string;
+  entered_at_message_id: string | null;
+  exited_at_message_id: string | null;
+  is_present: boolean;
+  can_speak: boolean;
+  can_user_speak_as: boolean;
+}
+
+export interface SceneMemoryCue {
+  id: string;
+  world_character_id: string;
+  source_scene_id: string | null;
+  seal_draft_id: string | null;
+  scene_index_at_write: number | null;
+  in_world_time_at_event: string;
+  kind: WorldCharacterMemoryKind;
+  target_character_id: string | null;
+  content: string;
+  salience: number;
+  last_used_scene_index: number | null;
+  source: "manual" | "seal_committed";
+  created_at: string;
+}
+
+export interface SceneRelationshipCue {
+  id: string;
+  from_character_id: string;
+  to_character_id: string;
+  to_character_name: string;
+  label: string;
+  sentiment: number;
+  notes: string;
+  last_updated_scene_id: string | null;
+  last_updated_seal_draft_id: string | null;
+  source: "manual" | "seal_committed";
+  updated_at: string;
+}
+
+export interface SceneTranscriptVisibilityPreview {
+  transcript_from_message_id: string | null;
+  transcript_to_message_id: string | null;
+  visible_message_count: number;
+  notes: string[];
+}
+
+export interface SceneSpeakerContext {
+  persona_instance_id: string;
+  world_character_id: string | null;
+  name: string;
+  memory_cues: SceneMemoryCue[];
+  relationship_cues: SceneRelationshipCue[];
+  visibility: SceneTranscriptVisibilityPreview;
+}
+
+export interface SceneContext {
+  room_id: string;
+  world: SceneWorldBibleCompact;
+  scene: SceneStageContext;
+  timeline: SceneTimelineEventCompact[];
+  stage_characters: SceneStageCharacter[];
+  speaker: SceneSpeakerContext | null;
+}
+
 export interface SceneRosterEntry {
   world_character_id: string;
   role_in_scene?: string;

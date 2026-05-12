@@ -26,6 +26,7 @@ import type {
   Runtime,
   Scenario,
   SceneCreateBody,
+  SceneContext,
   SceneEnterBody,
   SceneExitBody,
   SceneSealDraft,
@@ -510,6 +511,12 @@ export const api = {
     }),
   sceneMembers: (roomId: string) =>
     request<WorldSceneMember[]>(`/rooms/${roomId}/scene/members`),
+  sceneContext: (roomId: string, speaker_persona_id?: string | null) => {
+    const suffix = speaker_persona_id
+      ? `?speaker_persona_id=${encodeURIComponent(speaker_persona_id)}`
+      : "";
+    return request<SceneContext>(`/rooms/${roomId}/scene/context${suffix}`);
+  },
   sceneEnter: (roomId: string, body: SceneEnterBody) =>
     request<WorldSceneMember>(`/rooms/${roomId}/scene/enter`, {
       method: "POST",
