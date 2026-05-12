@@ -488,6 +488,99 @@ export interface SceneSealResult {
   scribe_results: SceneMemoryScribeResult[];
 }
 
+export type SceneSealDraftStatus = "generating" | "ready" | "failed" | "committed" | "discarded";
+
+export interface SealDraftTimelineEvent {
+  id: string;
+  type: TimelineEventType;
+  title: string;
+  summary: string;
+  dateLabel?: string;
+  relatedCharacterIds?: string[];
+  confidence?: "low" | "medium" | "high";
+  selected: boolean;
+}
+
+export interface SealDraftMemoryUpdate {
+  id: string;
+  characterId: string;
+  characterName?: string;
+  type: string;
+  content: string;
+  importance?: "low" | "medium" | "high" | "critical";
+  confidence?: "low" | "medium" | "high";
+  salience?: number;
+  locked?: boolean;
+  selected: boolean;
+  evidence?: string;
+}
+
+export interface SealDraftRelationshipUpdate {
+  id: string;
+  fromCharacterId: string;
+  fromCharacterName?: string;
+  toCharacterId: string;
+  toCharacterName?: string;
+  relationType?: string;
+  label: string;
+  description: string;
+  sentimentDelta?: number;
+  intensity?: number;
+  trust?: number;
+  tension?: number;
+  confidence?: "low" | "medium" | "high";
+  selected: boolean;
+  evidence?: string;
+}
+
+export interface SealDraftWarning {
+  id: string;
+  type: string;
+  message: string;
+  relatedDraftItemIds?: string[];
+  relatedCharacterIds?: string[];
+}
+
+export interface SceneSealDraft {
+  id: string;
+  world_id: string;
+  scene_id: string;
+  status: SceneSealDraftStatus;
+  scene_summary: string;
+  title_suggestion: string;
+  date_label: string;
+  location: string;
+  timeline_events: SealDraftTimelineEvent[];
+  memory_updates: SealDraftMemoryUpdate[];
+  relationship_updates: SealDraftRelationshipUpdate[];
+  plot_hook_updates: Array<Record<string, unknown>>;
+  world_bible_suggestions: Array<Record<string, unknown>>;
+  next_scene_suggestions: Array<Record<string, unknown>>;
+  warnings: SealDraftWarning[];
+  error: string;
+  llm_run_id: string | null;
+  retry_of_draft_id: string | null;
+  committed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  scene: Room | null;
+}
+
+export interface SceneSealDraftUpdateBody {
+  scene_summary?: string;
+  title_suggestion?: string;
+  date_label?: string;
+  location?: string;
+  timeline_events?: SealDraftTimelineEvent[];
+  memory_updates?: SealDraftMemoryUpdate[];
+  relationship_updates?: SealDraftRelationshipUpdate[];
+  plot_hook_updates?: Array<Record<string, unknown>>;
+  world_bible_suggestions?: Array<Record<string, unknown>>;
+  next_scene_suggestions?: Array<Record<string, unknown>>;
+  warnings?: SealDraftWarning[];
+  status?: "ready" | "discarded";
+}
+
 export interface InFlightPartial {
   message_id: string;
   persona_id: string;
@@ -584,6 +677,85 @@ export interface WorldUpdateBody {
   config?: Record<string, unknown>;
 }
 
+export type TimelineEventType =
+  | "history"
+  | "scene"
+  | "memory"
+  | "relationship"
+  | "plot_hook"
+  | "arc_update"
+  | "location_update"
+  | "faction_update";
+
+export type TimelineEventSource =
+  | "user"
+  | "ai_suggested"
+  | "seal_draft"
+  | "seal_committed"
+  | "migration";
+
+export type TimelineEventStatus = "draft" | "committed" | "hidden";
+
+export interface WorldBible {
+  summary: string;
+  genre: string;
+  tone: string;
+  era: string;
+  current_date_label: string;
+  current_location: string;
+  background: string;
+  history: Array<Record<string, unknown>>;
+  locations: Array<Record<string, unknown>>;
+  factions: Array<Record<string, unknown>>;
+  rules: Array<Record<string, unknown>>;
+  taboos: Array<Record<string, unknown>>;
+  current_arc: Record<string, unknown> | null;
+  plot_hooks: Array<Record<string, unknown>>;
+}
+
+export type WorldBibleUpdateBody = Partial<WorldBible>;
+
+export interface WorldTimelineEvent {
+  id: string;
+  world_id: string;
+  type: TimelineEventType;
+  title: string;
+  summary: string;
+  date_label: string;
+  order: number;
+  source: TimelineEventSource;
+  status: TimelineEventStatus;
+  scene_id: string | null;
+  seal_draft_id: string | null;
+  related_character_ids: string[];
+  related_location_ids: string[];
+  related_faction_ids: string[];
+  related_memory_ids: string[];
+  related_relationship_ids: string[];
+  related_hook_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WorldTimelineEventCreateBody {
+  type?: TimelineEventType;
+  title: string;
+  summary?: string;
+  date_label?: string;
+  order?: number | null;
+  source?: TimelineEventSource;
+  status?: TimelineEventStatus;
+  scene_id?: string | null;
+  related_character_ids?: string[];
+  related_location_ids?: string[];
+  related_faction_ids?: string[];
+  related_memory_ids?: string[];
+  related_relationship_ids?: string[];
+  related_hook_ids?: string[];
+}
+
+export type WorldTimelineEventUpdateBody = Partial<WorldTimelineEventCreateBody>;
+
 export interface WorldCharacterCreateBody {
   kind: WorldCharacterKind;
   name: string;
@@ -678,6 +850,7 @@ export interface WorldCharacterMemory {
   id: string;
   world_character_id: string;
   source_scene_id: string | null;
+  seal_draft_id: string | null;
   scene_index_at_write: number | null;
   in_world_time_at_event: string;
   kind: WorldCharacterMemoryKind;
@@ -712,6 +885,7 @@ export interface WorldCharacterRelation {
   sentiment: number;
   notes: string;
   last_updated_scene_id: string | null;
+  last_updated_seal_draft_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -726,4 +900,57 @@ export interface WorldCharacterRelationUpdateBody {
   label?: string;
   sentiment?: number;
   notes?: string;
+}
+
+export interface WorldMemoryOverview {
+  id: string;
+  character_id: string;
+  character_name: string;
+  character_identity: string;
+  character_color: string;
+  character_icon: string;
+  kind: WorldCharacterMemoryKind;
+  content: string;
+  source_scene_id: string | null;
+  seal_draft_id: string | null;
+  scene_index_at_write: number | null;
+  in_world_time_at_event: string;
+  salience: number;
+  source: "manual" | "seal_committed" | "migration";
+  status: "committed";
+  locked: boolean;
+  created_at: string;
+}
+
+export interface WorldRelationshipEdge {
+  id: string;
+  from_character_id: string;
+  from_character_name: string;
+  from_character_color: string;
+  from_character_icon: string;
+  to_character_id: string;
+  to_character_name: string;
+  to_character_color: string;
+  to_character_icon: string;
+  label: string;
+  sentiment: number;
+  notes: string;
+  last_updated_scene_id: string | null;
+  last_updated_seal_draft_id: string | null;
+  source: "manual" | "seal_committed" | "migration";
+  status: "committed";
+  updated_at: string;
+}
+
+export interface WorldState {
+  world: WorldDetail;
+  bible: WorldBible;
+  scenes: SceneTimelineEntry[];
+  timeline_events: WorldTimelineEvent[];
+  memories: WorldMemoryOverview[];
+  relationships: WorldRelationshipEdge[];
+  recent_scene: SceneTimelineEntry | null;
+  open_scene: SceneTimelineEntry | null;
+  unresolved_hooks_count: number;
+  recent_relationship_changes_count: number;
 }

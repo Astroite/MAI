@@ -221,7 +221,7 @@ def test_scene_enter_and_exit_are_append_only(client, discussant_personas):
     assert by_char[latecomer["id"]]["exited_at_message_id"] is not None
 
 
-def test_scene_seal_is_idempotent_and_blocks_roster_changes(client, discussant_personas):
+def test_scene_seal_draft_commit_is_idempotent_and_blocks_roster_changes(client, discussant_personas):
     world = _make_world(client)
     template = discussant_personas[0]
     main_char = _make_ai_character(client, world["id"], template["id"])
@@ -233,14 +233,32 @@ def test_scene_seal_is_idempotent_and_blocks_roster_changes(client, discussant_p
     ).json()
     scene_id = scene["room"]["id"]
 
-    # First seal sets the timestamp.
-    sealed = client.post(f"/rooms/{scene_id}/seal").json()
-    assert sealed["scene"]["sealed_at"] is not None
-    assert "scribe_results" in sealed
-    first_ts = sealed["scene"]["sealed_at"]
+    # Seal now creates a reviewable draft first; the Scene is frozen while
+    # the draft is under Inspector review so the transcript stays stable.
+    draft = client.post(f"/rooms/{scene_id}/seal")
+    assert draft.status_code == 200, draft.text
+    draft_payload = draft.json()
+    assert draft_payload["status"] == "ready"
+    assert draft_payload["scene"]["sealed_at"] is None
+    assert draft_payload["scene"]["status"] == "frozen"
 
-    # Second seal is a no-op (returns same timestamp).
-    sealed_again = client.post(f"/rooms/{scene_id}/seal").json()
+    message_during_review = client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "草稿审阅期间不能继续改写本幕。"},
+    )
+    assert message_during_review.status_code == 409
+    unfreeze_during_review = client.post(f"/rooms/{scene_id}/unfreeze")
+    assert unfreeze_during_review.status_code == 409
+
+    sealed = client.post(f"/rooms/{scene_id}/seal-drafts/{draft_payload['id']}/commit")
+    assert sealed.status_code == 200, sealed.text
+    sealed_payload = sealed.json()
+    assert sealed_payload["scene"]["sealed_at"] is not None
+    assert "scribe_results" in sealed_payload
+    first_ts = sealed_payload["scene"]["sealed_at"]
+
+    # Re-committing the same draft is a no-op.
+    sealed_again = client.post(f"/rooms/{scene_id}/seal-drafts/{draft_payload['id']}/commit").json()
     assert sealed_again["scene"]["sealed_at"] == first_ts
 
     # Roster mutations rejected after seal.
@@ -269,7 +287,9 @@ def test_sealed_scene_room_is_read_only(client):
     ).json()
     scene_id = scene["room"]["id"]
 
-    sealed = client.post(f"/rooms/{scene_id}/seal")
+    draft = client.post(f"/rooms/{scene_id}/seal")
+    assert draft.status_code == 200, draft.text
+    sealed = client.post(f"/rooms/{scene_id}/seal-drafts/{draft.json()['id']}/commit")
     assert sealed.status_code == 200, sealed.text
     assert sealed.json()["scene"]["sealed_at"] is not None
 
@@ -464,7 +484,15 @@ def test_seal_scribe_reports_single_character_failure_without_blocking_others(
     )
     assert message.status_code == 200
 
-    seal = client.post(f"/rooms/{scene_id}/seal")
+    draft = client.post(f"/rooms/{scene_id}/seal")
+    assert draft.status_code == 200, draft.text
+    draft_payload = draft.json()
+    assert draft_payload["status"] == "ready"
+    assert any("pytest scribe failure" in warning["message"] for warning in draft_payload["warnings"])
+    assert len(draft_payload["memory_updates"]) == 2
+    assert len(draft_payload["relationship_updates"]) == 1
+
+    seal = client.post(f"/rooms/{scene_id}/seal-drafts/{draft_payload['id']}/commit")
     assert seal.status_code == 200, seal.text
     payload = seal.json()
     results = {item["character_name"]: item for item in payload["scribe_results"]}
@@ -473,13 +501,110 @@ def test_seal_scribe_reports_single_character_failure_without_blocking_others(
     assert results["成功者"]["episodes_count"] == 1
     assert results["成功者"]["vows_count"] == 1
     assert results["成功者"]["impressions_count"] == 1
-    assert results["失败者"]["status"] == "failed"
-    assert "pytest scribe failure" in results["失败者"]["error"]
+    assert "失败者" not in results
 
     memories = client.get(
         f"/worlds/{world['id']}/characters/{success_char['id']}/memories"
     ).json()
-    assert {memory["kind"] for memory in memories if memory["source_scene_id"] == scene_id} == {
+    scene_memories = [memory for memory in memories if memory["source_scene_id"] == scene_id]
+    assert {memory["kind"] for memory in scene_memories} == {
         "episode",
         "vow",
     }
+    assert all(memory["seal_draft_id"] == draft_payload["id"] for memory in scene_memories)
+    relations = client.get(f"/worlds/{world['id']}/characters/{success_char['id']}/relations").json()
+    scene_relations = [relation for relation in relations if relation["last_updated_scene_id"] == scene_id]
+    assert scene_relations
+    assert all(
+        relation["last_updated_seal_draft_id"] == draft_payload["id"]
+        for relation in scene_relations
+    )
+
+
+def test_seal_draft_can_be_edited_and_commit_is_idempotent(
+    client, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_after(room_id, message):
+        return None
+
+    async def controlled_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=1200,
+        api_provider=None,
+    ):
+        assert tool_name == "scene_memory_distill"
+        peer_id = payload["peers_on_stage"][0]["id"]
+        return {
+            "new_episodes": [
+                {"kind": "episode", "content": "应该被用户取消的记忆。", "salience": 0.7}
+            ],
+            "impressions": [
+                {
+                    "about_character_id": peer_id,
+                    "sentiment_delta": 0.3,
+                    "label": "盟友",
+                    "notes_append": "应该被用户取消的关系变化。",
+                }
+            ],
+            "reasoning": "pytest deterministic draft edit",
+        }
+
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", noop_autodrive_after)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", controlled_complete_tool)
+
+    world = _make_world(client)
+    template = discussant_personas[0]
+    char_a = _make_ai_character(client, world["id"], template["id"], name="甲")
+    char_b = _make_ai_character(client, world["id"], template["id"], name="乙")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "草稿编辑测试",
+            "members": [
+                {"world_character_id": char_a["id"]},
+                {"world_character_id": char_b["id"]},
+            ],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+    client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "甲乙在旧桥旁交换线索。", "message_type": "narration"},
+    )
+
+    draft = client.post(f"/rooms/{scene_id}/seal").json()
+    assert draft["memory_updates"]
+    assert draft["relationship_updates"]
+    draft["timeline_events"][0]["summary"] = "用户编辑后的时间轴摘要。"
+    draft["memory_updates"][0]["selected"] = False
+    draft["relationship_updates"][0]["selected"] = False
+    patched = client.patch(
+        f"/rooms/{scene_id}/seal-drafts/{draft['id']}",
+        json={
+            "timeline_events": draft["timeline_events"],
+            "memory_updates": draft["memory_updates"],
+            "relationship_updates": draft["relationship_updates"],
+        },
+    )
+    assert patched.status_code == 200, patched.text
+
+    committed = client.post(f"/rooms/{scene_id}/seal-drafts/{draft['id']}/commit")
+    assert committed.status_code == 200, committed.text
+    committed_again = client.post(f"/rooms/{scene_id}/seal-drafts/{draft['id']}/commit")
+    assert committed_again.status_code == 200, committed_again.text
+
+    memories = client.get(f"/worlds/{world['id']}/characters/{char_a['id']}/memories").json()
+    assert all(memory["source_scene_id"] != scene_id for memory in memories)
+    relations = client.get(f"/worlds/{world['id']}/characters/{char_a['id']}/relations").json()
+    assert relations == []
+    state = client.get(f"/worlds/{world['id']}/state").json()
+    committed_events = [
+        event for event in state["timeline_events"] if event["scene_id"] == scene_id
+    ]
+    assert len(committed_events) == 1
+    assert committed_events[0]["summary"] == "用户编辑后的时间轴摘要。"
+    assert committed_events[0]["seal_draft_id"] == draft["id"]

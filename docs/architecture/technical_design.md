@@ -238,7 +238,7 @@ tool_invocations
 
 ### 4.5 Story World
 
-Story World 在不破坏旧路径的前提下追加 5 张表 + Room 加列；详细字段、记忆三层结构与封幕 pipeline 见 [`../product/story_world.md`](../product/story_world.md)。
+Story World 在不破坏旧路径的前提下追加 7 张表 + Room 加列；详细字段、记忆三层结构与封幕 pipeline 见 [`../product/story_world.md`](../product/story_world.md)。
 
 新增表：
 
@@ -246,18 +246,27 @@ Story World 在不破坏旧路径的前提下追加 5 张表 + Room 加列；详
 worlds                   世界设定 (synopsis / setting / calendar_hint / cover_*)
 world_characters         角色档案 (kind=ai|user, identity, brief, core_identity, skills_text, goals_text, persona_template_id?)
 world_scene_members      Scene 名册 PK=(scene_id, world_character_id) + entered_at_message_id / exited_at_message_id + speak_as_user
-world_character_memories episodic 条目 (kind=episode|impression|vow|fact|backstory, salience, last_used_scene_index)
-world_character_relations 关系卡片 (单向, A 视角看 B, sentiment∈[-1,+1], notes 累积)
+world_character_memories episodic 条目 (kind=episode|impression|vow|fact|backstory, salience, last_used_scene_index, seal_draft_id)
+world_character_relations 关系卡片 (单向, A 视角看 B, sentiment∈[-1,+1], notes 累积, last_updated_seal_draft_id)
+world_timeline_events    World 级时间轴事件 (history/memory/relationship/plot_hook/arc_update 等, seal_draft_id)
+world_scene_seal_drafts  两阶段封幕草稿 (summary/timeline/memory/relation suggestions, status, retry/commit metadata)
 ```
 
 `Room` 表加列（写进 `_ADDED_COLUMNS`）：`world_id` / `scene_index` / `in_world_time_start` / `in_world_time_end` / `in_world_duration_hint` / `sealed_at`。`PersonaInstance` 加列 `world_character_id`，让 engine 能反查回 character。
+
+P0 World State 兼容层：
+
+- `World.config.world_bible` 保存世界设定集、当前故事时间、当前地点、当前主线、地点、阵营、规则、禁忌和伏笔等结构化 JSON。
+- `World.synopsis` / `setting` 继续保留，并与 Bible 的 `summary` / `background` 同步，以兼容旧列表、旧 prompt 和旧 API。
+- `world_timeline_events` 存储非 Scene 的世界时间轴事件；Scene 节点仍以 `Room(world_id, scene_index)` 为 canonical source。
 
 `world_id IS NULL` 的房间路径不变；`world_id IS NOT NULL` 的房间是 Scene，触发：
 
 - `pick_next_speaker` 从 `world_scene_members`「在场区间」过滤候选集（`exited_at_message_id IS NULL` 且 `entered_at_message_id` 已发生）。
 - `_build_messages` 在 system prompt 头部 prepend World synopsis + character 档案 + retrieved episodic + 同场关系卡片。
 - `run_scribe_update`（房间级共识 / 分歧）早退；character memory scribe 是唯一折叠路径。
-- `engine.run_scene_memory_scribe` / `decay_unused_memories` / `enforce_memory_cap` 在封幕 (`POST /rooms/{rid}/seal`) 时跑，输出 episodic + relations 写回 character。
+- `POST /rooms/{rid}/seal` 先冻结 Scene，再调用 `engine.generate_scene_seal_draft_payload` 生成 `world_scene_seal_drafts`，不写入长期状态。
+- `POST /rooms/{rid}/seal-drafts/{draft_id}/commit` 幂等写入 `Room.sealed_at`、`world_timeline_events`、`world_character_memories`、`world_character_relations`，并给写入项打上 draft 来源标记，随后执行 `decay_unused_memories` / `enforce_memory_cap`。
 
 `autodrive` / `facilitator` / `freeze` 路径不变。
 
@@ -569,7 +578,12 @@ Story World（详细见 [`../product/story_world.md`](../product/story_world.md)
 - `POST /worlds/{wid}/characters`、`GET|PATCH|DELETE /worlds/{wid}/characters/{cid}`
 - `GET|PUT /worlds/{wid}/characters/{cid}/memories`、`PATCH|DELETE /worlds/{wid}/characters/{cid}/memories/{mid}`
 - `POST /worlds/{wid}/scenes`、`GET /worlds/{wid}/timeline`
-- `POST /rooms/{rid}/scene/enter`、`POST /rooms/{rid}/scene/exit`、`GET /rooms/{rid}/scene/members`、`POST /rooms/{rid}/seal`
+- `GET /worlds/{wid}/state` 聚合 World Detail 主控台数据（World Bible、Timeline Events、Scenes、Memories、Relationships）
+- `PATCH /worlds/{wid}/bible`
+- `GET|POST /worlds/{wid}/timeline-events`
+- `PATCH|DELETE /worlds/{wid}/timeline-events/{eid}`
+- `POST /rooms/{rid}/scene/enter`、`POST /rooms/{rid}/scene/exit`、`GET /rooms/{rid}/scene/members`
+- `POST /rooms/{rid}/seal`、`GET|POST /rooms/{rid}/seal-drafts`、`GET|PATCH /rooms/{rid}/seal-drafts/{draft_id}`、`POST /rooms/{rid}/seal-drafts/{draft_id}/retry|commit`
 - `POST /rooms/{rid}/messages` 多一个可选字段 `as_character_id`，让用户在多个 `kind=user` 角色之间挑身份发言
 
 ## 10. 内置数据

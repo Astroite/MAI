@@ -28,6 +28,8 @@ import type {
   SceneCreateBody,
   SceneEnterBody,
   SceneExitBody,
+  SceneSealDraft,
+  SceneSealDraftUpdateBody,
   SceneSealResult,
   SceneTimelineEntry,
   TemplateDraft,
@@ -46,9 +48,15 @@ import type {
   WorldCharacterRelationUpsertBody,
   WorldCharacterUpdateBody,
   WorldCreateBody,
+  WorldBible,
+  WorldBibleUpdateBody,
   WorldDetail,
   WorldSceneMember,
+  WorldState,
   WorldSummary,
+  WorldTimelineEvent,
+  WorldTimelineEventCreateBody,
+  WorldTimelineEventUpdateBody,
   WorldUpdateBody
 } from "./types";
 
@@ -367,10 +375,16 @@ export const api = {
   // --- Story World ---------------------------------------------------------
   worlds: () => request<WorldSummary[]>("/worlds"),
   world: (worldId: string) => request<WorldDetail>(`/worlds/${worldId}`),
+  worldState: (worldId: string) => request<WorldState>(`/worlds/${worldId}/state`),
   createWorld: (body: WorldCreateBody) =>
     request<WorldDetail>("/worlds", { method: "POST", body: JSON.stringify(body) }),
   updateWorld: (worldId: string, body: WorldUpdateBody) =>
     request<WorldDetail>(`/worlds/${worldId}`, { method: "PATCH", body: JSON.stringify(body) }),
+  updateWorldBible: (worldId: string, body: WorldBibleUpdateBody) =>
+    request<WorldBible>(`/worlds/${worldId}/bible`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
   deleteWorld: (worldId: string) =>
     request<{ status: string }>(`/worlds/${worldId}`, { method: "DELETE" }),
 
@@ -450,13 +464,50 @@ export const api = {
 
   worldTimeline: (worldId: string) =>
     request<SceneTimelineEntry[]>(`/worlds/${worldId}/timeline`),
+  worldTimelineEvents: (worldId: string) =>
+    request<WorldTimelineEvent[]>(`/worlds/${worldId}/timeline-events`),
+  createWorldTimelineEvent: (worldId: string, body: WorldTimelineEventCreateBody) =>
+    request<WorldTimelineEvent>(`/worlds/${worldId}/timeline-events`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    }),
+  updateWorldTimelineEvent: (
+    worldId: string,
+    eventId: string,
+    body: WorldTimelineEventUpdateBody
+  ) =>
+    request<WorldTimelineEvent>(`/worlds/${worldId}/timeline-events/${eventId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  deleteWorldTimelineEvent: (worldId: string, eventId: string) =>
+    request<{ status: string }>(`/worlds/${worldId}/timeline-events/${eventId}`, {
+      method: "DELETE"
+    }),
   createScene: (worldId: string, body: SceneCreateBody) =>
     request<RoomState>(`/worlds/${worldId}/scenes`, {
       method: "POST",
       body: JSON.stringify(body)
     }),
   sealScene: (roomId: string) =>
-    request<SceneSealResult>(`/rooms/${roomId}/seal`, { method: "POST" }),
+    request<SceneSealDraft>(`/rooms/${roomId}/seal`, { method: "POST" }),
+  sealDrafts: (roomId: string) =>
+    request<SceneSealDraft[]>(`/rooms/${roomId}/seal-drafts`),
+  createSealDraft: (roomId: string) =>
+    request<SceneSealDraft>(`/rooms/${roomId}/seal-drafts`, { method: "POST" }),
+  updateSealDraft: (roomId: string, draftId: string, body: SceneSealDraftUpdateBody) =>
+    request<SceneSealDraft>(`/rooms/${roomId}/seal-drafts/${draftId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body)
+    }),
+  retrySealDraft: (roomId: string, draftId: string) =>
+    request<SceneSealDraft>(`/rooms/${roomId}/seal-drafts/${draftId}/retry`, {
+      method: "POST"
+    }),
+  commitSealDraft: (roomId: string, draftId: string) =>
+    request<SceneSealResult>(`/rooms/${roomId}/seal-drafts/${draftId}/commit`, {
+      method: "POST"
+    }),
   sceneMembers: (roomId: string) =>
     request<WorldSceneMember[]>(`/rooms/${roomId}/scene/members`),
   sceneEnter: (roomId: string, body: SceneEnterBody) =>

@@ -195,16 +195,19 @@ persona_instance.api_model_id
 Story World 在 Room 之上多一层「世界」容器，让一组角色在多幕戏之间保留记忆。详细设计见 [`../product/story_world.md`](../product/story_world.md)。常用流程：
 
 1. 左 rail 进入 **World 列表**，新建一个世界，填 synopsis / setting / calendar_hint。
-2. 在 World 详情页添加角色：`kind=ai` 绑定 PersonaTemplate（带 core_identity / skills / goals），`kind=user` 是用户驱动的轻档案。
-3. 创建第一幕（**Scene**）：勾选本幕在场角色，可以为某个 user 角色开启 `speak_as_user`。
-4. 进入 Scene 后，在 Composer 切换：
+2. 在 World 详情页查看世界主控台：首屏展示当前故事时间、当前主线、当前地点、最近一幕、活跃角色，以及继续当前 Scene / 开启下一幕入口。
+3. 在 **World Bible** 页签补充世界概述、背景、当前时间、当前地点和当前主线；也可以在 **Timeline** 页签手动添加历史背景事件。
+4. 在 World 详情页添加角色：`kind=ai` 绑定 PersonaTemplate（带 core_identity / skills / goals），`kind=user` 是用户驱动的轻档案。
+5. 创建第一幕（**Scene**）：勾选本幕在场角色，可以为某个 user 角色开启 `speak_as_user`。
+6. 进入 Scene 后，在 Composer 切换：
    - **正常**：以当前 user 角色身份发言（多个 user 角色用 `as_character_id` 选择）。
    - **旁白**：用户作为「导演」描写场景或角色动作，落库为 system 消息。
    - **扮演**：以指定 user 角色身份发言（与 1 等价，仅 UI 入口不同）。
-5. 角色中途加入或离开：调 `POST /rooms/{rid}/scene/enter` / `/exit`，会追加 `participant.enter` / `.exit` 系统消息。
-6. 一幕戏想要保留为持久记忆 → 点 **封幕**（`POST /rooms/{rid}/seal`）。封幕会跑 per-character memory scribe，把本幕折叠成 episodic / impressions / vows 写回角色档案。**封幕不可逆**，所以不会自动触发——freeze 后系统只会弹「是否封幕」。
-7. 封幕完成后，**Scene-end inspector** 对话框可逐角色查看产出的记忆，必要时重跑某个角色。
-8. 下一幕 (`scene_index = 上一幕 + 1`) 创建时，已有角色会自动带回 retrieved top-K episodic 与同场关系卡片入 prompt。
+7. 角色中途加入或离开：调 `POST /rooms/{rid}/scene/enter` / `/exit`，会追加 `participant.enter` / `.exit` 系统消息。
+8. 一幕戏想要保留为持久记忆 → 点 **生成封幕草稿**（`POST /rooms/{rid}/seal`）。这一步会暂停/冻结 Scene 并生成 Seal Draft，不写入长期世界状态；草稿审阅期间不能解冻继续改写本幕，避免提交旧草稿。
+9. 在 **Scene-end Inspector** 中检查 / 编辑本幕摘要、时间轴事件、角色记忆和关系变化；可以取消错误项或整体重试。
+10. 点击 **确认写入世界状态**（`POST /rooms/{rid}/seal-drafts/{draft_id}/commit`）后，本幕才会写入 `sealed_at`、Timeline、Memory 和 Relationship。World Detail 的 **Memories** 和 **Relationships** 页签会展示这些沉淀。
+11. 下一幕 (`scene_index = 上一幕 + 1`) 创建时，已有角色会自动带回 retrieved top-K episodic 与同场关系卡片入 prompt。
 
 ## 6. 工具与 MCP
 

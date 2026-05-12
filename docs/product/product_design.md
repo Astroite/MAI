@@ -37,6 +37,9 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 | Tool Server / Tool Invocation | MCP server 注册、工具清单和每次工具调用审计 | 全局 / 房间内 |
 | Scenario 场景 | 预置标题、初始问题、赛制或配方的一键开房入口 | 全局内置 |
 | World 世界 | 跨房间的世界观容器（synopsis、setting、calendar_hint），承载若干角色与场景 | 全局，跨房间 |
+| World Bible 世界设定集 | World 的结构化状态：世界概述、背景、当前时间、当前地点、主线 Arc、地点、阵营、规则、伏笔 | World 内 |
+| Timeline Event 时间轴事件 | World 级事件：历史背景、记忆/关系/伏笔/主线/地点/阵营变化；Scene 节点仍以 Room 为源 | World 内 |
+| Seal Draft 封幕草稿 | Scene 结束时由 LLM 生成的可编辑状态变更草稿，用户确认前不写入长期世界状态 | Scene 内 |
 | World Character 世界角色 | World 自带的角色档案：core_identity、skills、goals、外观；`kind=ai` 绑定 PersonaTemplate，`kind=user` 由用户驱动 | World 内 |
 | Scene 场景 | 一幕戏 = 一个带 `world_id` + `scene_index` 的 Room；通过 `WorldSceneMember` 名册控制在场角色 | World 内 |
 | Character Memory 角色记忆 | 跨场景的三层记忆：core_identity（手写）/ relationships（关系卡片）/ episodic（封幕 scribe 写入） | World 内 |
@@ -141,8 +144,9 @@ Story World 在 Room + Persona 之上加一层 **World** 容器，把单次房�
 - 同一 World 内 Scene 严格线性 (`scene_index` 单调递增，无分支)。
 - 角色档案分两种 kind：`ai`（绑定 PersonaTemplate，跑记忆管线）、`user`（用户驱动的轻档案，无 episodic）。
 - Composer 增加两种模式：**旁白**（用户作为导演描写场景 / 动作，落库为 system 消息）和**扮演**（用户挑选 `kind=user` 角色以其身份发言）。
-- 每幕显式封幕（`POST /rooms/{rid}/seal`）才会跑 per-character memory scribe，把本幕折叠成 episodic / impressions / vows 写回角色档案——不可逆，所以不自动触发。
-- 封幕后弹出 **Scene-end inspector**，逐角色查看本幕产出的记忆，必要时重跑。
+- 每幕显式封幕（`POST /rooms/{rid}/seal`）先生成 Seal Draft，不直接写入长期状态。
+- **Scene-end Inspector** 中用户检查 / 编辑摘要、时间轴事件、角色记忆和关系变化；确认 commit 后才写回 Timeline、Memory、Relationship 并锁定 Scene。
+- World Detail 是世界主控台：展示当前时间点、主线 Arc、最近 Scene、活跃角色、Timeline、World Bible、角色记忆和关系网列表，并提供继续当前 Scene / 开启下一幕入口。
 
 ## 7. 工具、MCP 与能力权限
 

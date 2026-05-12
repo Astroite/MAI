@@ -1438,6 +1438,298 @@ async def _slice_messages_for_character(
     return in_range
 
 
+def _seal_scene_summary(scene: Room, messages: list[Message]) -> str:
+    visible = [
+        message.content.strip()
+        for message in messages
+        if message.visibility_to_models and (message.content or "").strip()
+    ]
+    if not visible:
+        return scene.background or scene.title
+    joined = "\n".join(visible[-8:])
+    return joined[:1200]
+
+
+def _importance_from_salience(value: float) -> str:
+    if value >= 0.85:
+        return "critical"
+    if value >= 0.65:
+        return "high"
+    if value >= 0.35:
+        return "medium"
+    return "low"
+
+
+async def generate_scene_seal_draft_payload(
+    session: AsyncSession,
+    scene: Room,
+) -> dict[str, Any]:
+    """Generate an editable seal draft without mutating world state."""
+    if not is_scene_room(scene):
+        return {
+            "scene_summary": "",
+            "title_suggestion": scene.title,
+            "date_label": "",
+            "location": "",
+            "timeline_events": [],
+            "memory_updates": [],
+            "relationship_updates": [],
+            "plot_hook_updates": [],
+            "world_bible_suggestions": [],
+            "next_scene_suggestions": [],
+            "warnings": [{"id": new_id(), "type": "llm_error", "message": "room is not a scene"}],
+            "error": "room is not a scene",
+        }
+    messages = list(
+        (
+            await session.scalars(
+                select(Message)
+                .where(Message.room_id == scene.id, Message.visibility_to_models.is_(True))
+                .order_by(Message.created_at)
+            )
+        ).all()
+    )
+    members = list(
+        (
+            await session.scalars(
+                select(WorldSceneMember).where(WorldSceneMember.scene_id == scene.id)
+            )
+        ).all()
+    )
+    char_ids = [member.world_character_id for member in members]
+    characters = {
+        character.id: character
+        for character in (
+            await session.scalars(
+                select(WorldCharacter).where(WorldCharacter.id.in_(char_ids))
+            )
+        ).all()
+    } if char_ids else {}
+    peer_names = {character.id: character.name for character in characters.values()}
+    warnings: list[dict[str, Any]] = []
+    memory_updates: list[dict[str, Any]] = []
+    relationship_updates: list[dict[str, Any]] = []
+    character_results: list[dict[str, Any]] = []
+    for member in members:
+        character = characters.get(member.world_character_id)
+        if character is None:
+            warnings.append(
+                {
+                    "id": new_id(),
+                    "type": "llm_error",
+                    "message": f"character not found: {member.world_character_id}",
+                }
+            )
+            continue
+        result_base = {
+            "character_id": character.id,
+            "character_name": character.name,
+            "status": "skipped",
+            "episodes_count": 0,
+            "impressions_count": 0,
+            "vows_count": 0,
+            "error": None,
+        }
+        if character.kind != "ai":
+            character_results.append(
+                {
+                    **result_base,
+                    "error": "user characters do not run memory scribe",
+                }
+            )
+            continue
+        if await _scene_memory_already_written(session, character.id, scene.id):
+            character_results.append(
+                {
+                    **result_base,
+                    "error": "scene memory already written for this character",
+                }
+            )
+            continue
+        witnessed = await _slice_messages_for_character(session, scene.id, member)
+        if not witnessed:
+            character_results.append({**result_base, "error": "no witnessed messages"})
+            continue
+        try:
+            existing = (
+                await session.scalars(
+                    select(WorldCharacterMemory)
+                    .where(WorldCharacterMemory.world_character_id == character.id)
+                    .order_by(
+                        WorldCharacterMemory.salience.desc(),
+                        WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
+                    )
+                    .limit(20)
+                )
+            ).all()
+            scribe = await get_room_system_persona(session, scene.id, "scribe")
+            scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
+            peer_ids = [pid for pid in peer_names if pid != character.id]
+            existing_relations = (
+                await session.scalars(
+                    select(WorldCharacterRelation).where(
+                        WorldCharacterRelation.from_character_id == character.id,
+                        WorldCharacterRelation.to_character_id.in_(peer_ids),
+                    )
+                )
+            ).all() if peer_ids else []
+            payload = {
+                "scene": {
+                    "id": scene.id,
+                    "scene_index": scene.scene_index,
+                    "title": scene.title,
+                    "background": scene.background,
+                    "in_world_time_start": scene.in_world_time_start,
+                    "in_world_time_end": scene.in_world_time_end,
+                },
+                "character": {
+                    "id": character.id,
+                    "name": character.name,
+                    "identity": character.identity,
+                    "core_identity": character.core_identity,
+                    "goals_text": character.goals_text,
+                },
+                "peers_on_stage": [
+                    {"id": pid, "name": pname}
+                    for pid, pname in peer_names.items()
+                    if pid != character.id
+                ],
+                "existing_memories": [
+                    {"kind": m.kind, "content": m.content, "salience": m.salience}
+                    for m in existing
+                ],
+                "existing_relations": [
+                    {
+                        "about_character_id": r.to_character_id,
+                        "label": r.label,
+                        "sentiment": r.sentiment,
+                        "notes": r.notes,
+                    }
+                    for r in existing_relations
+                ],
+                "witnessed_messages": [message_to_tool_payload(message) for message in witnessed],
+            }
+            distilled = await llm_adapter.complete_tool(
+                scribe,
+                "scene_memory_distill",
+                SCENE_MEMORY_TOOL_DESCRIPTION,
+                MemoryDistillation,
+                payload,
+                api_provider=scribe_runtime,
+            )
+        except Exception as exc:  # noqa: BLE001
+            error = str(exc)
+            warnings.append(
+                {
+                    "id": new_id(),
+                    "type": "llm_error",
+                    "message": f"{character.name}: {error}",
+                    "relatedCharacterIds": [character.id],
+                }
+            )
+            await trace_record(
+                session,
+                scene.id,
+                "seal_draft_memory_failed",
+                "scene memory draft failed for character",
+                {"character_id": character.id, "error": error},
+            )
+            character_results.append({**result_base, "status": "failed", "error": error})
+            continue
+        episodes_count = 0
+        vows_count = 0
+        for entry in distilled.get("new_episodes") or []:
+            content = (entry.get("content") or "").strip()
+            if not content:
+                continue
+            kind = entry.get("kind") or "episode"
+            salience = float(entry.get("salience", 0.5))
+            memory_updates.append(
+                {
+                    "id": new_id(),
+                    "characterId": character.id,
+                    "characterName": character.name,
+                    "type": kind,
+                    "content": content,
+                    "importance": _importance_from_salience(salience),
+                    "confidence": "high",
+                    "salience": max(0.0, min(1.0, salience)),
+                    "locked": False,
+                    "selected": True,
+                    "evidence": "",
+                }
+            )
+            if kind == "vow":
+                vows_count += 1
+            else:
+                episodes_count += 1
+        impressions_count = 0
+        for impression in distilled.get("impressions") or []:
+            target_id = impression.get("about_character_id")
+            if not target_id or target_id == character.id or target_id not in peer_names:
+                continue
+            delta = max(-1.0, min(1.0, float(impression.get("sentiment_delta") or 0.0)))
+            notes = (impression.get("notes_append") or "").strip()
+            relationship_updates.append(
+                {
+                    "id": new_id(),
+                    "fromCharacterId": character.id,
+                    "fromCharacterName": character.name,
+                    "toCharacterId": target_id,
+                    "toCharacterName": peer_names.get(target_id, target_id),
+                    "relationType": "custom",
+                    "label": (impression.get("label") or "").strip(),
+                    "description": notes,
+                    "sentimentDelta": delta,
+                    "intensity": round(abs(delta) * 100),
+                    "trust": round(max(delta, 0.0) * 100),
+                    "tension": round(max(-delta, 0.0) * 100),
+                    "confidence": "high",
+                    "selected": True,
+                    "evidence": notes,
+                }
+            )
+            impressions_count += 1
+        character_results.append(
+            {
+                **result_base,
+                "status": "success",
+                "episodes_count": episodes_count,
+                "impressions_count": impressions_count,
+                "vows_count": vows_count,
+            }
+        )
+    scene_summary = _seal_scene_summary(scene, messages)
+    timeline_summary = scene_summary[:600]
+    timeline_events = [
+        {
+            "id": new_id(),
+            "type": "arc_update",
+            "title": f"第{scene.scene_index}幕封幕" if scene.scene_index else scene.title,
+            "summary": timeline_summary,
+            "dateLabel": scene.in_world_time_end or scene.in_world_time_start or "",
+            "relatedCharacterIds": list(peer_names),
+            "confidence": "medium",
+            "selected": True,
+        }
+    ] if timeline_summary else []
+    return {
+        "scene_summary": scene_summary,
+        "title_suggestion": scene.title,
+        "date_label": scene.in_world_time_end or scene.in_world_time_start or "",
+        "location": "",
+        "timeline_events": timeline_events,
+        "memory_updates": memory_updates,
+        "relationship_updates": relationship_updates,
+        "plot_hook_updates": [],
+        "world_bible_suggestions": [],
+        "next_scene_suggestions": [],
+        "warnings": warnings,
+        "error": "",
+        "character_results": character_results,
+    }
+
+
 async def _scribe_memory_for_character(
     session: AsyncSession,
     scene: Room,

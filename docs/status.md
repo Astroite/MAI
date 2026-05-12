@@ -28,6 +28,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - 中英文界面切换。
 - Tauri 桌面壳打包。
 - **Story World**：跨房间世界 + 角色档案 + 三层记忆（core / relationships / episodic）+ 封幕 scribe + 旁白 / 扮演 composer 模式。
+- **World State System**：World Detail 主控台、World Bible 编辑、World 级 Timeline Event、记忆/关系可视化列表、两阶段 Seal Draft / Inspector / Commit。
 
 ## 2. 模块状态
 
@@ -50,6 +51,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 | 桌面壳 | 完成 | Tauri v2 + PyInstaller sidecar + NSIS 打包 |
 | Trace | 写入完成 | 查询与重放 UI 不做 |
 | Story World | PR 1–6 全部合入 | World / Character / Scene / Memory / Relations 五张表 + 路由 + 封幕 scribe + UI；详见 [`product/story_world.md`](product/story_world.md) |
+| World State System | P0 完成 | World Detail 主控台、World Bible 兼容层、Timeline Event、Memory / Relationship 可视化、两阶段封幕与 Scene-end Inspector |
 
 ## 3. 最近稳定化改动
 
@@ -163,7 +165,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 
 - **PR 1**：`World` / `WorldCharacter` 数据模型 + CRUD 路由（`/worlds`、`/worlds/{wid}/characters`）。
 - **PR 2**：`Scene = Room + world_id + scene_index` + `WorldSceneMember` 名册 + 入场 / 离场 (`participant.enter` / `participant.exit` 系统消息) + engine prompt 拼接。`world_id IS NULL` 路径完全保留。
-- **PR 3**：封幕 `POST /rooms/{rid}/seal` + `engine.run_scene_memory_scribe` + episodic 写入 + 检索入 prompt。
+- **PR 3**：早期封幕 scribe + episodic 写入 + 检索入 prompt（当前已由下方两阶段 Seal Draft / Inspector / Commit 语义覆盖）。
 - **PR 4**：关系卡片单向维护 (`world_character_relations`) + 同场角色互相进 prompt。
 - **PR 5**：记忆衰减 (`decay_unused_memories`) + 上限折叠 (`enforce_memory_cap`) + 记忆手动编辑 UI。
 - **PR 6**：Composer 双模式——**旁白**（导演视角描写动作 / 场景，落库为 system 消息）、**扮演**（用户挑 `kind=user` 角色以其身份发言）。
@@ -174,7 +176,11 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - Scene 创建后**不再自动跳房**，用户先在 World 视图确认在场名册。
 - 修复 Scene 内残留的 Room scribe 渗透（`run_scribe_update` 在 `world_id IS NOT NULL` 时早退）。
 - 人设模板选择从原 `<select>` 换成可搜索 picker，自动回填字段。
-- **Scene-end inspector** 对话框：封幕后逐角色查看本幕产出的 episodic / impressions / vows，必要时重跑。
+- **Scene-end Inspector**：封幕先生成 Seal Draft，用户可编辑摘要、勾选/取消时间轴事件、角色记忆和关系变化，确认 commit 后才写入长期世界状态。
+- **World Detail 主控台**：首屏展示当前时间、主线、地点、最近一幕、伏笔/关系摘要和继续/开启下一幕入口。
+- **World Bible + Timeline Event**：`World.config.world_bible` 承载世界设定兼容层，`world_timeline_events` 承载历史/状态事件；Timeline Tab 合并历史事件和 Scene 节点。
+- **Memory / Relationship 可视化**：World Detail 中新增 Memories / Relationships 页签，展示来源、关联 Scene 与关系详情。
+- **两阶段封幕**：新增 `world_scene_seal_drafts`，`POST /rooms/{rid}/seal` 生成草稿，`POST /rooms/{rid}/seal-drafts/{draft_id}/commit` 幂等写入 Timeline / Memory / Relationship / sealed 状态。
 
 ### 3.12 文档结构整理
 
@@ -242,6 +248,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 - `test_memory.py` —— 封幕 scribe 写入 episodic / impressions
 - `test_memory_decay.py` —— `last_used_scene_index` 衰减 + episodic cap 折叠
 - `test_relations.py` —— 关系卡片单向维护
+- `test_world_state.py` —— World State 聚合、World Bible、Timeline Event
 
 测试需要真实 LLM 凭据：
 

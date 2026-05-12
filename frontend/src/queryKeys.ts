@@ -33,8 +33,12 @@ export const queryKeys = {
   tools: ["tools"] as const,
   toolServers: ["tool-servers"] as const,
   world: (worldId: string | null | undefined) => ["world", worldId] as const,
+  worldState: (worldId: string | null | undefined) => ["world-state", worldId] as const,
   worldTimeline: (worldId: string | null | undefined) => ["world-timeline", worldId] as const,
+  worldTimelineEvents: (worldId: string | null | undefined) =>
+    ["world-timeline-events", worldId] as const,
   sceneMembers: (roomId: string | null | undefined) => ["scene-members", roomId] as const,
+  sealDrafts: (roomId: string | null | undefined) => ["seal-drafts", roomId] as const,
   characterMemories: (worldId: string, characterId: string) =>
     ["character-memories", worldId, characterId] as const,
   characterRelations: (worldId: string, characterId: string) =>

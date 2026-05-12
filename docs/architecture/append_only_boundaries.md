@@ -35,12 +35,14 @@ not from overwriting old messages or deleting evidence.
 | `world_characters` | Mutable character profile. | Edits affect future scene prompts only; they do not rewrite sealed-scene memories. |
 | `rooms` with `world_id` | Scene room. | `world_id + scene_index` identifies a Scene until the Story Domain is split from the conversation runtime. |
 | `world_scene_members` | Roster membership interval. | Enter/exit should be reflected by participant messages; v1 supports one roster row per character per scene. |
-| `world_character_memories` | Long-term character memory. | Scene-end scribe appends or updates memory state after seal. Backstory/manual rows are authored state. Memory decay/cap may update/drop non-backstory rows; this is bounded maintenance, not transcript rewrite. |
-| `world_character_relations` | Long-term relation cards. | Updated after scene seal. Treat as current relationship state with traceable `last_updated_scene_id`. |
+| `world_scene_seal_drafts` | Editable seal proposal. | Draft rows can be retried, edited, discarded, or committed. They are not durable world facts until commit. |
+| `world_character_memories` | Long-term character memory. | Seal Draft commit appends or updates memory state and stamps `seal_draft_id`. Backstory/manual rows are authored state. Memory decay/cap may update/drop non-backstory rows; this is bounded maintenance, not transcript rewrite. |
+| `world_character_relations` | Long-term relation cards. | Updated after Seal Draft commit. Treat as current relationship state with traceable `last_updated_scene_id` and `last_updated_seal_draft_id`. |
 
-Scene sealing is a boundary: after `sealed_at`, the scene should not accept new
-members or new dialogue, and memory/relation writes represent the durable output
-of that scene.
+Seal draft generation pauses the scene so the transcript being inspected stays
+stable. Scene sealing is the commit boundary: after `sealed_at`, the scene should
+not accept new members or new dialogue, and memory/relation writes represent the
+durable output of that scene.
 
 ## Provider / Model Deletion Side Effects
 

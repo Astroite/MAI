@@ -506,6 +506,83 @@ class World(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 
 
+class WorldTimelineEvent(Base):
+    """World-level timeline event.
+
+    Scene rooms remain their own canonical objects. This table stores
+    non-scene events (history, plot hooks, relationship/memory/state updates)
+    and, later, seal-commit derived events.
+    """
+
+    __tablename__ = "world_timeline_events"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    world_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("worlds.id", ondelete="CASCADE"), index=True
+    )
+    type: Mapped[str] = mapped_column(String(32), default="history")
+    title: Mapped[str] = mapped_column(String(200))
+    summary: Mapped[str] = mapped_column(Text, default="")
+    date_label: Mapped[str] = mapped_column(Text, default="")
+    order: Mapped[int] = mapped_column("event_order", Integer, default=0)
+    source: Mapped[str] = mapped_column(String(32), default="user")
+    status: Mapped[str] = mapped_column(String(32), default="committed")
+    scene_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    seal_draft_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    related_character_ids: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    related_location_ids: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    related_faction_ids: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    related_memory_ids: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    related_relationship_ids: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    related_hook_ids: Mapped[list[str]] = mapped_column(JSONType, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        Index("ix_world_timeline_events_world_order", "world_id", "event_order"),
+    )
+
+
+class WorldSceneSealDraft(Base):
+    """Editable scene-end seal draft.
+
+    A draft is generated from the scene transcript but does not mutate long-term
+    world state until the user commits it from the inspector.
+    """
+
+    __tablename__ = "world_scene_seal_drafts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    world_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("worlds.id", ondelete="CASCADE"), index=True
+    )
+    scene_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("rooms.id", ondelete="CASCADE"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="ready")
+    scene_summary: Mapped[str] = mapped_column(Text, default="")
+    title_suggestion: Mapped[str] = mapped_column(Text, default="")
+    date_label: Mapped[str] = mapped_column(Text, default="")
+    location: Mapped[str] = mapped_column(Text, default="")
+    timeline_events: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    memory_updates: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    relationship_updates: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    plot_hook_updates: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    world_bible_suggestions: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    next_scene_suggestions: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    warnings: Mapped[list[dict]] = mapped_column(JSONType, default=list)
+    error: Mapped[str] = mapped_column(Text, default="")
+    llm_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    retry_of_draft_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
+
+    __table_args__ = (
+        Index("ix_world_scene_seal_drafts_scene_status", "scene_id", "status"),
+    )
+
+
 class WorldCharacter(Base):
     """A character that lives inside a World. kind=ai binds to a PersonaTemplate
     and carries memory; kind=user is a lightweight slot driven by the human user."""
@@ -592,6 +669,7 @@ class WorldCharacterMemory(Base):
         String(36), ForeignKey("world_characters.id", ondelete="CASCADE"), index=True
     )
     source_scene_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    seal_draft_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     scene_index_at_write: Mapped[int | None] = mapped_column(Integer, nullable=True)
     in_world_time_at_event: Mapped[str] = mapped_column(Text, default="")
     kind: Mapped[str] = mapped_column(String(32))  # episode | impression | vow | fact | backstory
@@ -639,6 +717,7 @@ class WorldCharacterRelation(Base):
     sentiment: Mapped[float] = mapped_column(default=0.0)
     notes: Mapped[str] = mapped_column(Text, default="")
     last_updated_scene_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    last_updated_seal_draft_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, onupdate=now_utc)
 

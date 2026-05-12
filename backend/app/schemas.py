@@ -857,6 +857,48 @@ class SceneSealOut(APIModel):
     scribe_results: list[SceneMemoryScribeResult] = Field(default_factory=list)
 
 
+class SceneSealDraftOut(APIModel):
+    id: str
+    world_id: str
+    scene_id: str
+    status: Literal["generating", "ready", "failed", "committed", "discarded"]
+    scene_summary: str = ""
+    title_suggestion: str = ""
+    date_label: str = ""
+    location: str = ""
+    timeline_events: list[dict[str, Any]] = Field(default_factory=list)
+    memory_updates: list[dict[str, Any]] = Field(default_factory=list)
+    relationship_updates: list[dict[str, Any]] = Field(default_factory=list)
+    plot_hook_updates: list[dict[str, Any]] = Field(default_factory=list)
+    world_bible_suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    next_scene_suggestions: list[dict[str, Any]] = Field(default_factory=list)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
+    error: str = ""
+    llm_run_id: str | None = None
+    retry_of_draft_id: str | None = None
+    committed_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+    scene: RoomOut | None = None
+
+
+class SceneSealDraftUpdate(APIModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    scene_summary: str | None = None
+    title_suggestion: str | None = None
+    date_label: str | None = None
+    location: str | None = None
+    timeline_events: list[dict[str, Any]] | None = None
+    memory_updates: list[dict[str, Any]] | None = None
+    relationship_updates: list[dict[str, Any]] | None = None
+    plot_hook_updates: list[dict[str, Any]] | None = None
+    world_bible_suggestions: list[dict[str, Any]] | None = None
+    next_scene_suggestions: list[dict[str, Any]] | None = None
+    warnings: list[dict[str, Any]] | None = None
+    status: Literal["ready", "discarded"] | None = None
+
+
 class RoomRuntimeOut(APIModel):
     room_id: str
     current_phase_instance_id: str | None = None
@@ -1238,6 +1280,120 @@ class WorldUpdate(APIModel):
     config: dict[str, Any] | None = None
 
 
+TimelineEventType = Literal[
+    "history",
+    "scene",
+    "memory",
+    "relationship",
+    "plot_hook",
+    "arc_update",
+    "location_update",
+    "faction_update",
+]
+TimelineEventSource = Literal[
+    "user",
+    "ai_suggested",
+    "seal_draft",
+    "seal_committed",
+    "migration",
+]
+TimelineEventStatus = Literal["draft", "committed", "hidden"]
+
+
+class WorldBibleOut(APIModel):
+    summary: str = ""
+    genre: str = ""
+    tone: str = ""
+    era: str = ""
+    current_date_label: str = ""
+    current_location: str = ""
+    background: str = ""
+    history: list[dict[str, Any]] = Field(default_factory=list)
+    locations: list[dict[str, Any]] = Field(default_factory=list)
+    factions: list[dict[str, Any]] = Field(default_factory=list)
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    taboos: list[dict[str, Any]] = Field(default_factory=list)
+    current_arc: dict[str, Any] | None = None
+    plot_hooks: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class WorldBibleUpdate(APIModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    summary: str | None = None
+    genre: str | None = None
+    tone: str | None = None
+    era: str | None = None
+    current_date_label: str | None = None
+    current_location: str | None = None
+    background: str | None = None
+    history: list[dict[str, Any]] | None = None
+    locations: list[dict[str, Any]] | None = None
+    factions: list[dict[str, Any]] | None = None
+    rules: list[dict[str, Any]] | None = None
+    taboos: list[dict[str, Any]] | None = None
+    current_arc: dict[str, Any] | None = None
+    plot_hooks: list[dict[str, Any]] | None = None
+
+
+class WorldTimelineEventOut(APIModel):
+    id: str
+    world_id: str
+    type: TimelineEventType = "history"
+    title: str
+    summary: str = ""
+    date_label: str = ""
+    order: int = 0
+    source: TimelineEventSource = "user"
+    status: TimelineEventStatus = "committed"
+    scene_id: str | None = None
+    seal_draft_id: str | None = None
+    related_character_ids: list[str] = Field(default_factory=list)
+    related_location_ids: list[str] = Field(default_factory=list)
+    related_faction_ids: list[str] = Field(default_factory=list)
+    related_memory_ids: list[str] = Field(default_factory=list)
+    related_relationship_ids: list[str] = Field(default_factory=list)
+    related_hook_ids: list[str] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+
+
+class WorldTimelineEventCreate(APIModel):
+    type: TimelineEventType = "history"
+    title: str = Field(min_length=1, max_length=200)
+    summary: str = ""
+    date_label: str = ""
+    order: int | None = None
+    source: TimelineEventSource = "user"
+    status: TimelineEventStatus = "committed"
+    scene_id: str | None = None
+    related_character_ids: list[str] = Field(default_factory=list)
+    related_location_ids: list[str] = Field(default_factory=list)
+    related_faction_ids: list[str] = Field(default_factory=list)
+    related_memory_ids: list[str] = Field(default_factory=list)
+    related_relationship_ids: list[str] = Field(default_factory=list)
+    related_hook_ids: list[str] = Field(default_factory=list)
+
+
+class WorldTimelineEventUpdate(APIModel):
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True, extra="forbid")
+
+    type: TimelineEventType | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=200)
+    summary: str | None = None
+    date_label: str | None = None
+    order: int | None = None
+    source: TimelineEventSource | None = None
+    status: TimelineEventStatus | None = None
+    scene_id: str | None = None
+    related_character_ids: list[str] | None = None
+    related_location_ids: list[str] | None = None
+    related_faction_ids: list[str] | None = None
+    related_memory_ids: list[str] | None = None
+    related_relationship_ids: list[str] | None = None
+    related_hook_ids: list[str] | None = None
+
+
 # --- Scene (a Room within a World) --------------------------------------
 
 
@@ -1318,6 +1474,7 @@ class WorldCharacterMemoryOut(APIModel):
     id: str
     world_character_id: str
     source_scene_id: str | None = None
+    seal_draft_id: str | None = None
     scene_index_at_write: int | None = None
     in_world_time_at_event: str = ""
     kind: Literal["episode", "impression", "vow", "fact", "backstory"]
@@ -1400,6 +1557,7 @@ class WorldCharacterRelationOut(APIModel):
     sentiment: float = 0.0
     notes: str = ""
     last_updated_scene_id: str | None = None
+    last_updated_seal_draft_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -1427,6 +1585,59 @@ class WorldCharacterRelationUpdate(APIModel):
     label: str | None = Field(default=None, max_length=64)
     sentiment: float | None = Field(default=None, ge=-1.0, le=1.0)
     notes: str | None = Field(default=None, max_length=2000)
+
+
+class WorldMemoryOverviewOut(APIModel):
+    id: str
+    character_id: str
+    character_name: str
+    character_identity: str = ""
+    character_color: str = "#3b82f6"
+    character_icon: str = "Sparkles"
+    kind: Literal["episode", "impression", "vow", "fact", "backstory"]
+    content: str
+    source_scene_id: str | None = None
+    seal_draft_id: str | None = None
+    scene_index_at_write: int | None = None
+    in_world_time_at_event: str = ""
+    salience: float = 0.5
+    source: Literal["manual", "seal_committed", "migration"] = "manual"
+    status: Literal["committed"] = "committed"
+    locked: bool = False
+    created_at: datetime
+
+
+class WorldRelationshipEdgeOut(APIModel):
+    id: str
+    from_character_id: str
+    from_character_name: str
+    from_character_color: str = "#3b82f6"
+    from_character_icon: str = "Sparkles"
+    to_character_id: str
+    to_character_name: str
+    to_character_color: str = "#3b82f6"
+    to_character_icon: str = "Sparkles"
+    label: str = ""
+    sentiment: float = 0.0
+    notes: str = ""
+    last_updated_scene_id: str | None = None
+    last_updated_seal_draft_id: str | None = None
+    source: Literal["manual", "seal_committed", "migration"] = "manual"
+    status: Literal["committed"] = "committed"
+    updated_at: datetime
+
+
+class WorldStateOut(APIModel):
+    world: WorldDetailOut
+    bible: WorldBibleOut
+    scenes: list[SceneTimelineEntry] = Field(default_factory=list)
+    timeline_events: list[WorldTimelineEventOut] = Field(default_factory=list)
+    memories: list[WorldMemoryOverviewOut] = Field(default_factory=list)
+    relationships: list[WorldRelationshipEdgeOut] = Field(default_factory=list)
+    recent_scene: SceneTimelineEntry | None = None
+    open_scene: SceneTimelineEntry | None = None
+    unresolved_hooks_count: int = 0
+    recent_relationship_changes_count: int = 0
 
 
 # Resolve the forward reference in MemoryDistillation.
