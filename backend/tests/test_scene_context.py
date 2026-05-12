@@ -583,6 +583,35 @@ def test_as_character_id_requires_speak_as_user_enabled(client, discussant_perso
     assert "not enabled for user speech" in response.text
 
 
+def test_as_character_id_rejects_exited_user_character(client, discussant_personas):
+    world = _make_world(client)
+    user_character = _make_user_character(client, world["id"], name="柳青")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "退场扮演测试",
+            "members": [
+                {"world_character_id": user_character["id"], "speak_as_user": True}
+            ],
+        },
+    )
+    assert scene.status_code == 200, scene.text
+    scene_id = scene.json()["room"]["id"]
+    exit_resp = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": user_character["id"]},
+    )
+    assert exit_resp.status_code == 200, exit_resp.text
+
+    response = client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "我已经离场。", "as_character_id": user_character["id"]},
+    )
+
+    assert response.status_code == 422
+    assert "not currently on this scene's roster" in response.text
+
+
 def test_scene_runtime_context_prompt_composer_keeps_private_boundaries():
     now = datetime.now(timezone.utc)
     context = SceneContextOut(

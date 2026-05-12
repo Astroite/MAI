@@ -51,6 +51,7 @@ export interface PersonaInstance {
   icon: string;
   config: Record<string, unknown>;
   tags: string[];
+  world_character_id?: string | null;
 }
 
 export interface ApiProvider {

@@ -6,8 +6,10 @@ import {
   BookOpen,
   Drama,
   Gavel,
+  Clapperboard,
   MessageSquarePlus,
   Paperclip,
+  Play,
   SendHorizontal,
   UserRoundCheck
 } from "lucide-react";
@@ -15,17 +17,16 @@ import { api } from "../../api";
 import { useI18n } from "../../i18n";
 import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
-import type { PersonaInstance, WorldCharacter } from "../../types";
+import {
+  inferDirectorTargetPersona,
+  type StoryComposerContext,
+  type StoryComposerMode
+} from "./storyComposer";
+import type { PersonaInstance } from "../../types";
 
 type DiscussionMode = "normal" | "judge" | "dead_end" | "masquerade";
-type StoryMode = "narration" | "act_as";
 
 const DISCUSSION_MODES: DiscussionMode[] = ["normal", "judge", "dead_end", "masquerade"];
-
-export interface StoryComposerContext {
-  worldId: string;
-  userCharacters: WorldCharacter[];
-}
 
 export function Composer({
   roomId,
@@ -45,10 +46,11 @@ export function Composer({
   const [params, setParams] = useSearchParams();
   const [content, setContent] = useState("");
   const [discussionMode, setDiscussionMode] = useState<DiscussionMode>("normal");
-  const [storyMode, setStoryMode] = useState<StoryMode>("narration");
+  const [storyMode, setStoryMode] = useState<StoryComposerMode>("narration");
   const [actCharacterId, setActCharacterId] = useState<string | null>(
-    story?.userCharacters[0]?.id ?? null
+    story?.playableUserCharacters[0]?.id ?? null
   );
+  const [directorTargetPersonaId, setDirectorTargetPersonaId] = useState<string | null>(null);
   const [guestName, setGuestName] = useState(() => t("message.guest"));
   const [cursorPosition, setCursorPosition] = useState(0);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
@@ -59,15 +61,30 @@ export function Composer({
   // user adds new user character mid-scene, etc).
   useEffect(() => {
     if (!story) return;
-    if (story.userCharacters.length === 0) {
+    if (story.playableUserCharacters.length === 0) {
       setActCharacterId(null);
       if (storyMode === "act_as") setStoryMode("narration");
       return;
     }
-    if (!actCharacterId || !story.userCharacters.find((c) => c.id === actCharacterId)) {
-      setActCharacterId(story.userCharacters[0].id);
+    if (!actCharacterId || !story.playableUserCharacters.find((c) => c.id === actCharacterId)) {
+      setActCharacterId(story.playableUserCharacters[0].id);
     }
   }, [story, actCharacterId, storyMode]);
+
+  useEffect(() => {
+    if (!story) return;
+    if (story.presentAiPersonas.length === 0) {
+      setDirectorTargetPersonaId(null);
+      if (storyMode === "director") setStoryMode("narration");
+      return;
+    }
+    if (
+      directorTargetPersonaId &&
+      !story.presentAiPersonas.find((persona) => persona.id === directorTargetPersonaId)
+    ) {
+      setDirectorTargetPersonaId(story.presentAiPersonas[0].id);
+    }
+  }, [story, directorTargetPersonaId, storyMode]);
 
   const openUploadPanel = () => {
     const next = new URLSearchParams(params);
@@ -81,7 +98,14 @@ export function Composer({
         if (storyMode === "narration") {
           return api.appendMessage(roomId, content, { message_type: "narration" });
         }
-        // act_as
+        if (storyMode === "director") {
+          const target = inferDirectorTargetPersona(
+            content,
+            directorTargetPersonaId,
+            story.presentAiPersonas
+          );
+          return api.runTurn(roomId, target?.id);
+        }
         return api.appendMessage(roomId, content, { as_character_id: actCharacterId });
       }
       if (discussionMode === "judge") return api.verdict(roomId, content, true);
@@ -175,18 +199,51 @@ export function Composer({
     }
     if (event.key === "Enter" && !event.shiftKey && !isComposingIme(event)) {
       event.preventDefault();
-      if (!frozen && content.trim() && !submit.isPending) submit.mutate();
+      if (!submitDisabled) submit.mutate();
     }
   };
 
   const modeIcon = (m: DiscussionMode) =>
     m === "judge" ? <Gavel size={14} /> : m === "dead_end" ? <Ban size={14} /> : m === "masquerade" ? <UserRoundCheck size={14} /> : <MessageSquarePlus size={14} />;
 
-  const canActAs = story && story.userCharacters.length > 0;
+  const canActAs = story && story.playableUserCharacters.length > 0;
+  const canDirect = story && story.presentAiPersonas.length > 0;
   const activeActCharacter =
     story && actCharacterId
-      ? story.userCharacters.find((c) => c.id === actCharacterId) ?? null
+      ? story.playableUserCharacters.find((c) => c.id === actCharacterId) ?? null
       : null;
+  const directorTarget =
+    story && storyMode === "director"
+      ? inferDirectorTargetPersona(content, directorTargetPersonaId, story.presentAiPersonas)
+      : null;
+  const storyModeUnavailable = story
+    ? storyMode === "act_as" && !canActAs
+      ? t("composer.story.actAsUnavailable")
+      : storyMode === "director" && !canDirect
+        ? t("composer.story.directorUnavailable")
+        : ""
+    : "";
+  const submitDisabled =
+    frozen ||
+    submit.isPending ||
+    (story
+      ? storyMode === "director"
+        ? !canDirect
+        : storyMode === "act_as"
+          ? !content.trim() || !activeActCharacter
+        : !content.trim()
+      : !content.trim());
+  const submitLabel = story
+    ? storyMode === "narration"
+      ? t("composer.story.writeNarration")
+      : storyMode === "act_as"
+        ? activeActCharacter
+          ? t("composer.story.speakAs", { name: activeActCharacter.name })
+          : t("composer.story.actAs")
+        : directorTarget
+          ? t("composer.story.directResponse")
+          : t("composer.story.nextBeat")
+    : t("composer.send");
 
   return (
     <div className="flex-shrink-0 border-t border-border/80 bg-panel px-5 py-4 shadow-card max-sm:px-3">
@@ -229,9 +286,29 @@ export function Composer({
                 <Drama size={14} />
                 <span>{t("composer.story.actAs")}</span>
               </button>
-              {storyMode === "act_as" && story && story.userCharacters.length > 0 && (
+              <button
+                type="button"
+                className={`inline-flex h-8 items-center gap-1.5 rounded px-2 text-xs font-medium transition ${
+                  storyMode === "director"
+                    ? "bg-panel text-brand shadow-card"
+                    : canDirect
+                      ? "text-muted hover:text-text"
+                      : "text-muted/50"
+                }`}
+                onClick={() => canDirect && setStoryMode("director")}
+                disabled={frozen || !canDirect}
+                title={
+                  canDirect
+                    ? t("composer.story.directorTitle")
+                    : t("composer.story.directorUnavailableTitle")
+                }
+              >
+                <Clapperboard size={14} />
+                <span>{t("composer.story.director")}</span>
+              </button>
+              {storyMode === "act_as" && story && story.playableUserCharacters.length > 0 && (
                 <div className="ml-1 flex items-center gap-1 border-l border-border/80 pl-2">
-                  {story.userCharacters.map((character) => {
+                  {story.playableUserCharacters.map((character) => {
                     const active = character.id === actCharacterId;
                     return (
                       <button
@@ -246,6 +323,40 @@ export function Composer({
                       >
                         <PersonaIcon icon={character.icon} color={character.color} size={18} />
                         <span>{character.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+              {storyMode === "director" && story && story.presentAiPersonas.length > 0 && (
+                <div className="ml-1 flex items-center gap-1 border-l border-border/80 pl-2">
+                  <button
+                    type="button"
+                    className={`inline-flex h-7 items-center gap-1.5 rounded px-1.5 text-xs transition ${
+                      directorTargetPersonaId === null ? "bg-brand/15 text-brand" : "text-muted hover:text-text"
+                    }`}
+                    onClick={() => setDirectorTargetPersonaId(null)}
+                    disabled={frozen}
+                    title={t("composer.story.nextBeatTitle")}
+                  >
+                    <Play size={13} />
+                    <span>{t("composer.story.nextBeat")}</span>
+                  </button>
+                  {story.presentAiPersonas.map((persona) => {
+                    const active = persona.id === directorTargetPersonaId;
+                    return (
+                      <button
+                        key={persona.id}
+                        type="button"
+                        className={`inline-flex h-7 items-center gap-1.5 rounded px-1.5 text-xs transition ${
+                          active ? "bg-brand/15 text-brand" : "text-muted hover:text-text"
+                        }`}
+                        onClick={() => setDirectorTargetPersonaId(persona.id)}
+                        disabled={frozen}
+                        title={persona.identity || persona.name}
+                      >
+                        <PersonaIcon icon={persona.icon} color={persona.color} size={18} />
+                        <span>{persona.name}</span>
                       </button>
                     );
                   })}
@@ -291,6 +402,9 @@ export function Composer({
             <span>{t("composer.attach")}</span>
           </button>
         </div>
+        {storyModeUnavailable && (
+          <div className="mt-2 text-xs text-muted">{storyModeUnavailable}</div>
+        )}
         <div className="mt-3 flex items-end gap-2 max-sm:flex-col max-sm:items-stretch">
           <div className="relative flex-1">
             {mentionPanelOpen && (
@@ -356,19 +470,25 @@ export function Composer({
                   ? t("composer.sealedPlaceholder")
                   : frozen
                     ? t("composer.frozenPlaceholder")
-                    : t("composer.placeholder")
+                    : story
+                      ? storyMode === "narration"
+                        ? t("composer.story.narrationPlaceholder")
+                        : storyMode === "act_as"
+                          ? t("composer.story.actAsPlaceholder")
+                          : t("composer.story.directorPlaceholder")
+                      : t("composer.placeholder")
               }
               disabled={frozen}
             />
           </div>
           <button
             className="btn btn-primary h-10 rounded-full px-5 text-sm max-sm:w-full max-sm:rounded-md"
-            disabled={frozen || !content.trim() || submit.isPending}
+            disabled={submitDisabled}
             onClick={() => submit.mutate()}
             title={submit.isPending ? t("composer.sending") : t("composer.enterHint")}
           >
             <SendHorizontal size={16} />
-            {submit.isPending ? t("composer.sending") : t("composer.send")}
+            {submit.isPending ? t("composer.sending") : submitLabel}
           </button>
         </div>
       </div>
