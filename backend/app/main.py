@@ -1773,7 +1773,12 @@ async def run_turn(room_id: str, body: TurnRequest, session: AsyncSession = Depe
     room, runtime = await _room_runtime_or_404(session, room_id)
     _ensure_room_writable(room, runtime)
     try:
-        messages = await run_room_turn(session, room_id, body.speaker_persona_id)
+        messages = await run_room_turn(
+            session,
+            room_id,
+            body.speaker_persona_id,
+            director_instruction=body.director_instruction,
+        )
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
     return messages

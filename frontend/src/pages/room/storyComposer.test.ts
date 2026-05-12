@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildStoryComposerContext, inferDirectorTargetPersona } from "./storyComposer";
+import {
+  buildStoryComposerContext,
+  directorInstructionForTurn,
+  inferDirectorTargetPersona
+} from "./storyComposer";
 import type { PersonaInstance, WorldCharacter, WorldSceneMember } from "../../types";
 
 const character = (patch: Partial<WorldCharacter> & Pick<WorldCharacter, "id" | "kind" | "name">) =>
@@ -84,18 +88,26 @@ describe("buildStoryComposerContext", () => {
     expect(context?.playableUserCharacters.map((item) => item.id)).toEqual(["user-playable"]);
   });
 
-  it("only exposes present AI personas as director targets", () => {
+  it("only exposes present auto-reply AI personas as director targets", () => {
     const characters = [
       character({ id: "ai-present", kind: "ai", name: "苏离" }),
-      character({ id: "ai-exited", kind: "ai", name: "阿照" })
+      character({ id: "ai-exited", kind: "ai", name: "阿照" }),
+      character({ id: "ai-paused", kind: "ai", name: "沈岚" })
     ];
     const members = [
       member({ world_character_id: "ai-present" }),
-      member({ world_character_id: "ai-exited", exited_at_message_id: "exit-1" })
+      member({ world_character_id: "ai-exited", exited_at_message_id: "exit-1" }),
+      member({ world_character_id: "ai-paused" })
     ];
     const personas = [
       persona({ id: "persona-present", name: "苏离", world_character_id: "ai-present" }),
       persona({ id: "persona-exited", name: "阿照", world_character_id: "ai-exited" }),
+      persona({
+        id: "persona-paused",
+        name: "沈岚",
+        world_character_id: "ai-paused",
+        config: { auto_reply_enabled: false }
+      }),
       persona({ id: "persona-unbound", name: "旁白", world_character_id: null })
     ];
 
@@ -117,5 +129,15 @@ describe("inferDirectorTargetPersona", () => {
 
   it("can infer a target from the local director instruction", () => {
     expect(inferDirectorTargetPersona("让苏离回应阿照刚才的问题。", null, targets)?.id).toBe("su-li");
+  });
+});
+
+describe("directorInstructionForTurn", () => {
+  it("trims non-empty director instruction text", () => {
+    expect(directorInstructionForTurn("  临时压低声音  ")).toBe("临时压低声音");
+  });
+
+  it("omits empty director instruction text", () => {
+    expect(directorInstructionForTurn("   ")).toBeUndefined();
   });
 });

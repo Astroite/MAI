@@ -468,6 +468,7 @@ export function RoomShell() {
               personas={state.personas.filter((p) => p.kind === "discussant")}
               frozen={state.runtime.frozen}
               sealed={sceneSealed}
+              isScene={isScene}
             />
             <MessageList
               roomId={activeRoomId}

@@ -918,6 +918,176 @@ def test_scene_runtime_context_failure_falls_back_to_legacy_prompt(
     assert response.json()[0]["content"] == "fallback ok"
 
 
+def test_ephemeral_director_instruction_prompt_contract():
+    prompt = engine_module.append_ephemeral_director_instruction(
+        "Scene facts stay above.",
+        "隐瞒密信下落，含糊回应。",
+    )
+
+    assert "【临时导演指令 / Ephemeral Director Instruction】" in prompt
+    assert "隐瞒密信下落，含糊回应。" in prompt
+    assert "不是故事事实" in prompt
+    assert "not a fact in the story world" in prompt
+    assert "only play yourself" in prompt
+
+
+def test_scene_turn_injects_ephemeral_director_instruction_for_specified_speaker(
+    client, discussant_personas, monkeypatch
+):
+    ctx = _make_context_scene(client, discussant_personas)
+    instruction = "隐瞒自己知道密信下落这件事，含糊回应阿照。"
+    captured: list[str] = []
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured.append(kwargs.get("scene_context_prompt", "missing"))
+        yield type("Chunk", (), {"text": "我还需要再确认。", "index": 0})()
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+    before_messages = client.get(f"/rooms/{ctx['scene_id']}/state").json()["messages"]
+
+    response = client.post(
+        f"/rooms/{ctx['scene_id']}/turn",
+        json={
+            "speaker_persona_id": ctx["speaker_persona_id"],
+            "director_instruction": instruction,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["content"] == "我还需要再确认。"
+    assert captured
+    prompt = captured[0]
+    assert "【临时导演指令 / Ephemeral Director Instruction】" in prompt
+    assert instruction in prompt
+    assert "不是故事事实" in prompt
+    assert "not a fact in the story world" in prompt
+    after_messages = client.get(f"/rooms/{ctx['scene_id']}/state").json()["messages"]
+    assert len(after_messages) == len(before_messages) + 1
+    assert all(message["content"] != instruction for message in after_messages)
+
+
+def test_scene_next_beat_injects_ephemeral_director_instruction(
+    client, discussant_personas, monkeypatch
+):
+    ctx = _make_context_scene(client, discussant_personas)
+    instruction = "下一拍让在场角色压低声音，不要暴露密信。"
+    captured: list[str] = []
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured.append(kwargs.get("scene_context_prompt", "missing"))
+        yield type("Chunk", (), {"text": "风声里，有人放低了声音。", "index": 0})()
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+
+    response = client.post(
+        f"/rooms/{ctx['scene_id']}/turn",
+        json={"director_instruction": instruction},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["content"] == "风声里，有人放低了声音。"
+    assert captured
+    assert instruction in captured[0]
+    assert "Ephemeral Director Instruction" in captured[0]
+
+
+def test_discussion_room_ignores_ephemeral_director_instruction(
+    client, discussant_personas, monkeypatch
+):
+    captured: list[str] = []
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured.append(kwargs.get("scene_context_prompt", "missing"))
+        yield type("Chunk", (), {"text": "普通讨论回复", "index": 0})()
+
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+    room = client.post(
+        "/rooms",
+        json={"title": "普通讨论导演指令忽略测试", "persona_ids": [discussant_personas[0]["id"]]},
+    ).json()
+    speaker_id = next(p["id"] for p in room["personas"] if p["template_id"] == discussant_personas[0]["id"])
+
+    response = client.post(
+        f"/rooms/{room['room']['id']}/turn",
+        json={
+            "speaker_persona_id": speaker_id,
+            "director_instruction": "这段不应进入普通讨论 prompt。",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert captured == [""]
+    assert "这段不应进入普通讨论 prompt。" not in response.json()[0]["content"]
+
+
+def test_context_fallback_keeps_ephemeral_director_instruction(
+    client, discussant_personas, monkeypatch
+):
+    ctx = _make_context_scene(client, discussant_personas)
+    instruction = "即使 Scene Context 构建失败，也要保留这次导演意图。"
+    captured: list[str] = []
+
+    async def failing_builder(session, scene, speaker_persona_id=None):
+        raise RuntimeError("pytest forced context failure")
+
+    async def capture_stream(
+        persona,
+        context,
+        phase,
+        max_tokens,
+        scribe_state=None,
+        api_provider=None,
+        **kwargs,
+    ):
+        captured.append(kwargs.get("scene_context_prompt", "missing"))
+        yield type("Chunk", (), {"text": "fallback with director ok", "index": 0})()
+
+    monkeypatch.setattr(engine_module, "build_scene_context", failing_builder)
+    monkeypatch.setattr(llm_adapter, "stream", capture_stream)
+    monkeypatch.setattr(engine_module.llm_adapter, "stream", capture_stream)
+
+    response = client.post(
+        f"/rooms/{ctx['scene_id']}/turn",
+        json={
+            "speaker_persona_id": ctx["speaker_persona_id"],
+            "director_instruction": instruction,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()[0]["content"] == "fallback with director ok"
+    assert captured
+    assert instruction in captured[0]
+    assert "Ephemeral Director Instruction" in captured[0]
+
+
 def test_runtime_context_does_not_break_seal_draft_commit(client):
     world = _make_world(client)
     user_character = _make_user_character(client, world["id"], name="柳青")

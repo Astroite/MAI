@@ -27,6 +27,7 @@ export function buildStoryComposerContext(
   });
   const presentAiPersonas = personas.filter((persona) => {
     if (persona.kind !== "discussant" || !persona.world_character_id) return false;
+    if ((persona.config?.auto_reply_enabled ?? true) === false) return false;
     const character = characterById.get(persona.world_character_id);
     return character?.kind === "ai" && activeMemberByCharacterId.has(character.id);
   });
@@ -50,4 +51,9 @@ export function inferDirectorTargetPersona(
       return normalized.includes(name) || (identity.length > 0 && normalized.includes(identity));
     }) ?? null
   );
+}
+
+export function directorInstructionForTurn(content: string): string | undefined {
+  const trimmed = content.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
