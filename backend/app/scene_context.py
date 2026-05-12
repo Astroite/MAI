@@ -1,7 +1,7 @@
 """Read-only Scene context aggregation.
 
-P1.1 intentionally does not feed this context into LLM runtime calls. The
-builder is a preview/contract layer for future runtime injection and stage UI.
+The builder is a shared contract layer for Scene Context API preview, runtime
+prompt injection, and upcoming stage UI.
 """
 
 from __future__ import annotations
@@ -359,11 +359,11 @@ async def _speaker_context(
     if member.entered_at_message_id is None:
         visibility.notes.append("speaker is visible from scene open")
     else:
-        visibility.notes.append("future runtime should start transcript at speaker entry")
+        visibility.notes.append("runtime transcript starts at speaker entry")
     if member.exited_at_message_id is None:
         visibility.notes.append("speaker is currently present")
     else:
-        visibility.notes.append("speaker has exited; future runtime should stop at exit")
+        visibility.notes.append("speaker has exited; runtime transcript stops at exit")
     visibility.notes.append("narration is visible when it falls inside the presence interval")
 
     active_peer_ids = [
