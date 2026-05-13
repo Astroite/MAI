@@ -136,12 +136,11 @@ MAI 把模型配置拆成两层：
 
 ```text
 persona_instance.api_model_id
-  -> persona_template.api_model_id
   -> app_settings.default_api_model_id
   -> legacy backing_model + api_provider_id（兼容旧数据）
 ```
 
-新写入只保存 `api_model_id`。`backing_model` / `api_provider_id` 旧字段保留用于老数据库回退，不再作为新模型选择的镜像。
+人设模板的 `api_model_id` 在创建房间或 Scene 时复制到 `PersonaInstance`；运行时不会再回读模板。新写入只保存 `api_model_id`。`backing_model` / `api_provider_id` 旧字段保留用于老数据库回退，不再作为新模型选择的镜像。
 
 ## 4. 模板管理
 

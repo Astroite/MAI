@@ -76,3 +76,7 @@ explained.
   rewriting old dialogue.
 - Before deleting rooms/scenes, drain active calls so background tasks cannot
   write after the owning runtime has been removed.
+- Because `rooms.world_id` is a nullable scene discriminator rather than a
+  database FK, deleting a World must explicitly drain/delete its Scene rooms and
+  their room-runtime dependents. Do not rely on database cascade for Scene
+  cleanup.

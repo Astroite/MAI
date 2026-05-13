@@ -223,3 +223,4 @@ World Detail 的 P0 主控台能力：
 - **R2 修改 core_identity 是否回算 episodic**：不回算，记忆是历史事实。UI 提示。
 - **R3 删除 character**：软删除（`status=retired`），关系卡片保留。
 - **R4 PersonaTemplate 升级污染**：`WorldCharacter` 已拷贝 color / icon / identity；动态依赖只剩 `system_prompt`。`persona_template_version` 字段为后续「是否同步新版」提示留位。
+- **R5 World 删除级联实现缺口**：产品语义仍是删除 World 时级联删除 Scene 与 Character；2026-05-13 review 发现后端当前 `DELETE /worlds/{wid}` 尚未显式清理 `rooms.world_id` Scene。修复前，带 Scene 的 World 删除属于 P1 风险。

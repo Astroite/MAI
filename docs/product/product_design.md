@@ -57,10 +57,11 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 
 调用模型时的产品语义：
 
-1. 房间内人设实例绑定的模型优先。
-2. 其次使用人设模板绑定的模型。
-3. 再使用设置页默认模型。
-4. 旧数据的 `backing_model + api_provider_id` 仅作为兼容回退。
+1. 房间内 `PersonaInstance.api_model_id` 绑定的模型优先。
+2. 未绑定时使用设置页 `AppSettings.default_api_model_id`。
+3. 旧数据的 `backing_model + api_provider_id` 仅作为兼容回退。
+
+人设模板上的模型选择会在创建房间或 Scene 时复制到房间内人设实例；之后修改模板只影响未来新建实例，不会回溯改写既有房间的模型路由。
 
 ## 5. 模板体验
 

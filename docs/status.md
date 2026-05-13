@@ -136,7 +136,7 @@ MAI 当前已从原型期进入稳定打磨期。核心闭环已经可用：
 ### 3.6 人设主题色与视觉一致性
 
 - `PersonaTemplate` / `PersonaInstance` 新增 `color`（hex）/ `icon`（lucide 名）字段，自愈列 `_ADDED_COLUMNS` 覆盖老库。
-- 12 个内置人设全部配上独特主题色（架构师=蓝、性能=橙、安全=红、反方=深红、研究=紫……）。
+- 25 个内置人设全部配上独特主题色（架构师=蓝、性能=橙、安全=红、反方=深红、研究=紫……）。
 - `frontend/src/components/PersonaIcon.tsx`：24 图标 + 15 色板的统一渲染，与后端 `schemas.PERSONA_ICON_NAMES` 严格对齐。
 - 人设卡片 / 头像 / 房间状态条 / 消息气泡都跟随同一主题色脉络。
 
@@ -209,6 +209,12 @@ P1 在 P0 Story World 基础上增加了 Scene 的运行时演出能力。详见
 - 新增 `docs/README.md` 作为文档地图，明确现行 source-of-truth、工程复盘和归档区边界。
 - 新增 `docs/engineering/refactor_issues_2026-05-11.md`，记录本轮重构暴露的 pause / freeze、runtime 多源状态、Story World 语义继承和文档过期问题。
 - 将早期 UI 概念图和一次性 Story World 首页实现 prompt 归档到 `docs/archive/design-concepts/`；`docs/design/` 只保留当前视觉规范 `ui_brief.md`。
+
+### 3.14 2026-05-13 深度 Review / 文档归并
+
+- 新增 [`review/2026-05-13/product_shape_deep_review.md`](review/2026-05-13/product_shape_deep_review.md)，记录本次产品形态 review、已关闭的 2026-05-12 高优先项，以及仍开放的 World / Scene 删除语义风险。
+- 统一模型回退链文档：运行时为 `PersonaInstance.api_model_id -> AppSettings.default_api_model_id -> legacy backing_model + api_provider_id`；模板模型只在创建房间或 Scene 时复制到实例。
+- 标记 P1 风险：`DELETE /worlds/{world_id}` 当前不会显式清理 `rooms.world_id` Scene；Scene hard delete 也需要与 sealed provenance 语义重新对齐。
 
 ## 4. 后端完成点
 
