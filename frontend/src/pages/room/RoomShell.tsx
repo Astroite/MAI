@@ -19,6 +19,7 @@ import {
   Plus,
   Save,
   Scale,
+  ScanEye,
   Scroll,
   Settings2,
   Shield,
@@ -42,7 +43,7 @@ import { Composer } from "./Composer";
 import { PhaseExitBanner } from "./PhaseExitBanner";
 import { RoomSettingsDrawer } from "./RoomSettingsDrawer";
 import { SealResultsDialog } from "./SealResultsDialog";
-import { SceneStageConsole } from "./SceneStageConsole";
+import type { SceneStagePanelData } from "./SceneStagePanel";
 import { buildStoryComposerContext } from "./storyComposer";
 import { buildStagePresenceView } from "./stagePresence";
 import { useI18n } from "../../i18n";
@@ -240,6 +241,28 @@ export function RoomShell() {
     queryFn: () => api.sceneContext(activeRoomId!, selectedSpeakerPersonaId),
     enabled: Boolean(isScene && activeRoomId && selectedSpeakerPersonaId)
   });
+  const sceneStage = useMemo<SceneStagePanelData | null>(
+    () =>
+      stagePresenceView
+        ? {
+            view: stagePresenceView,
+            selectedStageCharacterId: selectedStageCharacter?.id ?? null,
+            speakerContext: selectedSceneCueQuery.data?.speaker,
+            stageLoading: sceneContextQuery.isLoading,
+            stageCueLoading: selectedSceneCueQuery.isLoading,
+            stageContextError: sceneContextQuery.isError,
+            onSelectStageCharacter: setSelectedStageCharacterId
+          }
+        : null,
+    [
+      sceneContextQuery.isError,
+      sceneContextQuery.isLoading,
+      selectedSceneCueQuery.data?.speaker,
+      selectedSceneCueQuery.isLoading,
+      selectedStageCharacter?.id,
+      stagePresenceView
+    ]
+  );
 
   const currentPhaseTemplate = phases.data?.find(
     (phase) => phase.id === state?.current_phase?.phase_template_id
@@ -313,12 +336,14 @@ export function RoomShell() {
                   <StatusPill tone={state.room.status === "frozen" ? "danger" : "brand"} dot>
                     {display("roomStatus", state.room.status)}
                   </StatusPill>
-                  <span>{t("room.roomId", { id: shortId(state.room.id) })}</span>
-                  <span className="hidden items-center gap-1 sm:inline-flex">
-                    <CalendarDays size={12} />
-                    {t("room.createdAt", { date: formatDateTime(state.room.created_at, locale) })}
-                  </span>
-                  {currentPhaseTemplate && (
+                  {!isScene && <span>{t("room.roomId", { id: shortId(state.room.id) })}</span>}
+                  {!isScene && (
+                    <span className="hidden items-center gap-1 sm:inline-flex">
+                      <CalendarDays size={12} />
+                      {t("room.createdAt", { date: formatDateTime(state.room.created_at, locale) })}
+                    </span>
+                  )}
+                  {!isScene && currentPhaseTemplate && (
                     <button
                       type="button"
                       className="text-muted underline hover:text-brand"
@@ -327,7 +352,13 @@ export function RoomShell() {
                       {t("room.phase", { name: currentPhaseTemplate.name })}
                     </button>
                   )}
-                  <span>{t("room.members", { count: state.personas.filter((p) => p.kind === "discussant").length })}</span>
+                  {!isScene && (
+                    <span>
+                      {t("room.members", {
+                        count: state.personas.filter((p) => p.kind === "discussant").length
+                      })}
+                    </span>
+                  )}
                   {state.room.parent_room_id && <StatusPill tone="accent">{t("room.childRoom")}</StatusPill>}
                   {isScene && (
                     <Link
@@ -338,6 +369,11 @@ export function RoomShell() {
                       <BookOpen size={12} />
                       {t("room.scene.act", { n: state.room.scene_index })}
                     </Link>
+                  )}
+                  {isScene && state.runtime.frozen && state.room.status !== "frozen" && (
+                    <StatusPill tone="warning" dot>
+                      {t("speaker.state.frozen")}
+                    </StatusPill>
                   )}
                   {state.room.sealed_at && (
                     <StatusPill tone="success" dot>
@@ -352,7 +388,9 @@ export function RoomShell() {
                     the 4 primary shortcuts show, the rest fold into the
                     Settings drawer's tab list. */}
                 <div className="hidden max-xl:flex max-xl:items-center max-xl:gap-1 xl:hidden">
-                  {PANEL_SHORTCUTS.filter((entry) => !(isScene && entry.discussionOnly)).map((entry, index) => (
+                  {PANEL_SHORTCUTS.filter(
+                    (entry) => !(isScene && entry.discussionOnly) && !(!isScene && entry.sceneOnly)
+                  ).map((entry, index) => (
                     <button
                       key={entry.key}
                       className={`btn h-9 w-9 px-0 ${index >= 4 ? "max-md:hidden" : ""}`}
@@ -427,17 +465,6 @@ export function RoomShell() {
               </div>
             </header>
             <ConnectionBanner />
-            {isScene && stagePresenceView && (
-              <SceneStageConsole
-                view={stagePresenceView}
-                selectedCharacterId={selectedStageCharacter?.id ?? null}
-                speakerContext={selectedSceneCueQuery.data?.speaker}
-                loading={sceneContextQuery.isLoading}
-                cueLoading={selectedSceneCueQuery.isLoading}
-                contextError={sceneContextQuery.isError}
-                onSelectCharacter={setSelectedStageCharacterId}
-              />
-            )}
             <CollapsiblePhaseOverview
               roomId={activeRoomId!}
               steps={phaseSteps}
@@ -447,6 +474,7 @@ export function RoomShell() {
               background={state.room.background ?? ""}
               frozen={roomReadOnly}
               onEditPhase={() => openSettings("phase")}
+              defaultCollapsed={isScene}
             />
             {state.runtime.phase_exit_suggested && (
               <PhaseExitBanner
@@ -489,13 +517,13 @@ export function RoomShell() {
 
       <div className="min-h-0 overflow-hidden border-l border-border/70 max-xl:hidden">
         {state ? (
-          <RightPanel state={state} childRooms={childRooms} />
+          <RightPanel state={state} childRooms={childRooms} sceneStage={sceneStage} />
         ) : (
           <aside className="h-full border-l border-border bg-panel" />
         )}
       </div>
 
-      {state && <RoomSettingsDrawer state={state} childRooms={childRooms} />}
+      {state && <RoomSettingsDrawer state={state} childRooms={childRooms} sceneStage={sceneStage} />}
       <SealResultsDialog
         roomId={activeRoomId}
         draft={sealDraft}
@@ -520,14 +548,15 @@ export function RoomShell() {
 }
 
 const PANEL_SHORTCUTS = [
-  { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen, discussionOnly: true },
-  { key: "decisions", labelKey: "room.panel.decisions", icon: Scale, discussionOnly: true },
-  { key: "tools", labelKey: "room.panel.tools", icon: Wrench, discussionOnly: false },
-  { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield, discussionOnly: true },
-  { key: "phase", labelKey: "room.panel.phase", icon: Layers, discussionOnly: false },
-  { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus, discussionOnly: true },
-  { key: "upload", labelKey: "room.panel.upload", icon: FileText, discussionOnly: false },
-  { key: "limits", labelKey: "room.panel.limits", icon: Settings2, discussionOnly: false }
+  { key: "stage", labelKey: "room.panel.stage", icon: ScanEye, discussionOnly: false, sceneOnly: true },
+  { key: "scribe", labelKey: "room.panel.scribe", icon: BookOpen, discussionOnly: true, sceneOnly: false },
+  { key: "decisions", labelKey: "room.panel.decisions", icon: Scale, discussionOnly: true, sceneOnly: false },
+  { key: "tools", labelKey: "room.panel.tools", icon: Wrench, discussionOnly: false, sceneOnly: false },
+  { key: "facilitator", labelKey: "room.panel.facilitator", icon: Shield, discussionOnly: true, sceneOnly: false },
+  { key: "phase", labelKey: "room.panel.phase", icon: Layers, discussionOnly: false, sceneOnly: false },
+  { key: "subroom", labelKey: "room.panel.subroom", icon: GitBranchPlus, discussionOnly: true, sceneOnly: false },
+  { key: "upload", labelKey: "room.panel.upload", icon: FileText, discussionOnly: false, sceneOnly: false },
+  { key: "limits", labelKey: "room.panel.limits", icon: Settings2, discussionOnly: false, sceneOnly: false }
 ] as const;
 
 function shortId(id: string): string {
@@ -552,9 +581,14 @@ function CollapsiblePhaseOverview(props: {
   background: string;
   frozen: boolean;
   onEditPhase: () => void;
+  defaultCollapsed?: boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(props.defaultCollapsed ?? false);
   const { t } = useI18n();
+
+  useEffect(() => {
+    setCollapsed(props.defaultCollapsed ?? false);
+  }, [props.defaultCollapsed, props.roomId]);
 
   return (
     <div className="flex-shrink-0 border-b border-border/80 bg-surface">

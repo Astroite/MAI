@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { Room, RoomState } from "../../types";
 import { MembersSidebar } from "./MembersSidebar";
+import { SceneStagePanel, type SceneStagePanelData } from "./SceneStagePanel";
 import { PhasePlanPanel } from "./panels/PhasePlanPanel";
 import { LimitPanel } from "./panels/LimitPanel";
 import { ScribePanel } from "./panels/ScribePanel";
@@ -32,7 +33,15 @@ type SummaryKey = "scribe" | "decisions" | "facilitator" | "phase";
 type CollapsibleKey = "tools" | "upload" | "subroom" | "limits";
 type AnyKey = SummaryKey | CollapsibleKey;
 
-export function RightPanel({ state, childRooms }: { state: RoomState; childRooms: Room[] }) {
+export function RightPanel({
+  state,
+  childRooms,
+  sceneStage
+}: {
+  state: RoomState;
+  childRooms: Room[];
+  sceneStage?: SceneStagePanelData | null;
+}) {
   const [params, setParams] = useSearchParams();
   const { t } = useI18n();
   const expandedKey = params.get("panel") as AnyKey | null;
@@ -65,7 +74,17 @@ export function RightPanel({ state, childRooms }: { state: RoomState; childRooms
 
   return (
     <aside className="mai-scrollbar flex h-full min-h-0 flex-col overflow-y-auto bg-panel">
-      <MembersSidebar roomId={state.room.id} personas={state.personas} compact />
+      {isScene ? (
+        sceneStage ? (
+          <SceneStagePanel {...sceneStage} />
+        ) : (
+          <div className="border-b border-border/80 bg-panel px-4 py-4 text-sm text-muted">
+            {t("room.stage.loading")}
+          </div>
+        )
+      ) : (
+        <MembersSidebar roomId={state.room.id} personas={state.personas} compact />
+      )}
 
       <div className="flex flex-col gap-3 px-3 py-3">
         {!isScene && (

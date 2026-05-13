@@ -2,6 +2,7 @@ import { useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import { X } from "lucide-react";
 import type { Room, RoomState } from "../../types";
+import { SceneStagePanel, type SceneStagePanelData } from "./SceneStagePanel";
 import { PhasePlanPanel } from "./panels/PhasePlanPanel";
 import { LimitPanel } from "./panels/LimitPanel";
 import { ScribePanel } from "./panels/ScribePanel";
@@ -14,6 +15,7 @@ import { useI18n } from "../../i18n";
 import { isSceneRoom } from "../../utils/scene";
 
 const TABS = [
+  { key: "stage", labelKey: "room.panel.stage" },
   { key: "phase", labelKey: "room.panel.phase" },
   { key: "limits", labelKey: "room.panel.limits" },
   { key: "scribe", labelKey: "room.panel.scribe" },
@@ -26,13 +28,16 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 const DISCUSSION_ONLY_TABS = new Set<TabKey>(["scribe", "facilitator", "decisions", "subroom"]);
+const SCENE_ONLY_TABS = new Set<TabKey>(["stage"]);
 
 export function RoomSettingsDrawer({
   state,
-  childRooms
+  childRooms,
+  sceneStage
 }: {
   state: RoomState;
   childRooms: Room[];
+  sceneStage?: SceneStagePanelData | null;
 }) {
   const [params, setParams] = useSearchParams();
   const { t } = useI18n();
@@ -41,13 +46,19 @@ export function RoomSettingsDrawer({
   const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
   const isScene = isSceneRoom(state.room);
   const visibleTabs = useMemo(
-    () => TABS.filter((entry) => !(isScene && DISCUSSION_ONLY_TABS.has(entry.key))),
+    () =>
+      TABS.filter((entry) => {
+        if (!isScene && SCENE_ONLY_TABS.has(entry.key)) return false;
+        if (isScene && DISCUSSION_ONLY_TABS.has(entry.key)) return false;
+        return true;
+      }),
     [isScene]
   );
   const tab: TabKey = useMemo(() => {
     const candidate = settingsParam as TabKey | null;
-    return visibleTabs.some((entry) => entry.key === candidate) ? (candidate as TabKey) : "phase";
-  }, [settingsParam, visibleTabs]);
+    const fallback = isScene ? "stage" : "phase";
+    return visibleTabs.some((entry) => entry.key === candidate) ? (candidate as TabKey) : fallback;
+  }, [isScene, settingsParam, visibleTabs]);
 
   const close = () => {
     const next = new URLSearchParams(params);
@@ -104,6 +115,13 @@ export function RoomSettingsDrawer({
           ))}
         </nav>
         <div className="min-h-0 flex-1 overflow-auto p-4">
+          {isScene && tab === "stage" && (
+            sceneStage ? (
+              <SceneStagePanel {...sceneStage} className="section bg-panel p-3" />
+            ) : (
+              <div className="section p-3 text-sm text-muted">{t("room.stage.loading")}</div>
+            )
+          )}
           {tab === "phase" && <PhasePlanPanel state={state} />}
           {tab === "limits" && <LimitPanel roomId={state.room.id} runtime={state.runtime} readOnly={readOnly} />}
           {!isScene && tab === "scribe" && <ScribePanel state={state.scribe_state.current_state} />}
