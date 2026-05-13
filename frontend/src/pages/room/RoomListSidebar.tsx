@@ -86,11 +86,11 @@ export function RoomListSidebar({ activeRoomId }: { activeRoomId?: string }) {
     const all = (rooms.data ?? []).filter((room) => !room.parent_room_id);
     if (activeWorldId) {
       return all
-        .filter((room) => isSceneRoom(room) && room.world_id === activeWorldId)
+        .filter((room) => isSceneRoom(room) && room.world_id === activeWorldId && room.status !== "archived")
         .sort((a, b) => (a.scene_index ?? 0) - (b.scene_index ?? 0));
     }
     return all
-      .filter((room) => !isSceneRoom(room))
+      .filter((room) => !isSceneRoom(room) && room.status !== "archived")
       .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   }, [rooms.data, activeWorldId]);
   const childrenByParent = useMemo(() => {

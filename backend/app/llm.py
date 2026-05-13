@@ -404,16 +404,11 @@ class LLMAdapter:
                 parts.append(f"本轮任务:{phase.prompt_template}")
             ordering = (phase.ordering_rule or {}).get("type")
             if ordering == "casual":
-                # casual_chat treats silence as the polite default — sit out
-                # turns you have nothing for. story_mode is the opposite: even
-                # a beat of in-character action keeps the scene alive, and
-                # blanket-silencing kills the whole room. We discriminate by
-                # the `story` tag so other story-style phases users author
-                # themselves can opt into the same treatment.
-                phase_tags = set(phase.tags or [])
-                if "story" in phase_tags:
+                # Casual chat treats silence as the polite default. Continuous
+                # casual phases ask speakers to keep a beat alive when they can.
+                if getattr(phase, "auto_discuss_mode", "decay") == "continuous":
                     parts.append(
-                        "这是故事场景:即便此刻没有大新闻,也请用一句台词、一个动作或一个表情"
+                        "这是连续接力场景:即便此刻没有大新闻,也请用一句台词、一个动作或一个表情"
                         "(例如皱眉、转身、低声自语、看一眼某人)保持角色的存在感。"
                         "**只有**当你的角色此刻确实别无可演时才输出 `<silent/>`;能演就演,不要轻易沉默。"
                     )

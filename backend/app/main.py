@@ -59,12 +59,15 @@ from .models import (
     PhaseTemplate,
     Recipe,
     Room,
+    RoomPersona,
     RoomPhaseInstance,
     RoomPhasePlan,
     RoomRuntimeState,
+    RoomSnapshot,
     ScribeState,
     ToolInvocation,
     ToolServer,
+    TraceEvent,
     Upload,
     World,
     WorldCharacter,
@@ -1914,25 +1917,20 @@ async def freeze(room_id: str, session: AsyncSession = Depends(get_session)):
 
 @app.post("/rooms/{room_id}/pause", response_model=RoomState)
 async def pause(room_id: str, session: AsyncSession = Depends(get_session)):
+    room, _runtime = await _room_runtime_or_404(session, room_id)
+    _ensure_not_sealed(room)
     await pause_room(session, room_id)
     await session.commit()
     return await _room_state(session, room_id)
 
 
-@app.delete("/rooms/{room_id}")
-async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)):
-    """Hard-delete a room and all of its dependents. Cancels any in-flight
-    streams first so background tasks don't write to a vanished row."""
-    room = await session.get(Room, room_id)
-    if not room:
-        raise HTTPException(404, "room not found")
-    # Cancel any in-flight LLM streams AND wait for them to actually unwind
-    # before issuing DELETEs. This lets background tasks release DB sessions
-    # and avoids racing SQLite write locks.
+async def _drain_room_for_destructive_action(
+    session: AsyncSession, room_id: str, reason: str, message: str
+) -> None:
     await session.rollback()
     drain_result = await drain_active_calls(
         room_id,
-        "room_deleted",
+        reason,
         require_clean=True,
         session=session,
     )
@@ -1941,41 +1939,33 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
         raise HTTPException(
             409,
             {
-                "message": "active calls did not stop before room delete",
+                "message": message,
                 "drain": drain_result.__dict__,
             },
         )
     clear_autodrive_lock(room_id, clear_stop=True)
-    room = await session.get(Room, room_id, populate_existing=True)
-    if not room:
-        raise HTTPException(404, "room not found")
+
+
+async def _delete_room_dependents(session: AsyncSession, room: Room) -> None:
+    room_id = room.id
     # Order matters: clear children before parents to satisfy FKs even when
     # ON DELETE CASCADE isn't declared.
-    from .models import (
-        Decision as _Decision,
-        FacilitatorSignal as _FacilitatorSignal,
-        MergeBack as _MergeBack,
-        RoomPhaseInstance as _RoomPhaseInstance,
-        RoomPhasePlan as _RoomPhasePlan,
-        RoomSnapshot as _RoomSnapshot,
-        ScribeState as _ScribeState,
-        TraceEvent as _TraceEvent,
-    )
     await session.execute(delete(ToolInvocation).where(ToolInvocation.room_id == room_id))
     await session.execute(delete(Message).where(Message.room_id == room_id))
-    await session.execute(delete(_Decision).where(_Decision.room_id == room_id))
-    await session.execute(delete(_FacilitatorSignal).where(_FacilitatorSignal.room_id == room_id))
-    await session.execute(delete(_RoomPhaseInstance).where(_RoomPhaseInstance.room_id == room_id))
-    await session.execute(delete(_RoomPhasePlan).where(_RoomPhasePlan.room_id == room_id))
-    await session.execute(delete(_ScribeState).where(_ScribeState.room_id == room_id))
+    await session.execute(delete(Decision).where(Decision.room_id == room_id))
+    await session.execute(delete(FacilitatorSignal).where(FacilitatorSignal.room_id == room_id))
+    await session.execute(delete(RoomPersona).where(RoomPersona.room_id == room_id))
+    await session.execute(delete(RoomPhaseInstance).where(RoomPhaseInstance.room_id == room_id))
+    await session.execute(delete(RoomPhasePlan).where(RoomPhasePlan.room_id == room_id))
+    await session.execute(delete(ScribeState).where(ScribeState.room_id == room_id))
     await session.execute(delete(RoomRuntimeState).where(RoomRuntimeState.room_id == room_id))
     await session.execute(delete(PersonaInstance).where(PersonaInstance.room_id == room_id))
-    await session.execute(delete(_RoomSnapshot).where(_RoomSnapshot.room_id == room_id))
-    await session.execute(delete(_TraceEvent).where(_TraceEvent.room_id == room_id))
+    await session.execute(delete(RoomSnapshot).where(RoomSnapshot.room_id == room_id))
+    await session.execute(delete(TraceEvent).where(TraceEvent.room_id == room_id))
     # MergeBack rows reference room as parent or sub-room; drop any pointing here.
     await session.execute(
-        delete(_MergeBack).where(
-            (_MergeBack.parent_room_id == room_id) | (_MergeBack.sub_room_id == room_id)
+        delete(MergeBack).where(
+            (MergeBack.parent_room_id == room_id) | (MergeBack.sub_room_id == room_id)
         )
     )
     # Uploads are tied loosely (nullable room_id) — keep the file row, null out
@@ -1986,6 +1976,63 @@ async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)
     # sidebar filter hide them — they vanish from the list.
     await session.execute(update(Room).where(Room.parent_room_id == room_id).values(parent_room_id=None))
     await session.delete(room)
+
+
+async def _archive_sealed_scene(session: AsyncSession, room_id: str) -> Room:
+    await _drain_room_for_destructive_action(
+        session,
+        room_id,
+        "scene_archived",
+        "active calls did not stop before scene archive",
+    )
+    room = await session.get(Room, room_id, populate_existing=True)
+    runtime = await session.get(RoomRuntimeState, room_id, populate_existing=True)
+    if room is None:
+        raise HTTPException(404, "room not found")
+    if not is_scene_room(room) or room.sealed_at is None:
+        raise HTTPException(409, "only sealed scenes can be archived through delete")
+    if runtime is not None:
+        runtime.frozen = True
+    if room.status != "archived":
+        room.status = "archived"
+        if room.frozen_at is None:
+            room.frozen_at = datetime.now(timezone.utc)
+        await trace_record(
+            session,
+            room_id,
+            "state_mutation",
+            "sealed scene archived",
+            {"world_id": room.world_id, "scene_index": room.scene_index},
+        )
+    await session.commit()
+    await session.refresh(room)
+    await event_bus.publish(
+        room_id,
+        {"type": "room.archived", "room": RoomOut.model_validate(room).model_dump(mode="json")},
+    )
+    return room
+
+
+@app.delete("/rooms/{room_id}")
+async def delete_room(room_id: str, session: AsyncSession = Depends(get_session)):
+    """Hard-delete a room and all of its dependents. Cancels any in-flight
+    streams first so background tasks don't write to a vanished row."""
+    room = await session.get(Room, room_id)
+    if not room:
+        raise HTTPException(404, "room not found")
+    if is_scene_room(room) and room.sealed_at is not None:
+        archived = await _archive_sealed_scene(session, room_id)
+        return {"status": "archived", "room_id": archived.id}
+    await _drain_room_for_destructive_action(
+        session,
+        room_id,
+        "room_deleted",
+        "active calls did not stop before room delete",
+    )
+    room = await session.get(Room, room_id, populate_existing=True)
+    if not room:
+        raise HTTPException(404, "room not found")
+    await _delete_room_dependents(session, room)
     await session.commit()
     await event_bus.publish(room_id, {"type": "room.deleted"})
     return {"status": "deleted", "room_id": room_id}
@@ -2671,11 +2718,31 @@ async def delete_world_timeline_event(
 @app.delete("/worlds/{world_id}")
 async def delete_world(world_id: str, session: AsyncSession = Depends(get_session)):
     world = await _get_world_or_404(session, world_id)
-    # Characters cascade via FK ON DELETE CASCADE. Scenes (Room.world_id) come
-    # in PR 2; their cascade is added when that column is introduced.
+    scene_ids = (
+        await session.scalars(
+            select(Room.id)
+            .where(Room.world_id == world_id, Room.scene_index.is_not(None))
+            .order_by(Room.scene_index)
+        )
+    ).all()
+    for scene_id in scene_ids:
+        await _drain_room_for_destructive_action(
+            session,
+            scene_id,
+            "world_deleted",
+            "active calls did not stop before world delete",
+        )
+
+    world = await _get_world_or_404(session, world_id)
+    for scene_id in scene_ids:
+        scene = await session.get(Room, scene_id, populate_existing=True)
+        if scene is not None:
+            await _delete_room_dependents(session, scene)
     await session.delete(world)
     await session.commit()
-    return {"status": "deleted"}
+    for scene_id in scene_ids:
+        await event_bus.publish(scene_id, {"type": "room.deleted"})
+    return {"status": "deleted", "world_id": world_id, "scene_ids": scene_ids}
 
 
 @app.post("/worlds/{world_id}/characters", response_model=WorldCharacterOut)
@@ -4230,12 +4297,18 @@ def _ensure_not_sealed(room: Room) -> None:
         raise HTTPException(409, "scene is sealed")
 
 
+def _ensure_not_archived(room: Room) -> None:
+    if room.status == "archived":
+        raise HTTPException(409, "room is archived")
+
+
 def _ensure_not_scene(room: Room) -> None:
     if is_scene_room(room):
         raise HTTPException(409, "not available in Story World scenes")
 
 
 def _ensure_room_writable(room: Room, runtime: RoomRuntimeState) -> None:
+    _ensure_not_archived(room)
     _ensure_not_frozen(runtime)
     _ensure_not_sealed(room)
 

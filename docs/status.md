@@ -216,6 +216,13 @@ P1 在 P0 Story World 基础上增加了 Scene 的运行时演出能力。详见
 - 统一模型回退链文档：运行时为 `PersonaInstance.api_model_id -> AppSettings.default_api_model_id -> legacy backing_model + api_provider_id`；模板模型只在创建房间或 Scene 时复制到实例。
 - 标记 P1 风险：`DELETE /worlds/{world_id}` 当前不会显式清理 `rooms.world_id` Scene；Scene hard delete 也需要与 sealed provenance 语义重新对齐。
 
+### 3.15 Review follow-up 修复分支
+
+- `DELETE /worlds/{world_id}` 改为显式 drain 并清理所有 `Room.world_id` Scene，避免 orphan Scene。
+- `DELETE /rooms/{scene_id}` 对已封幕 Scene 改为归档（`status=archived`），未封幕 Scene 仍可硬删。
+- sealed Scene 的 `pause` route 纳入只读 guard。
+- 新增 `PhaseTemplate.auto_discuss_mode`，用 `decay` / `continuous` 显式控制 casual autodrive 节奏，移除 `story` tag 的调度分支。
+
 ## 4. 后端完成点
 
 - `ACTIVE_CALLS` 按 room + message 跟踪。

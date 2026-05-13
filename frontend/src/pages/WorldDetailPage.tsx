@@ -505,10 +505,12 @@ function OverviewTab({
                 <span className="text-xs font-medium text-muted">
                   {t("worldDetail.sceneAct", { n: recentScene.scene_index })}
                 </span>
-                {recentScene.sealed_at ? (
-                  <span className="inline-flex items-center gap-1 text-xs text-success">
-                    <Lock size={12} />
-                    {t("worldDetail.sceneSealed")}
+                  {recentScene.status === "archived" ? (
+                    <span className="text-xs text-muted">{t("worldDetail.sceneArchived")}</span>
+                  ) : recentScene.sealed_at ? (
+                    <span className="inline-flex items-center gap-1 text-xs text-success">
+                      <Lock size={12} />
+                      {t("worldDetail.sceneSealed")}
                   </span>
                 ) : (
                   <span className="text-xs text-warning">{t("worldDetail.sceneOpen")}</span>
@@ -1293,7 +1295,9 @@ function SceneList({
                   <span className="text-xs font-medium text-muted">
                     {t("worldDetail.sceneAct", { n: scene.scene_index })}
                   </span>
-                  {scene.sealed_at ? (
+                  {scene.status === "archived" ? (
+                    <span className="text-xs text-muted">{t("worldDetail.sceneArchived")}</span>
+                  ) : scene.sealed_at ? (
                     <span className="inline-flex items-center gap-1 text-xs text-success">
                       <Lock size={12} />
                       {t("worldDetail.sceneSealed")}

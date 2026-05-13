@@ -17,9 +17,10 @@ migration just because it has no effect on a fresh database.
 6. `migrate_drop_vendor.run`
 7. `migrate_seed_story_mode.run`
 8. `migrate_story_mode_v2.run`
-9. `migrate_persona_identity.run`
-10. `migrate_seed_new_personas.run`
-11. `migrate_builtin_personas_update.run`
+9. `migrate_phase_auto_discuss_mode.run`
+10. `migrate_persona_identity.run`
+11. `migrate_seed_new_personas.run`
+12. `migrate_builtin_personas_update.run`
 
 ## Self-Healing Columns
 
@@ -39,7 +40,7 @@ Current self-healed tables:
 | `app_settings` | `default_api_model_id` | Yes until legacy default model fields are fully retired. |
 | `messages` | `user_masquerade_name` | Yes for guest-message compatibility. |
 | `rooms` | `background`, Story World scene fields, `sealed_at` | Yes. Scene rooms are still represented by `rooms.world_id`. |
-| `phase_templates` | `auto_discuss` | Yes for Story/free-chat phases. |
+| `phase_templates` | `auto_discuss`, `auto_discuss_mode` | Yes for Story/free-chat phases. |
 | `world_character_memories` | `last_used_scene_index` | Yes for memory decay. |
 
 ## Migration Files
@@ -52,6 +53,7 @@ Current self-healed tables:
 | `migrate_drop_vendor.py` | `_migrations.name = drop_api_provider_vendor_v1` | Drops legacy `api_providers.vendor`; UI now derives provider labels from `provider_slug`. | `api_providers` | Yes for DBs that still have the old column. | Only after old DBs with `vendor` are unsupported or an external schema audit confirms none remain. |
 | `migrate_seed_story_mode.py` | `_migrations.name = seed_story_mode_v1` | Inserts the built-in Story Mode phase and format into DBs seeded before Story Mode existed. Uses deterministic `builtin_id` and skips existing rows. | `phase_templates`, `debate_formats` | Yes for older DBs because `seed_builtins` only inserts when target tables are empty. | Only after all supported DBs are guaranteed to contain the Story Mode phase/format or after a new built-in content migration supersedes it. |
 | `migrate_story_mode_v2.py` | `_migrations.name = story_mode_v2_no_narrator` | Updates the built-in Story Mode phase prompt to prevent omniscient narration and speaking for other characters. Touches only the built-in row. | `phase_templates` | Yes for DBs that already had Story Mode v1. | Only after all supported DBs have the v2 sentinel, or if a standing built-in phase updater replaces this one-shot. |
+| `migrate_phase_auto_discuss_mode.py` | `_migrations.name = phase_auto_discuss_mode_v1` | Backfills `auto_discuss_mode='continuous'` for existing auto-discuss phases tagged `story`, moving scheduling semantics out of free-form tags. | `phase_templates` | Yes for DBs created before explicit auto-discuss pacing. | Only after all supported DBs have `auto_discuss_mode` populated and no runtime fallback depends on old rows. |
 | `migrate_persona_identity.py` | `_migrations.name = persona_identity_v1` | Backfills `identity` for templates and instances. Built-ins get deterministic name/identity pairs; user-authored rows copy old `name` into blank `identity`. | `persona_templates`, `persona_instances` | Yes. The UI and persona display model rely on split name/identity semantics. | Only after all supported DBs already have populated `identity` fields and the sentinel. |
 | `migrate_seed_new_personas.py` | `_migrations.name = seed_new_personas_v1` | Adds later built-in personas to existing DBs that were seeded before the expanded persona library. | `persona_templates` | Yes because built-ins are content, not schema, and initial seeding is table-empty only. | Only after all supported DBs include these deterministic built-in ids, or after a broader built-in content sync supersedes it. |
 | `migrate_builtin_personas_update.py` | Runs every startup; no `_migrations` sentinel | Standing idempotent updater for built-in persona content. Updates built-in rows when `seed.py` version is higher; never touches user duplicates. | `persona_templates` | Yes. This is the current supported path for changing seeded built-in persona text. | Only after a replacement built-in content versioning system exists. Do not convert it to a one-shot migration without preserving version-gated updates. |

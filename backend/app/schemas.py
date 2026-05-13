@@ -697,6 +697,7 @@ class PhaseTemplateOut(APIModel):
     ordering_rule: OrderingRule
     exit_conditions: list[ExitCondition] = Field(default_factory=list)
     auto_discuss: bool = False
+    auto_discuss_mode: Literal["decay", "continuous"] = "decay"
     role_constraints: str
     prompt_template: str
     tags: list[str] = Field(default_factory=list)
@@ -712,6 +713,7 @@ class PhaseTemplateCreate(APIModel):
     ordering_rule: OrderingRule = Field(default_factory=UserPicksRule)
     exit_conditions: list[ExitCondition] = Field(default_factory=lambda: [UserManualExit()])
     auto_discuss: bool = False
+    auto_discuss_mode: Literal["decay", "continuous"] = "decay"
     role_constraints: str = ""
     prompt_template: str = ""
     tags: list[str] = Field(default_factory=list)
@@ -725,6 +727,7 @@ class PhaseTemplateUpdate(APIModel):
     ordering_rule: OrderingRule | None = None
     exit_conditions: list[ExitCondition] | None = None
     auto_discuss: bool | None = None
+    auto_discuss_mode: Literal["decay", "continuous"] | None = None
     role_constraints: str | None = None
     prompt_template: str | None = None
     tags: list[str] | None = None

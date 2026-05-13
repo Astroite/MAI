@@ -162,6 +162,64 @@ def test_append_message_rejects_unknown_message_type(client):
     assert rejected.status_code == 422
 
 
+def test_auto_discuss_mode_controls_casual_decay(client, discussant_personas, monkeypatch):
+    def make_room(mode: str, tags: list[str]) -> str:
+        phase = client.post(
+            "/templates/phases",
+            json={
+                "name": f"pytest auto discuss {mode} {'-'.join(tags)}",
+                "description": "auto discuss mode test",
+                "declared_variables": [],
+                "allowed_speakers": {"type": "all"},
+                "ordering_rule": {"type": "casual"},
+                "exit_conditions": [{"type": "user_manual"}],
+                "role_constraints": "",
+                "prompt_template": "继续。",
+                "auto_discuss": True,
+                "auto_discuss_mode": mode,
+                "tags": tags,
+            },
+        ).json()
+        debate_format = client.post(
+            "/templates/formats",
+            json={
+                "name": f"pytest auto discuss format {mode} {'-'.join(tags)}",
+                "phase_sequence": [
+                    {
+                        "phase_template_id": phase["id"],
+                        "phase_template_version": phase["version"],
+                    }
+                ],
+                "tags": tags,
+            },
+        ).json()
+        room = client.post(
+            "/rooms",
+            json={
+                "title": f"pytest auto discuss room {mode}",
+                "format_id": debate_format["id"],
+                "persona_ids": [discussant_personas[0]["id"]],
+            },
+        ).json()
+        return room["room"]["id"]
+
+    async def should_continue(room_id: str) -> bool:
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            runtime.consecutive_ai_turns = 2
+            await session.commit()
+        async with SessionLocal() as session:
+            return await engine_module._should_auto_discuss(session, room_id)
+
+    monkeypatch.setattr(engine_module.random, "random", lambda: 0.99)
+
+    continuous_room_id = make_room("continuous", ["pytest", "casual"])
+    story_tag_decay_room_id = make_room("decay", ["pytest", "story", "casual"])
+
+    assert asyncio.run(should_continue(continuous_room_id)) is True
+    assert asyncio.run(should_continue(story_tag_decay_room_id)) is False
+
+
 def test_pause_waits_for_active_turn_without_truncating(
     client, discussant_personas, monkeypatch
 ):
@@ -193,6 +251,7 @@ def test_pause_waits_for_active_turn_without_truncating(
             "role_constraints": "",
             "prompt_template": "请继续演。",
             "auto_discuss": True,
+            "auto_discuss_mode": "continuous",
             "tags": ["pytest", "story", "casual"],
         },
     ).json()

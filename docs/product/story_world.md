@@ -25,7 +25,7 @@ Story World 在 Room + Persona 之上抽出 **World** 一级实体，把 Room �
 
 新增：
 
-- **N1**：World 是 Room 的容器；删除 World 级联删 Scene 与 Character。删除单个 Scene 不影响 World。
+- **N1**：World 是 Room 的容器；删除 World 会 drain 并级联硬删其 Scene 与 Character。删除未封幕 Scene 只删除该 Scene；删除已封幕 Scene 会归档为 `status=archived`，保留 world provenance。
 - **N2**：同一 World 内 `scene_index` 严格单调递增，无分支。新 Scene 总是 `max + 1`。
 - **N3**：角色记忆只在 Scene 之间流动；Scene 进行中产出的消息不会实时改写其他 Scene 的记忆——`POST /rooms/{rid}/seal` 只生成可编辑草稿，记忆固化发生在 Seal Draft commit。
 - **N4**：`kind=user` 角色没有 episodic 管线；用户的记忆是用户自己的。系统只存档案 + 关系卡片（卡片由 AI 角色单边维护）。
@@ -142,6 +142,7 @@ DELETE /worlds/{wid}/characters/{cid}/memories/{mid}
 POST   /worlds/{wid}/scenes                            创建 Scene（自动 scene_index = max+1）
 GET    /worlds/{wid}/timeline                          按 scene_index 顺序的场景一览
 GET    /worlds/{wid}/state                             World Detail 主控台状态（Bible / Timeline Events / Scenes / Memories / Relations）
+DELETE /rooms/{scene_id}                                未封幕 Scene 硬删除；已封幕 Scene 归档（status=archived）
 PATCH  /worlds/{wid}/bible                             编辑 World Bible 兼容层
 GET    /worlds/{wid}/timeline-events                   World 级时间轴事件
 POST   /worlds/{wid}/timeline-events                   手动添加历史/状态事件
@@ -223,4 +224,4 @@ World Detail 的 P0 主控台能力：
 - **R2 修改 core_identity 是否回算 episodic**：不回算，记忆是历史事实。UI 提示。
 - **R3 删除 character**：软删除（`status=retired`），关系卡片保留。
 - **R4 PersonaTemplate 升级污染**：`WorldCharacter` 已拷贝 color / icon / identity；动态依赖只剩 `system_prompt`。`persona_template_version` 字段为后续「是否同步新版」提示留位。
-- **R5 World 删除级联实现缺口**：产品语义仍是删除 World 时级联删除 Scene 与 Character；2026-05-13 review 发现后端当前 `DELETE /worlds/{wid}` 尚未显式清理 `rooms.world_id` Scene。修复前，带 Scene 的 World 删除属于 P1 风险。
+- **R5 删除语义**：World 删除会级联清理 Scene；单 Scene 删除按封幕状态分流——未封幕可以硬删，已封幕只归档，避免长期记忆、关系卡和时间轴来源断链。
