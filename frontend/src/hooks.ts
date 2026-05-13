@@ -178,6 +178,7 @@ export function useRoomEvents(roomId?: string) {
             "phase.transitioned",
             "room.frozen",
             "room.unfrozen",
+            "room.archived",
             "persona.instance.updated",
             "persona.instance.removed",
             "scene.sealed"
@@ -185,7 +186,7 @@ export function useRoomEvents(roomId?: string) {
         ) {
           scheduleInvalidate();
         }
-        if (payload.type === "room.frozen" || payload.type === "room.unfrozen") {
+        if (payload.type === "room.frozen" || payload.type === "room.unfrozen" || payload.type === "room.archived") {
           invalidateCurrentRoomDependents({
             roomId,
             queryClient,

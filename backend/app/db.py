@@ -125,6 +125,7 @@ _ADDED_COLUMNS: dict[str, list[tuple[str, str, str]]] = {
     ],
     "phase_templates": [
         ("auto_discuss", "boolean DEFAULT false NOT NULL", "BOOLEAN DEFAULT 0 NOT NULL"),
+        ("auto_discuss_mode", "varchar(32) DEFAULT 'decay' NOT NULL", "VARCHAR(32) DEFAULT 'decay' NOT NULL"),
     ],
     "world_character_memories": [
         ("last_used_scene_index", "integer", "INTEGER"),
@@ -164,6 +165,7 @@ async def create_schema() -> None:
     from . import migrate_scene_runtime_limits
     from . import migrate_seed_new_personas
     from . import migrate_seed_story_mode
+    from . import migrate_phase_auto_discuss_mode
     from . import migrate_settings
     from . import migrate_story_mode_v2
 
@@ -176,6 +178,7 @@ async def create_schema() -> None:
         await conn.run_sync(migrate_drop_vendor.run)
         await conn.run_sync(migrate_seed_story_mode.run)
         await conn.run_sync(migrate_story_mode_v2.run)
+        await conn.run_sync(migrate_phase_auto_discuss_mode.run)
         await conn.run_sync(migrate_persona_identity.run)
         await conn.run_sync(migrate_seed_new_personas.run)
         await conn.run_sync(migrate_scene_runtime_limits.run)

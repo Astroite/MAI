@@ -117,6 +117,7 @@ export interface PhaseTemplate {
   ordering_rule: { type: string };
   exit_conditions: Array<Record<string, unknown>>;
   auto_discuss?: boolean;
+  auto_discuss_mode?: AutoDiscussMode;
   role_constraints: string;
   prompt_template: string;
   tags: string[];
@@ -251,6 +252,7 @@ export type AllowedSpeakers =
 
 export type OrderingRule = { type: string } & Record<string, unknown>;
 export type ExitCondition = { type: string } & Record<string, unknown>;
+export type AutoDiscussMode = "decay" | "continuous";
 
 export interface FormatPhaseSlotInput {
   phase_template_id: string;
@@ -325,6 +327,7 @@ export interface PhaseTemplateCreate {
   ordering_rule?: OrderingRule;
   exit_conditions?: ExitCondition[];
   auto_discuss?: boolean;
+  auto_discuss_mode?: AutoDiscussMode;
   role_constraints?: string;
   prompt_template?: string;
   tags?: string[];

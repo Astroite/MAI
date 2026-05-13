@@ -120,6 +120,26 @@ def test_scene_create_assigns_monotonic_index_and_bakes_prompt(
     assert summary["last_activity_at"] is not None
 
 
+def test_delete_world_cascades_scene_rooms(client, discussant_personas):
+    world = _make_world(client)
+    template = discussant_personas[0]
+    ai_char = _make_ai_character(client, world["id"], template["id"])
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={"title": "待级联删除的幕", "members": [{"world_character_id": ai_char["id"]}]},
+    ).json()
+    scene_id = scene["room"]["id"]
+
+    deleted = client.delete(f"/worlds/{world['id']}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["status"] == "deleted"
+    assert scene_id in deleted.json()["scene_ids"]
+    assert client.get(f"/worlds/{world['id']}").status_code == 404
+    assert client.get(f"/rooms/{scene_id}/state").status_code == 404
+    assert all(room["id"] != scene_id for room in client.get("/rooms").json())
+
+
 def test_scene_create_rejects_bad_roster(client, discussant_personas):
     world_a = _make_world(client)
     world_b = client.post("/worlds", json={"name": "pytest other world"}).json()
@@ -324,6 +344,7 @@ def test_sealed_scene_room_is_read_only(client):
         ("patch", f"/rooms/{scene_id}/background", {"background": "封幕后不能改背景"}),
         ("patch", f"/rooms/{scene_id}/limits", {"max_consecutive_ai_turns": 2}),
         ("post", f"/rooms/{scene_id}/freeze", None),
+        ("post", f"/rooms/{scene_id}/pause", None),
         ("post", f"/rooms/{scene_id}/unfreeze", None),
     ]
     for method, path, body in blocked_requests:
@@ -339,6 +360,35 @@ def test_sealed_scene_room_is_read_only(client):
 
     state = client.get(f"/rooms/{scene_id}/state").json()
     assert all("封幕后不能" not in message["content"] for message in state["messages"])
+
+
+def test_delete_sealed_scene_archives_instead_of_hard_delete(client):
+    world = _make_world(client)
+    user_char = _make_user_character(client, world["id"])
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "待归档封幕",
+            "members": [{"world_character_id": user_char["id"], "speak_as_user": True}],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+
+    draft = client.post(f"/rooms/{scene_id}/seal")
+    assert draft.status_code == 200, draft.text
+    seal = client.post(f"/rooms/{scene_id}/seal-drafts/{draft.json()['id']}/commit")
+    assert seal.status_code == 200, seal.text
+
+    deleted = client.delete(f"/rooms/{scene_id}")
+
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json() == {"status": "archived", "room_id": scene_id}
+    state = client.get(f"/rooms/{scene_id}/state")
+    assert state.status_code == 200
+    assert state.json()["room"]["status"] == "archived"
+    timeline = client.get(f"/worlds/{world['id']}/timeline").json()
+    archived_scene = next(item for item in timeline if item["id"] == scene_id)
+    assert archived_scene["status"] == "archived"
 
 
 def test_non_scene_routes_reject_normal_room(client):

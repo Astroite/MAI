@@ -211,6 +211,7 @@ class PhaseTemplate(Base):
     ordering_rule: Mapped[dict] = mapped_column(JSONType)
     exit_conditions: Mapped[list[dict]] = mapped_column(JSONType, default=list)
     auto_discuss: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_discuss_mode: Mapped[str] = mapped_column(String(32), default="decay", server_default="decay")
     role_constraints: Mapped[str] = mapped_column(Text, default="")
     prompt_template: Mapped[str] = mapped_column(Text, default="")
     tags: Mapped[list[str]] = mapped_column(JSONType, default=list)

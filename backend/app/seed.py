@@ -512,6 +512,7 @@ PHASES: dict[str, dict] = {
         # Story never auto-ends — the user decides when to stop.
         "exit_conditions": [{"type": "user_manual"}],
         "auto_discuss": True,
+        "auto_discuss_mode": "continuous",
         "role_constraints": (
             "你只演自己一个角色。**绝对不要写其他角色的对白或动作**——他们会自己开口。"
             "保持自己的说话风格和性格,不要打破第四面墙、不要复述其他人刚说过的内容、不要做总结或评价。"

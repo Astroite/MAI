@@ -31,6 +31,7 @@ PHASE_PAYLOAD = {
     "ordering_rule": {"type": "casual"},
     "exit_conditions": [{"type": "user_manual"}],
     "auto_discuss": True,
+    "auto_discuss_mode": "continuous",
     "role_constraints": (
         "保持角色身份与说话风格一致，不要打破第四面墙、不要复述其他人说过的内容、不要做总结或评价。"
         "每次发言短一些（1-3 句最好），像真实对话或剧本对白。"
@@ -90,10 +91,10 @@ def run(sync_conn: Connection) -> None:
                 "INSERT INTO phase_templates "
                 "(id, version, schema_version, status, is_builtin, name, description, "
                 "declared_variables, allowed_speakers, ordering_rule, exit_conditions, "
-                "auto_discuss, role_constraints, prompt_template, tags, created_at, updated_at) "
+                "auto_discuss, auto_discuss_mode, role_constraints, prompt_template, tags, created_at, updated_at) "
                 "VALUES (:id, 1, 1, 'published', :is_builtin, :name, :description, "
                 ":declared_variables, :allowed_speakers, :ordering_rule, :exit_conditions, "
-                ":auto_discuss, :role_constraints, :prompt_template, :tags, :now, :now)"
+                ":auto_discuss, :auto_discuss_mode, :role_constraints, :prompt_template, :tags, :now, :now)"
             ),
             {
                 "id": phase_id,
@@ -105,6 +106,7 @@ def run(sync_conn: Connection) -> None:
                 "ordering_rule": _json_param(PHASE_PAYLOAD["ordering_rule"]),
                 "exit_conditions": _json_param(PHASE_PAYLOAD["exit_conditions"]),
                 "auto_discuss": 1 if is_sqlite else True,
+                "auto_discuss_mode": PHASE_PAYLOAD["auto_discuss_mode"],
                 "role_constraints": PHASE_PAYLOAD["role_constraints"],
                 "prompt_template": PHASE_PAYLOAD["prompt_template"],
                 "tags": _json_param(PHASE_PAYLOAD["tags"]),

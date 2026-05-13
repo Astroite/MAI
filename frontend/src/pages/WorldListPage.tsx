@@ -76,6 +76,7 @@ function WorldCard({ world }: { world: WorldSummary }) {
     mutationFn: () => api.deleteWorld(world.id),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.worlds });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       toast.message(t("worldList.deleted", { name: world.name }));
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))

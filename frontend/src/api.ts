@@ -387,7 +387,7 @@ export const api = {
       body: JSON.stringify(body)
     }),
   deleteWorld: (worldId: string) =>
-    request<{ status: string }>(`/worlds/${worldId}`, { method: "DELETE" }),
+    request<{ status: string; world_id?: string; scene_ids?: string[] }>(`/worlds/${worldId}`, { method: "DELETE" }),
 
   worldCharacter: (worldId: string, characterId: string) =>
     request<WorldCharacter>(`/worlds/${worldId}/characters/${characterId}`),

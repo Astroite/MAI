@@ -2,7 +2,7 @@ import { useState, type MouseEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, Layers, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { api } from "../../api";
-import type { PhaseTemplate, PhaseTemplateCreate } from "../../types";
+import type { AutoDiscussMode, PhaseTemplate, PhaseTemplateCreate } from "../../types";
 import { StatusPill } from "../../components/StatusPill";
 import { toast } from "../../components/Toaster";
 import { useConfirm } from "../../components/ConfirmDialog";
@@ -38,6 +38,7 @@ export function PhasesTab() {
   const [facilitatorExit, setFacilitatorExit] = useState(false);
   const [facilitatorTags, setFacilitatorTags] = useState("phase_exhausted");
   const [autoDiscuss, setAutoDiscuss] = useState(false);
+  const [autoDiscussMode, setAutoDiscussMode] = useState<AutoDiscussMode>("decay");
   const [editingPhaseId, setEditingPhaseId] = useState<string | null>(null);
   const allowedItems = splitTags(allowedValues);
   const phaseExitConditions = buildExitConditions({
@@ -68,6 +69,7 @@ export function PhasesTab() {
     ordering_rule: { type: orderingType },
     exit_conditions: phaseExitConditions,
     auto_discuss: autoDiscuss,
+    auto_discuss_mode: autoDiscussMode,
     role_constraints: roleConstraints,
     prompt_template: promptTemplate,
     tags: splitTags(tags)
@@ -101,6 +103,7 @@ export function PhasesTab() {
     setFacilitatorExit(Boolean(facilitator));
     setFacilitatorTags(facilitatorTrigger.map(String).join(","));
     setAutoDiscuss(Boolean(phase.auto_discuss));
+    setAutoDiscussMode(phase.auto_discuss_mode ?? "decay");
   };
   const resetPhaseForm = () => {
     setEditingPhaseId(null);
@@ -123,6 +126,7 @@ export function PhasesTab() {
     setFacilitatorExit(false);
     setFacilitatorTags("phase_exhausted");
     setAutoDiscuss(false);
+    setAutoDiscussMode("decay");
   };
   const canSavePhase = Boolean(name.trim()) && phaseExitConditions.length > 0 && (allowedType === "all" || allowedItems.length > 0);
   const save = useMutation({
@@ -258,7 +262,13 @@ export function PhasesTab() {
                 <div className="mt-3 flex flex-wrap gap-2 text-xs">
                   <StatusPill tone="brand">{display("orderingRule", phase.ordering_rule.type)}</StatusPill>
                   <StatusPill tone="accent">{display("allowedSpeakers", String(phase.allowed_speakers.type ?? "allowed"))}</StatusPill>
-                  {phase.auto_discuss && <StatusPill tone="accent">{t("templates.autoDiscuss")}</StatusPill>}
+                  {phase.auto_discuss && (
+                    <StatusPill tone="accent">
+                      {phase.auto_discuss_mode === "continuous"
+                        ? t("templates.autoDiscussContinuous")
+                        : t("templates.autoDiscuss")}
+                    </StatusPill>
+                  )}
                   {phase.exit_conditions.slice(0, 3).map((condition, index) => (
                     <StatusPill key={`${phase.id}-exit-${index}`}>
                       {display("exitCondition", String(condition.type ?? "exit"))}
@@ -369,6 +379,20 @@ export function PhasesTab() {
             />
             {t("templates.autoDiscuss")}
           </label>
+          {autoDiscuss && (
+            <label className="block">
+              <span className="label">{t("templates.autoDiscussMode")}</span>
+              <select
+                name="phase-auto-discuss-mode"
+                className="input mt-1 w-full"
+                value={autoDiscussMode}
+                onChange={(event) => setAutoDiscussMode(event.target.value as AutoDiscussMode)}
+              >
+                <option value="decay">{t("templates.autoDiscussModeDecay")}</option>
+                <option value="continuous">{t("templates.autoDiscussModeContinuous")}</option>
+              </select>
+            </label>
+          )}
           <label className="block">
             <span className="label">{t("templates.roleConstraints")}</span>
             <textarea name="phase-role-constraints" className="textarea mt-1 w-full" value={roleConstraints} onChange={(event) => setRoleConstraints(event.target.value)} />

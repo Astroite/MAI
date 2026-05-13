@@ -87,6 +87,7 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 - `ordering_rule`：轮流、交替、提及驱动、用户指定、问答配对、并行。
 - `exit_conditions`：轮次、全部发言、全部投票、token 预算、主持建议、手动推进。
 - `auto_discuss`：允许 AI 在该阶段连续接力，直到退出条件或运行时上限触发。
+- `auto_discuss_mode`：`decay` 表示 casual 自动讨论会逐步衰减，`continuous` 表示持续接力直到退出条件或上限。
 
 赛制是阶段的顺序组合，配方是“人设 + 赛制 + 初始设置”的组合。
 
@@ -114,6 +115,7 @@ MAI 是一个本地优先的多模型协作讨论平台。用户把多个 AI 人
 - 用户消息、文档消息、群友发言等会触发 autodrive。
 - AI 消息不会递归触发下一轮，避免队列失控。
 - `auto_discuss=True` 的阶段可让 AI 连续接力，但受 `max_consecutive_ai_turns` 和退出条件限制。
+- casual ordering 默认使用 `auto_discuss_mode=decay`，适合闲聊；故事/演出型阶段使用 `continuous`，避免依赖 `tags` 改变调度语义。
 - `parallel` 阶段允许多个 AI 同时发言，每条消息独立流式渲染。
 - Freeze 会取消当前 in-flight 调用并冻结房间。
 

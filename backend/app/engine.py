@@ -443,13 +443,10 @@ async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
     if runtime.consecutive_ai_turns >= runtime.max_consecutive_ai_turns:
         return False
     ordering = (template.ordering_rule or {}).get("type")
-    phase_tags = set(template.tags or [])
-    is_story = "story" in phase_tags
-    if ordering == "casual" and not is_story:
-        # Story phases run continuously until the user freezes or the cap
-        # hits — geometric decay would otherwise tail the conversation off
-        # within a few turns, defeating the "let them play out the scene"
-        # design. Other casual rooms (chat) keep the gentle taper.
+    auto_discuss_mode = getattr(template, "auto_discuss_mode", "decay") or "decay"
+    if ordering == "casual" and auto_discuss_mode != "continuous":
+        # Casual chat keeps a gentle taper. Continuous phases, such as Story
+        # Mode, run until the user freezes or the hard cap/exit conditions hit.
         p = CASUAL_CONTINUATION_BASE * (CASUAL_CONTINUATION_DECAY ** runtime.consecutive_ai_turns)
         if random.random() > p:
             return False

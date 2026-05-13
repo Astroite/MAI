@@ -376,8 +376,8 @@ SQLite 连接初始化（`db.py` 内 listener）会执行：
 用户消息、问题、回答、文档、群友发言等会触发 autodrive。AI 消息不会递归触发下一轮。autodrive 进入 `_autodrive_runner` 后通过 `_should_auto_discuss` 决定是否再来一轮：
 
 - `frozen` / `auto_discuss=False` / 已达 `max_consecutive_ai_turns` / phase 退出 → 停。
-- `casual` ordering 默认按 `0.9 × 0.85^n` 几何衰减，链长期望 2–3 轮。
-- **phase tags 含 `story` 时跳过几何衰减**：故事模式持续接力，由 `consecutive_ai_turns` 上限、token 预算或用户冻结收尾。
+- `casual` ordering + `auto_discuss_mode=decay` 默认按 `0.9 × 0.85^n` 几何衰减，链长期望 2–3 轮。
+- `auto_discuss_mode=continuous` 跳过几何衰减：故事/演出型阶段持续接力，由 `consecutive_ai_turns` 上限、token 预算、phase exit 或用户冻结收尾。
 
 用户也能通过 `POST /rooms/{id}/autodrive/resume` 在不发消息的情况下手动启动一次 autodrive 链（背后调 `engine.schedule_autodrive`）。
 
@@ -385,7 +385,7 @@ SQLite 连接初始化（`db.py` 内 listener）会执行：
 
 `llm.py::_build_messages` 在历史消息送进 LLM 前做角色重写：当前发言人自己的过去发言保留 `assistant`，其他 AI/用户的发言重写为 `user` 并加 `「Name」: ` 前缀。多人房间下系统提示里追加一段「你只是『X』一个人」的硬约束。引擎从 `PersonaInstance` 拉名字组成 `peer_names: dict[id, name]` 传给 `stream` / `complete_with_tools`。这个改动是为了避免多 AI 房间所有发言都被当事 AI 当成"自己之前的输出"，从而退化成一个全知叙述者声音。
 
-casual ordering 自带的 `<silent/>` 逃生口也按 phase tag 分支：`casual_chat` 保留「没话说就 `<silent/>`」默认；`story` 标签下改为「即便没大新闻，也用一句台词或动作维持存在感，只有真无可演时才 silent」。
+casual ordering 自带的 `<silent/>` 逃生口也按 `auto_discuss_mode` 分支：`decay` 保留「没话说就 `<silent/>`」默认；`continuous` 改为「即便没大新闻，也用一句台词或动作维持存在感，只有真无可演时才 silent」。`tags` 只保留分类/检索语义，不再驱动调度。
 
 ### 6.2 阶段生命周期
 
