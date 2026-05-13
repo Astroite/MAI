@@ -9,6 +9,14 @@ not by running a turn.
 from app import engine as engine_module
 from app import main as main_module
 from app.engine import DrainResult
+from app.runtime_defaults import (
+    SCENE_DEFAULT_MAX_ACCOUNT_DAILY_TOKENS,
+    SCENE_DEFAULT_MAX_ACCOUNT_MONTHLY_TOKENS,
+    SCENE_DEFAULT_MAX_CONSECUTIVE_AI_TURNS,
+    SCENE_DEFAULT_MAX_MESSAGE_TOKENS,
+    SCENE_DEFAULT_MAX_PHASE_ROUNDS,
+    SCENE_DEFAULT_MAX_ROOM_TOKENS,
+)
 
 
 def _make_world(client) -> dict:
@@ -66,6 +74,12 @@ def test_scene_create_assigns_monotonic_index_and_bakes_prompt(
     assert state_1["room"]["scene_index"] == 1
     assert state_1["room"]["in_world_time_start"] == "玄苍纪元第七日 黄昏"
     assert state_1["room"]["sealed_at"] is None
+    assert state_1["runtime"]["max_message_tokens"] == SCENE_DEFAULT_MAX_MESSAGE_TOKENS
+    assert state_1["runtime"]["max_room_tokens"] == SCENE_DEFAULT_MAX_ROOM_TOKENS
+    assert state_1["runtime"]["max_phase_rounds"] == SCENE_DEFAULT_MAX_PHASE_ROUNDS
+    assert state_1["runtime"]["max_account_daily_tokens"] == SCENE_DEFAULT_MAX_ACCOUNT_DAILY_TOKENS
+    assert state_1["runtime"]["max_account_monthly_tokens"] == SCENE_DEFAULT_MAX_ACCOUNT_MONTHLY_TOKENS
+    assert state_1["runtime"]["max_consecutive_ai_turns"] == SCENE_DEFAULT_MAX_CONSECUTIVE_AI_TURNS
 
     # PersonaInstance for the AI character carries the WorldCharacter's
     # name/identity (not the template's) and the prompt got baked.

@@ -89,6 +89,8 @@ Retrieval v1 简化为 `salience DESC, scene_index DESC` 的 top-K，未引入 B
 
 `autodrive` / `facilitator` 仍沿用主引擎路径；`pause` / `freeze` 也走 Room 级控制（pause 等当前角色说完后冻结，freeze 立即取消 in-flight）。
 
+Scene 创建时使用比普通讨论室更宽松的运行限额：更高的 room token、phase round、账号 token 与连续 AI turn 默认值，用于支撑一整幕自然对话；用户仍可在房间「限额」面板里手动收紧或放宽。
+
 ### 5.1 Scene Context Builder（P1.1）
 
 `backend/app/scene_context.py` 提供只读 Scene Context Builder：

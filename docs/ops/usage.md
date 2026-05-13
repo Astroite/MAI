@@ -185,7 +185,7 @@ persona_instance.api_model_id
 
 特点：
 - 单 phase 永不自动结束，由用户喊停（pause 或 freeze）。
-- AI 持续接力到 `max_consecutive_ai_turns`（默认 10，可在右侧「限额」面板拉到 30–100）、token 上限或冻结。
+- 普通讨论室中，AI 持续接力到 `max_consecutive_ai_turns`（默认 10，可在右侧「限额」面板调整）、token 上限或冻结。Story Scene 使用更宽松的默认房间限额，以便完成一整幕自然对话。
 - 每个角色只演自己一个，不替别人写台词。多 AI 房间下后端会自动重写历史角色消息为 `user + 「Name」: `，避免一个 AI 把整段故事都讲完。
 - 想让某角色更主动开口，调高他人设的「健谈度」滑块。
 

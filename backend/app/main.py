@@ -175,6 +175,20 @@ from .model_runtime import (
     resolve_default_model_runtime,
     template_assistant_persona_view,
 )
+from .runtime_defaults import (
+    DEFAULT_MAX_ACCOUNT_DAILY_TOKENS,
+    DEFAULT_MAX_ACCOUNT_MONTHLY_TOKENS,
+    DEFAULT_MAX_CONSECUTIVE_AI_TURNS,
+    DEFAULT_MAX_MESSAGE_TOKENS,
+    DEFAULT_MAX_PHASE_ROUNDS,
+    DEFAULT_MAX_ROOM_TOKENS,
+    SCENE_DEFAULT_MAX_ACCOUNT_DAILY_TOKENS,
+    SCENE_DEFAULT_MAX_ACCOUNT_MONTHLY_TOKENS,
+    SCENE_DEFAULT_MAX_CONSECUTIVE_AI_TURNS,
+    SCENE_DEFAULT_MAX_MESSAGE_TOKENS,
+    SCENE_DEFAULT_MAX_PHASE_ROUNDS,
+    SCENE_DEFAULT_MAX_ROOM_TOKENS,
+)
 from .seed import seed_builtins
 from .tools import execute_tool, list_tool_schemas, sync_mcp_server
 from .trace import trace_record
@@ -1421,12 +1435,18 @@ async def create_room(body: RoomCreate, session: AsyncSession = Depends(get_sess
     settings_payload = selected_recipe.initial_settings if selected_recipe else {}
     runtime = RoomRuntimeState(
         room_id=room.id,
-        max_message_tokens=settings_payload.get("max_message_tokens", 900),
-        max_room_tokens=settings_payload.get("max_room_tokens", 120000),
-        max_phase_rounds=settings_payload.get("max_phase_rounds", 3),
-        max_account_daily_tokens=settings_payload.get("max_account_daily_tokens", 250000),
-        max_account_monthly_tokens=settings_payload.get("max_account_monthly_tokens", 3000000),
-        max_consecutive_ai_turns=settings_payload.get("max_consecutive_ai_turns", 10),
+        max_message_tokens=settings_payload.get("max_message_tokens", DEFAULT_MAX_MESSAGE_TOKENS),
+        max_room_tokens=settings_payload.get("max_room_tokens", DEFAULT_MAX_ROOM_TOKENS),
+        max_phase_rounds=settings_payload.get("max_phase_rounds", DEFAULT_MAX_PHASE_ROUNDS),
+        max_account_daily_tokens=settings_payload.get("max_account_daily_tokens", DEFAULT_MAX_ACCOUNT_DAILY_TOKENS),
+        max_account_monthly_tokens=settings_payload.get(
+            "max_account_monthly_tokens",
+            DEFAULT_MAX_ACCOUNT_MONTHLY_TOKENS,
+        ),
+        max_consecutive_ai_turns=settings_payload.get(
+            "max_consecutive_ai_turns",
+            DEFAULT_MAX_CONSECUTIVE_AI_TURNS,
+        ),
         auto_transition=settings_payload.get("auto_transition", False),
     )
     scribe = ScribeState(room_id=room.id, current_state=DEFAULT_SCRIBE_STATE.copy())
@@ -3213,12 +3233,21 @@ async def create_scene(
 
     runtime = RoomRuntimeState(
         room_id=scene.id,
-        max_message_tokens=settings_payload.get("max_message_tokens", 900),
-        max_room_tokens=settings_payload.get("max_room_tokens", 120000),
-        max_phase_rounds=settings_payload.get("max_phase_rounds", 3),
-        max_account_daily_tokens=settings_payload.get("max_account_daily_tokens", 250000),
-        max_account_monthly_tokens=settings_payload.get("max_account_monthly_tokens", 3000000),
-        max_consecutive_ai_turns=settings_payload.get("max_consecutive_ai_turns", 10),
+        max_message_tokens=settings_payload.get("max_message_tokens", SCENE_DEFAULT_MAX_MESSAGE_TOKENS),
+        max_room_tokens=settings_payload.get("max_room_tokens", SCENE_DEFAULT_MAX_ROOM_TOKENS),
+        max_phase_rounds=settings_payload.get("max_phase_rounds", SCENE_DEFAULT_MAX_PHASE_ROUNDS),
+        max_account_daily_tokens=settings_payload.get(
+            "max_account_daily_tokens",
+            SCENE_DEFAULT_MAX_ACCOUNT_DAILY_TOKENS,
+        ),
+        max_account_monthly_tokens=settings_payload.get(
+            "max_account_monthly_tokens",
+            SCENE_DEFAULT_MAX_ACCOUNT_MONTHLY_TOKENS,
+        ),
+        max_consecutive_ai_turns=settings_payload.get(
+            "max_consecutive_ai_turns",
+            SCENE_DEFAULT_MAX_CONSECUTIVE_AI_TURNS,
+        ),
         auto_transition=settings_payload.get("auto_transition", False),
     )
     scribe = ScribeState(room_id=scene.id, current_state=DEFAULT_SCRIBE_STATE.copy())
