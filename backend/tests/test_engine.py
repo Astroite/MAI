@@ -469,6 +469,330 @@ def test_resume_autodrive_reports_no_available_speaker(client, discussant_person
     assert resume.json()["reason"] == "no_available_speaker"
 
 
+def test_resume_autodrive_exit_condition_sets_phase_suggestion(
+    client, discussant_personas, instance_for_template
+):
+    speaker = discussant_personas[0]
+    phase = client.post(
+        "/templates/phases",
+        json={
+            "name": "pytest resume exit condition",
+            "description": "all_spoken should block resume and surface phase actions",
+            "declared_variables": [],
+            "allowed_speakers": {"type": "all"},
+            "ordering_rule": {"type": "round_robin"},
+            "exit_conditions": [{"type": "all_spoken", "min_each": 1}],
+            "auto_discuss": True,
+            "role_constraints": "",
+            "prompt_template": "请发言。",
+            "tags": ["pytest", "resume-exit"],
+        },
+    ).json()
+    debate_format = client.post(
+        "/templates/formats",
+        json={
+            "name": "pytest resume exit condition format",
+            "phase_sequence": [
+                {"phase_template_id": phase["id"], "phase_template_version": phase["version"]}
+            ],
+            "tags": ["pytest", "resume-exit"],
+        },
+    ).json()
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest resume exit condition room",
+            "format_id": debate_format["id"],
+            "persona_ids": [speaker["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
+    current_phase_id = room["runtime"]["current_phase_instance_id"]
+    limits = client.patch(f"/rooms/{room_id}/limits", json={"auto_transition": True})
+    assert limits.status_code == 200
+    assert limits.json()["auto_transition"] is True
+
+    async def seed_completed_phase_turn():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            assert runtime is not None
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_persona_id=speaker_instance_id,
+                    author_actual="ai",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="phase budget reached",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(seed_completed_phase_turn())
+
+    before = client.get(f"/rooms/{room_id}/state").json()
+    assert before["runtime"]["phase_exit_suggested"] is False
+
+    resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+    assert resume.status_code == 200
+    assert resume.json()["status"] == "skipped"
+    assert resume.json()["reason"] == "exit_condition_met"
+
+    state = client.get(f"/rooms/{room_id}/state").json()
+    assert state["runtime"]["current_phase_instance_id"] == current_phase_id
+    assert state["runtime"]["phase_exit_suggested"] is True
+    assert state["runtime"]["phase_exit_matched_conditions"] == [
+        {"type": "all_spoken", "min_each": 1}
+    ]
+
+
+def test_resume_autodrive_prefers_phase_exit_over_locked_runner(
+    client, discussant_personas, instance_for_template
+):
+    speaker = discussant_personas[0]
+    phase = client.post(
+        "/templates/phases",
+        json={
+            "name": "pytest resume locked phase exit",
+            "description": "phase exit should beat stale locked/autodrive state",
+            "declared_variables": [],
+            "allowed_speakers": {"type": "all"},
+            "ordering_rule": {"type": "round_robin"},
+            "exit_conditions": [{"type": "all_spoken", "min_each": 1}],
+            "auto_discuss": True,
+            "role_constraints": "",
+            "prompt_template": "请发言。",
+            "tags": ["pytest", "locked-exit"],
+        },
+    ).json()
+    debate_format = client.post(
+        "/templates/formats",
+        json={
+            "name": "pytest resume locked phase exit format",
+            "phase_sequence": [
+                {"phase_template_id": phase["id"], "phase_template_version": phase["version"]}
+            ],
+            "tags": ["pytest", "locked-exit"],
+        },
+    ).json()
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest resume locked phase exit room",
+            "format_id": debate_format["id"],
+            "persona_ids": [speaker["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
+
+    async def seed_completed_phase_turn():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            assert runtime is not None
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_persona_id=speaker_instance_id,
+                    author_actual="ai",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="phase exit count is met while runner looks locked",
+                )
+            )
+            await session.commit()
+
+    asyncio.run(seed_completed_phase_turn())
+    lock = engine_module._autodrive_lock(room_id)
+    asyncio.run(lock.acquire())
+    ACTIVE_CALLS.setdefault(room_id, {})["msg-in-flight"] = engine_module.InFlightCall(
+        room_id=room_id,
+        message_id="msg-in-flight",
+        persona_id=speaker_instance_id,
+        task=object(),
+    )
+    try:
+        resume = client.post(f"/rooms/{room_id}/autodrive/resume")
+        assert resume.status_code == 200
+        assert resume.json()["status"] == "skipped"
+        assert resume.json()["reason"] == "exit_condition_met"
+    finally:
+        ACTIVE_CALLS.pop(room_id, None)
+        if lock.locked():
+            lock.release()
+        engine_module.clear_autodrive_lock(room_id)
+
+    state = client.get(f"/rooms/{room_id}/state").json()
+    assert state["runtime"]["phase_exit_suggested"] is True
+    assert state["runtime"]["autodrive_active"] is False
+
+
+def test_should_auto_discuss_persists_phase_exit_suggestion(
+    client, discussant_personas, instance_for_template
+):
+    speaker = discussant_personas[0]
+    phase = client.post(
+        "/templates/phases",
+        json={
+            "name": "pytest autodiscuss tail phase exit",
+            "description": "autodrive tail checks must leave stable phase actions",
+            "declared_variables": [],
+            "allowed_speakers": {"type": "all"},
+            "ordering_rule": {"type": "round_robin"},
+            "exit_conditions": [{"type": "all_spoken", "min_each": 1}],
+            "auto_discuss": True,
+            "role_constraints": "",
+            "prompt_template": "请发言。",
+            "tags": ["pytest", "tail-exit"],
+        },
+    ).json()
+    debate_format = client.post(
+        "/templates/formats",
+        json={
+            "name": "pytest autodiscuss tail phase exit format",
+            "phase_sequence": [
+                {"phase_template_id": phase["id"], "phase_template_version": phase["version"]}
+            ],
+            "tags": ["pytest", "tail-exit"],
+        },
+    ).json()
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest autodiscuss tail phase exit room",
+            "format_id": debate_format["id"],
+            "persona_ids": [speaker["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
+
+    async def seed_and_check():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            assert runtime is not None
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_persona_id=speaker_instance_id,
+                    author_actual="ai",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="phase exit should be persisted by tail check",
+                )
+            )
+            await session.commit()
+        async with SessionLocal() as session:
+            return await engine_module._should_auto_discuss(session, room_id)
+
+    assert asyncio.run(seed_and_check()) is False
+    state = client.get(f"/rooms/{room_id}/state").json()
+    assert state["runtime"]["phase_exit_suggested"] is True
+    assert state["runtime"]["phase_exit_matched_conditions"] == [
+        {"type": "all_spoken", "min_each": 1}
+    ]
+
+
+def test_pending_user_turn_does_not_spin_when_phase_exit_is_met(
+    client, discussant_personas, instance_for_template, monkeypatch
+):
+    speaker = discussant_personas[0]
+    phase = client.post(
+        "/templates/phases",
+        json={
+            "name": "pytest pending user phase exit",
+            "description": "phase exit should stop pending-user autodrive retry",
+            "declared_variables": [],
+            "allowed_speakers": {"type": "all"},
+            "ordering_rule": {"type": "round_robin"},
+            "exit_conditions": [{"type": "all_spoken", "min_each": 1}],
+            "auto_discuss": True,
+            "role_constraints": "",
+            "prompt_template": "请发言。",
+            "tags": ["pytest", "pending-user-exit"],
+        },
+    ).json()
+    debate_format = client.post(
+        "/templates/formats",
+        json={
+            "name": "pytest pending user phase exit format",
+            "phase_sequence": [
+                {"phase_template_id": phase["id"], "phase_template_version": phase["version"]}
+            ],
+            "tags": ["pytest", "pending-user-exit"],
+        },
+    ).json()
+    room = client.post(
+        "/rooms",
+        json={
+            "title": "pytest pending user phase exit room",
+            "format_id": debate_format["id"],
+            "persona_ids": [speaker["id"]],
+        },
+    ).json()
+    room_id = room["room"]["id"]
+    speaker_instance_id = instance_for_template(room_id, speaker["id"])
+
+    async def seed_completed_phase_with_latest_user_message():
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            assert runtime is not None
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_persona_id=speaker_instance_id,
+                    author_actual="ai",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="phase exit count is met",
+                )
+            )
+            await session.commit()
+        time.sleep(0.01)
+        async with SessionLocal() as session:
+            runtime = await session.get(RoomRuntimeState, room_id)
+            assert runtime is not None
+            session.add(
+                Message(
+                    room_id=room_id,
+                    phase_instance_id=runtime.current_phase_instance_id,
+                    message_type="speech",
+                    author_actual="user",
+                    visibility="public",
+                    visibility_to_models=True,
+                    content="latest user message should not cause retry spin",
+                )
+            )
+            await session.commit()
+
+    starts = []
+
+    def record_autodrive_start(room_id_arg, lock, **kwargs):
+        starts.append((room_id_arg, kwargs))
+
+    monkeypatch.setattr(engine_module, "_start_autodrive_runner", record_autodrive_start)
+    asyncio.run(seed_completed_phase_with_latest_user_message())
+
+    before = client.get(f"/rooms/{room_id}/state").json()
+    assert before["runtime"]["phase_exit_suggested"] is False
+
+    asyncio.run(engine_module._maybe_handle_pending_user_turn(room_id))
+
+    assert starts == []
+    state = client.get(f"/rooms/{room_id}/state").json()
+    assert state["runtime"]["phase_exit_suggested"] is True
+    assert state["runtime"]["autodrive_active"] is False
+
+
 def test_resume_autodrive_reports_in_flight_reason(
     client, roundtable_format, discussant_personas, instance_for_template
 ):

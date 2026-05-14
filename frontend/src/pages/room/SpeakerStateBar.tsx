@@ -1,8 +1,8 @@
-import { useMemo } from "react";
+import { useMemo, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Lock, Pause, Play, Snowflake, Sparkles, Square } from "lucide-react";
+import { ArrowRight, Loader2, Lock, MessageSquare, Pause, Play, Plus, Snowflake, Sparkles, Square } from "lucide-react";
 import { api } from "../../api";
-import type { PersonaInstance, Runtime } from "../../types";
+import type { PersonaInstance, RoomState, Runtime } from "../../types";
 import { PersonaIcon, DEFAULT_PERSONA_COLOR } from "../../components/PersonaIcon";
 import { StatusPill } from "../../components/StatusPill";
 import { useI18n } from "../../i18n";
@@ -32,7 +32,8 @@ export function SpeakerStateBar({
   personas,
   frozen,
   sealed = false,
-  isScene = false
+  isScene = false,
+  phaseExit
 }: {
   roomId: string;
   runtime: Runtime;
@@ -40,6 +41,7 @@ export function SpeakerStateBar({
   frozen: boolean;
   sealed?: boolean;
   isScene?: boolean;
+  phaseExit?: PhaseExitControls;
 }) {
   const { t } = useI18n();
   const queryClient = useQueryClient();
@@ -60,12 +62,35 @@ export function SpeakerStateBar({
   const pauseLabel = isScene ? t("speaker.scene.pause") : t("speaker.pause");
   const pauseTitle = isScene ? t("speaker.scene.pauseTitle") : t("speaker.pauseTitle");
   const unfreezeLabel = isScene ? t("speaker.scene.resume") : t("speaker.unfreeze");
+  const phaseExitActive = Boolean(phaseExit?.active);
 
   const resume = useMutation({
     mutationFn: () => api.resumeAutodrive(roomId),
     onSuccess: (res) => {
       if (res.status === "skipped") {
-        toast.message(t(resumeSkipReasonKey(res.reason)));
+        const cached = queryClient.getQueryData<RoomState>(queryKeys.room(roomId));
+        const shouldPromptPhaseAction =
+          res.reason === "exit_condition_met" ||
+          ((res.reason === "locked" || res.reason === "in_flight") &&
+            Boolean(cached?.runtime.phase_exit_suggested || phaseExitActive));
+        if (shouldPromptPhaseAction) {
+          queryClient.setQueryData<RoomState>(queryKeys.room(roomId), (current) =>
+            current
+              ? {
+                  ...current,
+                  runtime: {
+                    ...current.runtime,
+                    phase_exit_suggested: true
+                  }
+                }
+              : current
+          );
+          toast.message(t("speaker.resumeSkipped.exitCondition"), {
+            description: t("speaker.resumeSkipped.exitConditionAction")
+          });
+        } else {
+          toast.message(t(resumeSkipReasonKey(res.reason)));
+        }
         void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
       }
     },
@@ -86,11 +111,14 @@ export function SpeakerStateBar({
     ? "sealed"
     : frozen
       ? "frozen"
-      : speakers.length > 0
-        ? "speaking"
-        : runtime.autodrive_active
-          ? "scheduling"
-          : "idle";
+      : phaseExitActive
+        ? "phase_exit"
+        : speakers.length > 0
+          ? "speaking"
+          : runtime.autodrive_active
+            ? "scheduling"
+            : "idle";
+  const showPhaseActions = state === "phase_exit" && Boolean(phaseExit);
 
   // Choose tone via a CSS variable on the strip — keeps the layout stable
   // across states while the accent color tracks the current speaker.
@@ -102,11 +130,13 @@ export function SpeakerStateBar({
 
   return (
     <div
-      className={`flex flex-shrink-0 items-center justify-between gap-3 border-y px-5 py-2 text-xs ${
+      className={`flex flex-shrink-0 items-center justify-between gap-3 border-y px-5 py-2 text-xs max-md:flex-col max-md:items-stretch ${
         state === "sealed"
           ? "border-success/30 bg-success/5"
           : state === "frozen"
           ? "border-danger/30 bg-danger/5"
+          : state === "phase_exit"
+            ? "border-accent/40 bg-accent/10"
           : state === "scheduling"
             ? "border-brand/30 bg-brand/5"
             : state === "idle"
@@ -118,17 +148,20 @@ export function SpeakerStateBar({
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {/* Left: state pill + speaker preview */}
         <StateIndicator state={state} />
-        <SpeakerPreview state={state} speakers={speakers} t={t} />
+        <SpeakerPreview state={state} speakers={speakers} t={t} phaseExitActive={showPhaseActions} />
       </div>
 
-      <div className="flex flex-shrink-0 items-center gap-2">
+      <div className="flex flex-shrink-0 items-center gap-2 max-md:w-full max-md:flex-wrap">
         {/* Chain counter shown whenever we're driving (not frozen, not idle). */}
         {state !== "sealed" && state !== "frozen" && cap > 0 && (
           <span className="hidden text-muted sm:inline" title={t("speaker.chainHint")}>
             {t("speaker.chain", { used: consecutive, max: cap })}
           </span>
         )}
-        {state === "idle" && (
+        {showPhaseActions && phaseExit && (
+          <PhaseActionStrip controls={phaseExit} />
+        )}
+        {state === "idle" && !showPhaseActions && (
           <button
             className="btn btn-primary h-7 px-2"
             type="button"
@@ -168,6 +201,78 @@ export function SpeakerStateBar({
   );
 }
 
+type PhaseExitControls = {
+  active: boolean;
+  disabled: boolean;
+  onNext: () => void;
+  onContinue: () => void;
+  onExtend: () => void;
+};
+
+function PhaseActionStrip({ controls }: { controls: PhaseExitControls }) {
+  const { t } = useI18n();
+  return (
+    <div className="flex flex-shrink-0 items-center gap-1.5 max-md:grid max-md:w-full max-md:grid-cols-3">
+      <MiniPhaseButton
+        tone="primary"
+        disabled={controls.disabled}
+        onClick={controls.onNext}
+        title={t("phaseExit.nextHint")}
+        icon={<ArrowRight size={12} />}
+      >
+        {t("phaseExit.next")}
+      </MiniPhaseButton>
+      <MiniPhaseButton
+        tone="default"
+        disabled={controls.disabled}
+        onClick={controls.onContinue}
+        title={t("phaseExit.continueTitle")}
+        icon={<MessageSquare size={12} />}
+      >
+        {t("phaseExit.continue")}
+      </MiniPhaseButton>
+      <MiniPhaseButton
+        tone="default"
+        disabled={controls.disabled}
+        onClick={controls.onExtend}
+        title={t("phaseExit.extendTitle")}
+        icon={<Plus size={12} />}
+      >
+        {t("phaseExit.extend")}
+      </MiniPhaseButton>
+    </div>
+  );
+}
+
+function MiniPhaseButton({
+  tone,
+  disabled,
+  onClick,
+  title,
+  icon,
+  children
+}: {
+  tone: "primary" | "default";
+  disabled: boolean;
+  onClick: () => void;
+  title: string;
+  icon: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      className={`btn h-7 min-w-0 px-2 text-xs ${tone === "primary" ? "btn-primary" : ""}`}
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+    >
+      {icon}
+      <span className="truncate">{children}</span>
+    </button>
+  );
+}
+
 function resumeSkipReasonKey(reason?: string | null) {
   switch (reason) {
     case "locked":
@@ -189,7 +294,7 @@ function resumeSkipReasonKey(reason?: string | null) {
   }
 }
 
-type SpeakerState = "sealed" | "frozen" | "speaking" | "scheduling" | "idle";
+type SpeakerState = "sealed" | "frozen" | "phase_exit" | "speaking" | "scheduling" | "idle";
 
 function StateIndicator({ state }: { state: SpeakerState }) {
   const { t } = useI18n();
@@ -206,6 +311,14 @@ function StateIndicator({ state }: { state: SpeakerState }) {
       <StatusPill tone="danger" dot>
         <Snowflake size={12} className="-ml-0.5" />
         {t("speaker.state.frozen")}
+      </StatusPill>
+    );
+  }
+  if (state === "phase_exit") {
+    return (
+      <StatusPill tone="accent" dot>
+        <ArrowRight size={12} className="-ml-0.5" />
+        {t("speaker.state.phaseExit")}
       </StatusPill>
     );
   }
@@ -239,11 +352,13 @@ function StateIndicator({ state }: { state: SpeakerState }) {
 function SpeakerPreview({
   state,
   speakers,
-  t
+  t,
+  phaseExitActive = false
 }: {
   state: SpeakerState;
   speakers: PersonaInstance[];
   t: ReturnType<typeof useI18n>["t"];
+  phaseExitActive?: boolean;
 }) {
   if (state === "sealed") {
     return <span className="truncate text-muted">{t("speaker.sealedHint")}</span>;
@@ -251,8 +366,15 @@ function SpeakerPreview({
   if (state === "frozen") {
     return <span className="truncate text-muted">{t("speaker.frozenHint")}</span>;
   }
+  if (state === "phase_exit") {
+    return <span className="truncate text-muted">{t("speaker.phaseExitHint")}</span>;
+  }
   if (state === "idle") {
-    return <span className="truncate text-muted">{t("speaker.idleHint")}</span>;
+    return (
+      <span className="truncate text-muted">
+        {phaseExitActive ? t("speaker.phaseExitHint") : t("speaker.idleHint")}
+      </span>
+    );
   }
   if (state === "scheduling") {
     return <span className="truncate text-muted">{t("speaker.schedulingHint")}</span>;

@@ -1,4 +1,4 @@
-import { Play, Plus } from "lucide-react";
+import { MessageSquare, Play, Plus } from "lucide-react";
 import { useI18n } from "../../i18n";
 
 export function PhaseExitBanner({
@@ -21,7 +21,7 @@ export function PhaseExitBanner({
       <div className="mx-auto flex max-w-4xl items-start justify-between gap-3 max-md:flex-col max-md:items-stretch">
         <div>
           <div className="text-sm font-semibold text-accent">{t("phaseExit.title")}</div>
-          <div className="mt-0.5 text-xs text-muted">{label || "phase exit suggested"}</div>
+          <div className="mt-0.5 text-xs text-muted">{label || t("phaseExit.reasonFallback")}</div>
         </div>
         <div className="grid grid-cols-3 gap-2 max-md:grid-cols-1">
           <ActionButton
@@ -35,17 +35,18 @@ export function PhaseExitBanner({
           <ActionButton
             tone="default"
             disabled={disabled}
-            onClick={onExtend}
-            label={t("phaseExit.extend")}
-            hint={t("phaseExit.extendHint")}
-            icon={<Plus size={14} />}
+            onClick={onContinue}
+            label={t("phaseExit.continue")}
+            hint={t("phaseExit.continueHint")}
+            icon={<MessageSquare size={14} />}
           />
           <ActionButton
             tone="default"
             disabled={disabled}
-            onClick={onContinue}
-            label={t("phaseExit.continue")}
-            hint={t("phaseExit.continueHint")}
+            onClick={onExtend}
+            label={t("phaseExit.extend")}
+            hint={t("phaseExit.extendHint")}
+            icon={<Plus size={14} />}
           />
         </div>
       </div>

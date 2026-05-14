@@ -497,6 +497,17 @@ export function RoomShell() {
               frozen={state.runtime.frozen}
               sealed={sceneSealed}
               isScene={isScene}
+              phaseExit={{
+                active: state.runtime.phase_exit_suggested,
+                onNext: () => nextPhase.mutate(),
+                onContinue: () => continuePhase.mutate(),
+                onExtend: () => extendPhase.mutate(),
+                disabled:
+                  roomReadOnly ||
+                  nextPhase.isPending ||
+                  continuePhase.isPending ||
+                  extendPhase.isPending
+              }}
             />
             <MessageList
               roomId={activeRoomId}

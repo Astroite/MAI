@@ -1820,6 +1820,7 @@ async def resume_autodrive(room_id: str, session: AsyncSession = Depends(get_ses
         result = await schedule_autodrive(session, room_id)
     except ValueError as exc:
         raise HTTPException(404, str(exc)) from exc
+    await session.commit()
     return {
         "status": result.status,
         "reason": result.reason,

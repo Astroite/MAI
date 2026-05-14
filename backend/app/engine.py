@@ -450,7 +450,8 @@ async def _should_auto_discuss(session: AsyncSession, room_id: str) -> bool:
         p = CASUAL_CONTINUATION_BASE * (CASUAL_CONTINUATION_DECAY ** runtime.consecutive_ai_turns)
         if random.random() > p:
             return False
-    if room and await check_phase_exit(session, room, runtime, emit=False):
+    if room and await check_phase_exit(session, room, runtime, emit=True, auto_transition=False):
+        await session.commit()
         return False
     return True
 
@@ -483,6 +484,8 @@ async def _autodrive_preflight_skip_reason(
         or account_monthly_total >= runtime.max_account_monthly_tokens
     ):
         return "token_budget_exceeded"
+    if await check_phase_exit(session, room, runtime, emit=True, auto_transition=False):
+        return "exit_condition_met"
     result = await pick_next_speaker(session, room, runtime, None)
     if result.kind == "phase_done":
         return "exit_condition_met"
@@ -500,13 +503,34 @@ async def schedule_autodrive(session: AsyncSession, room_id: str) -> AutodriveSc
     keep going by clicking a button instead of typing. Returns a skip reason
     when no chain is started so the UI can distinguish locked/frozen/no-speaker
     states from a successful schedule."""
+    runtime = await session.get(RoomRuntimeState, room_id)
+    room = await session.get(Room, room_id)
+    if runtime is None or room is None:
+        raise ValueError("room not found")
+    if runtime.frozen:
+        return AutodriveScheduleResult("skipped", "frozen")
+    if room.sealed_at is not None:
+        return AutodriveScheduleResult("skipped", "phase_not_auto")
+    if runtime.phase_exit_suggested or await check_phase_exit(
+        session,
+        room,
+        runtime,
+        emit=True,
+        auto_transition=False,
+    ):
+        return AutodriveScheduleResult("skipped", "exit_condition_met")
+    if _autodrive_stop_requested(room_id):
+        return AutodriveScheduleResult("skipped", "frozen")
+
     lock = _AUTODRIVE_LOCKS.get(room_id)
     if lock is not None and lock.locked():
+        if not active_calls_for_room(room_id):
+            skip_reason = await _autodrive_preflight_skip_reason(session, room_id)
+            if skip_reason == "exit_condition_met":
+                return AutodriveScheduleResult("skipped", skip_reason)
         return AutodriveScheduleResult("skipped", "locked")
     if active_calls_for_room(room_id):
         return AutodriveScheduleResult("skipped", "in_flight")
-    if _autodrive_stop_requested(room_id):
-        return AutodriveScheduleResult("skipped", "frozen")
     skip_reason = await _autodrive_preflight_skip_reason(session, room_id)
     if skip_reason is not None:
         return AutodriveScheduleResult("skipped", skip_reason)
@@ -527,6 +551,16 @@ async def _maybe_handle_pending_user_turn(room_id: str) -> None:
         runtime = await session.get(RoomRuntimeState, room_id)
         room = await session.get(Room, room_id)
         if runtime is None or runtime.frozen or room is None or room.sealed_at is not None:
+            clear_autodrive_lock(room_id)
+            return
+        if runtime.phase_exit_suggested or await check_phase_exit(
+            session,
+            room,
+            runtime,
+            emit=True,
+            auto_transition=False,
+        ):
+            await session.commit()
             clear_autodrive_lock(room_id)
             return
         latest = await session.scalar(
@@ -1114,7 +1148,7 @@ async def run_room_turn(
     await session.commit()
 
     if result.kind == "phase_done":
-        await emit_phase_exit(session, room, runtime)
+        await emit_phase_exit(session, room, runtime, auto_transition=False)
         await session.commit()
         return []
     if result.kind == "wait":
@@ -1546,7 +1580,7 @@ async def after_message_appended(session: AsyncSession, room_id: str, message: M
     room = await session.get(Room, room_id)
     runtime = await session.get(RoomRuntimeState, room_id)
     if room and runtime:
-        await check_phase_exit(session, room, runtime, emit=True)
+        await check_phase_exit(session, room, runtime, emit=True, auto_transition=False)
     await session.commit()
     await maybe_autodrive_after(room_id, message)
 
@@ -2556,7 +2590,14 @@ async def limit_facilitator_signals(
     ]
 
 
-async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRuntimeState, emit: bool = True) -> bool:
+async def check_phase_exit(
+    session: AsyncSession,
+    room: Room,
+    runtime: RoomRuntimeState,
+    emit: bool = True,
+    *,
+    auto_transition: bool = False,
+) -> bool:
     phase = await get_current_phase(session, runtime)
     template = await get_phase_template(session, phase)
     if phase is None or template is None:
@@ -2565,7 +2606,7 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
     allowed = await allowed_persona_ids(session, room.id, template, plan)
     counts = await _spoken_counts(session, room.id, phase.id)
     latest_message_id = await session.scalar(
-        select(Message.id).where(Message.room_id == room.id).order_by(Message.created_at.desc())
+        select(Message.id).where(Message.room_id == room.id).order_by(Message.created_at.desc()).limit(1)
     )
     matched: list[dict] = []
     extra = max(0, int(runtime.phase_extra_rounds or 0))
@@ -2601,7 +2642,7 @@ async def check_phase_exit(session: AsyncSession, room: Room, runtime: RoomRunti
     if matched and latest_message_id and runtime.phase_exit_suppressed_after_message_id == latest_message_id:
         return False
     if matched and emit and not runtime.phase_exit_suggested:
-        await emit_phase_exit(session, room, runtime, matched)
+        await emit_phase_exit(session, room, runtime, matched, auto_transition=auto_transition)
     return bool(matched)
 
 
@@ -2610,12 +2651,14 @@ async def emit_phase_exit(
     room: Room,
     runtime: RoomRuntimeState,
     matched: list[dict] | None = None,
+    *,
+    auto_transition: bool = False,
 ) -> None:
     runtime.phase_exit_suggested = True
     runtime.phase_exit_matched_conditions = matched or []
     await trace_record(session, room.id, "phase_transition", "phase exit suggested", {"matched": matched or []})
     await event_bus.publish(room.id, {"type": "phase.exit_suggested", "matched_conditions": matched or []})
-    if runtime.auto_transition:
+    if auto_transition and runtime.auto_transition:
         await transition_to_next_phase(session, room.id)
 
 
