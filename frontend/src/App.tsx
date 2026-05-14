@@ -36,12 +36,12 @@ export function App() {
   return (
     <div className="flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-surface text-text">
       <AppRail />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <UpdateBanner />
         <DesktopDiagnosticsBanner />
         <SetupBanner />
         {inRoomView ? (
-          <main className="flex min-h-0 flex-1 flex-col">
+          <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <Routes>
               <Route path="/rooms/:roomId" element={<RoomPage />} />
               <Route path="/rooms/:roomId/sub/:subId" element={<RoomPage />} />

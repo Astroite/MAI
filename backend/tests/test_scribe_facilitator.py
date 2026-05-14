@@ -6,9 +6,13 @@ cooldown, phase boundary triggering, and scribe state folding.
 
 from types import SimpleNamespace
 
+from sqlalchemy import text
+
 from app import engine as engine_module
+from app.db import SessionLocal
 from app.engine import filter_facilitator_signals
 from app.llm import StreamChunk, llm_adapter
+from app.trace import trace_record
 
 
 KNOWN_FACILITATOR_TAGS = {
@@ -72,6 +76,55 @@ async def _deterministic_complete_tool(
             "pacing_note": "deterministic test pacing",
         }
     raise AssertionError(f"unexpected tool call: {tool_name}")
+
+
+async def _lock_probe_complete_tool(
+    persona,
+    tool_name,
+    tool_description,
+    output_model,
+    payload,
+    max_tokens=1200,
+    api_provider=None,
+):
+    if tool_name == "scribe_update":
+        messages = payload.get("messages", [])
+        room_id = messages[0]["room_id"] if messages else payload.get("room_id")
+        async with SessionLocal() as probe:
+            await probe.execute(text("PRAGMA busy_timeout=200"))
+            await trace_record(probe, room_id, "lock_probe", "scribe LLM wait does not hold writer", {})
+            await probe.commit()
+    return await _deterministic_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=max_tokens,
+        api_provider=api_provider,
+    )
+
+
+async def _failing_scribe_complete_tool(
+    persona,
+    tool_name,
+    tool_description,
+    output_model,
+    payload,
+    max_tokens=1200,
+    api_provider=None,
+):
+    if tool_name == "scribe_update":
+        raise ValueError("model returned malformed JSON tool arguments at line 1 column 10")
+    return await _deterministic_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=max_tokens,
+        api_provider=api_provider,
+    )
 
 
 def _patch_system_role_llm(monkeypatch):
@@ -151,6 +204,55 @@ def test_phase_transition_forces_system_role_updates(client, review_format, arch
         "phase boundary must run scribe and fold the pending verdict"
     )
     assert state["facilitator_signals"], "phase boundary must run facilitator"
+
+
+def test_phase_boundary_scribe_does_not_hold_sqlite_writer_lock(
+    client, review_format, architect_persona, monkeypatch
+):
+    _patch_system_role_llm(monkeypatch)
+    monkeypatch.setattr(llm_adapter, "complete_tool", _lock_probe_complete_tool)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", _lock_probe_complete_tool)
+    room = client.post(
+        "/rooms",
+        json={"title": "pytest phase boundary lock probe", "format_id": review_format["id"], "persona_ids": [architect_persona["id"]]},
+    )
+    assert room.status_code == 200
+    room_id = room.json()["room"]["id"]
+
+    for content in ["锁探测 1", "锁探测 2", "锁探测 3"]:
+        assert client.post(f"/rooms/{room_id}/messages", json={"content": content}).status_code == 200
+    verdict = client.post(f"/rooms/{room_id}/verdicts", json={"content": "阶段边界等待 LLM 时不能占用 SQLite 写锁。"})
+    assert verdict.status_code == 200
+    verdict_id = verdict.json()["id"]
+
+    transitioned = client.post(f"/rooms/{room_id}/phase/next", json={})
+    assert transitioned.status_code == 200
+    decisions = transitioned.json()["scribe_state"]["current_state"]["decisions"]
+    assert any(item.get("message_id") == verdict_id for item in decisions)
+
+
+def test_scribe_tool_failure_does_not_break_phase_transition(
+    client, review_format, architect_persona, monkeypatch
+):
+    _patch_system_role_llm(monkeypatch)
+    monkeypatch.setattr(llm_adapter, "complete_tool", _failing_scribe_complete_tool)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", _failing_scribe_complete_tool)
+    room = client.post(
+        "/rooms",
+        json={"title": "pytest scribe failure tolerated", "format_id": review_format["id"], "persona_ids": [architect_persona["id"]]},
+    )
+    assert room.status_code == 200
+    room_id = room.json()["room"]["id"]
+
+    for content in ["失败容忍 1", "失败容忍 2", "失败容忍 3"]:
+        assert client.post(f"/rooms/{room_id}/messages", json={"content": content}).status_code == 200
+    assert client.post(f"/rooms/{room_id}/verdicts", json={"content": "坏 JSON 不能阻断阶段切换。"}).status_code == 200
+
+    transitioned = client.post(f"/rooms/{room_id}/phase/next", json={})
+    assert transitioned.status_code == 200
+    state = transitioned.json()
+    assert state["scribe_state"]["current_state"]["decisions"] == []
+    assert state["facilitator_signals"], "facilitator should still run when scribe fails"
 
 
 def test_facilitator_cadence_cooldown_and_manual_request(client, review_format, architect_persona, monkeypatch):

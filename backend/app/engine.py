@@ -175,10 +175,62 @@ class InFlightCall:
 
 
 ACTIVE_CALLS: dict[str, dict[str, InFlightCall]] = {}
+SYSTEM_TASK_LOCKS: dict[tuple[str, str], asyncio.Lock] = {}
 
 
 def active_calls_for_room(room_id: str) -> list[InFlightCall]:
     return list(ACTIVE_CALLS.get(room_id, {}).values())
+
+
+def _system_task_lock(kind: Literal["scribe", "facilitator"], room_id: str) -> asyncio.Lock:
+    key = (kind, room_id)
+    lock = SYSTEM_TASK_LOCKS.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        SYSTEM_TASK_LOCKS[key] = lock
+    return lock
+
+
+async def _record_system_task_failure(
+    session: AsyncSession,
+    room_id: str,
+    kind: Literal["scribe", "facilitator"],
+    latest_message_id: str,
+    exc: BaseException,
+) -> None:
+    tb = traceback.format_exc()
+    detail = _extract_llm_error_detail(exc)
+    event_type = "scribe_update_failed" if kind == "scribe" else "facilitator_signal_failed"
+    try:
+        await session.rollback()
+        await trace_record(
+            session,
+            room_id,
+            event_type,
+            f"{kind} system task failed: {exc!r}",
+            {
+                "latest_message_id": latest_message_id,
+                "error": repr(exc),
+                "detail": detail,
+                "traceback": tb,
+            },
+        )
+        await session.commit()
+    except Exception:  # noqa: BLE001
+        try:
+            await session.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+    await event_bus.publish(
+        room_id,
+        {
+            "type": "system.error",
+            "kind": kind,
+            "error_class": type(exc).__name__,
+            "detail": detail,
+            "traceback": tb,
+        },
+    )
 
 
 def _register_active_call(call: InFlightCall) -> None:
@@ -1586,65 +1638,108 @@ async def after_message_appended(session: AsyncSession, room_id: str, message: M
 
 
 async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_id: str) -> None:
-    # Story World scenes use a different folding pipeline (per-character episodic
-    # memory, landed in PR 3+). The room-level scribe tracks discussion
-    # consensus / decisions / etc. that don't make sense for a story scene, so
-    # short-circuit here when this room is a scene.
-    room = await session.get(Room, room_id)
-    if room is not None and is_scene_room(room):
-        return
-    state = await session.get(ScribeState, room_id)
-    if state is None:
-        state = ScribeState(room_id=room_id, current_state=DEFAULT_SCRIBE_STATE.copy())
-        session.add(state)
-        await session.flush()
-    current = normalize_scribe_state(state.current_state)
-    messages = list(
-        (
-            await session.scalars(
-                select(Message)
-                .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
-                .order_by(Message.created_at)
+    async with _system_task_lock("scribe", room_id):
+        try:
+            # Release any caller-held write transaction before waiting on the
+            # system-role LLM. SQLite permits only one writer, so holding phase
+            # or message mutations open across this await can block the room.
+            await session.commit()
+            # Story World scenes use a different folding pipeline (per-character episodic
+            # memory, landed in PR 3+). The room-level scribe tracks discussion
+            # consensus / decisions / etc. that don't make sense for a story scene, so
+            # short-circuit here when this room is a scene.
+            room = await session.get(Room, room_id, populate_existing=True)
+            if room is not None and is_scene_room(room):
+                await session.commit()
+                return
+            state = await session.get(ScribeState, room_id, populate_existing=True)
+            if state is None:
+                state = ScribeState(room_id=room_id, current_state=DEFAULT_SCRIBE_STATE.copy())
+                session.add(state)
+                await session.flush()
+                await session.commit()
+            current = normalize_scribe_state(state.current_state)
+            last_event_message_id = state.last_event_message_id
+            messages = list(
+                (
+                    await session.scalars(
+                        select(Message)
+                        .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
+                        .order_by(Message.created_at)
+                    )
+                ).all()
             )
-        ).all()
-    )
-    start_index = 0
-    if state.last_event_message_id:
-        for index, message in enumerate(messages):
-            if message.id == state.last_event_message_id:
-                start_index = index + 1
-                break
-    new_messages = messages[start_index:]
-    scribe = await get_room_system_persona(session, room_id, "scribe")
-    scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
-    update = await llm_adapter.complete_tool(
-        scribe,
-        "scribe_update",
-        SCRIBE_TOOL_DESCRIPTION,
-        ScribeUpdate,
-        {
-            "current_state": current,
-            "latest_message_id": latest_message_id,
-            "messages": [message_to_tool_payload(message) for message in new_messages],
-        },
-        api_provider=scribe_runtime,
-    )
-    current = apply_scribe_update(current, update)
-    state.current_state = current
-    state.last_event_message_id = new_messages[-1].id if new_messages else state.last_event_message_id or latest_message_id
-    await trace_record(
-        session,
-        room_id,
-        "scribe_update",
-        "ScribeState tool folded",
-        {
-            "update": update,
-            "state": current,
-            "model_runtime": scribe_runtime.trace_payload(),
-        },
-    )
-    await session.flush()
-    await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
+            start_index = 0
+            if last_event_message_id:
+                for index, message in enumerate(messages):
+                    if message.id == last_event_message_id:
+                        start_index = index + 1
+                        break
+            new_messages = messages[start_index:]
+            if not new_messages:
+                await session.commit()
+                return
+            scribe = await get_room_system_persona(session, room_id, "scribe")
+            scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
+            payload = {
+                "current_state": current,
+                "latest_message_id": latest_message_id,
+                "messages": [message_to_tool_payload(message) for message in new_messages],
+            }
+            await session.commit()
+
+            update = await llm_adapter.complete_tool(
+                scribe,
+                "scribe_update",
+                SCRIBE_TOOL_DESCRIPTION,
+                ScribeUpdate,
+                payload,
+                api_provider=scribe_runtime,
+            )
+
+            state = await session.get(ScribeState, room_id, populate_existing=True)
+            if state is None:
+                state = ScribeState(room_id=room_id, current_state=DEFAULT_SCRIBE_STATE.copy())
+                session.add(state)
+                await session.flush()
+            persisted_current = normalize_scribe_state(state.current_state)
+            if state.last_event_message_id and state.last_event_message_id != last_event_message_id:
+                message_positions = {message.id: index for index, message in enumerate(messages)}
+                persisted_index = message_positions.get(state.last_event_message_id)
+                target_index = message_positions.get(new_messages[-1].id)
+                if persisted_index is not None and target_index is not None and persisted_index >= target_index:
+                    await trace_record(
+                        session,
+                        room_id,
+                        "scribe_update_skipped",
+                        "scribe update already covered by a newer state",
+                        {
+                            "latest_message_id": latest_message_id,
+                            "last_event_message_id": state.last_event_message_id,
+                            "target_message_id": new_messages[-1].id,
+                            "model_runtime": scribe_runtime.trace_payload(),
+                        },
+                    )
+                    await session.commit()
+                    return
+            current = apply_scribe_update(persisted_current, update)
+            state.current_state = current
+            state.last_event_message_id = new_messages[-1].id
+            await trace_record(
+                session,
+                room_id,
+                "scribe_update",
+                "ScribeState tool folded",
+                {
+                    "update": update,
+                    "state": current,
+                    "model_runtime": scribe_runtime.trace_payload(),
+                },
+            )
+            await session.commit()
+            await event_bus.publish(room_id, {"type": "scribe.updated", "scribe_state": current})
+        except Exception as exc:  # noqa: BLE001
+            await _record_system_task_failure(session, room_id, "scribe", latest_message_id, exc)
 
 
 SCENE_MEMORY_TOOL_DESCRIPTION = (
@@ -2419,121 +2514,152 @@ async def run_facilitator_eval(
     latest_message_id: str,
     force: bool = False,
 ) -> FacilitatorSignal | None:
-    # Story World scenes don't need a discussion facilitator — pacing,
-    # consensus signals, and decision-pending tags all assume a working
-    # session, not an unfolding scene. Mirrors the scribe skip in
-    # run_scribe_update; a manual `force=True` request still goes through
-    # for the rare case the user explicitly asks via /facilitator.
-    if not force:
-        room = await session.get(Room, room_id)
-        if room is not None and is_scene_room(room):
-            return None
-    facilitator = await get_room_system_persona(session, room_id, "facilitator")
-    config = facilitator.config or {}
-    if config.get("disabled") and not force:
-        await trace_record(session, room_id, "facilitator_signal", "facilitator disabled", {"latest_message_id": latest_message_id})
-        await session.flush()
-        return None
-    context_window = int(config.get("context_window_messages", 50))
-    recent = list(
-        (
-            await session.scalars(
-                select(Message)
-                .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
-                .order_by(Message.created_at.desc())
-                .limit(context_window)
+    async with _system_task_lock("facilitator", room_id):
+        try:
+            await session.commit()
+            # Story World scenes don't need a discussion facilitator — pacing,
+            # consensus signals, and decision-pending tags all assume a working
+            # session, not an unfolding scene. Mirrors the scribe skip in
+            # run_scribe_update; a manual `force=True` request still goes through
+            # for the rare case the user explicitly asks via /facilitator.
+            if not force:
+                room = await session.get(Room, room_id, populate_existing=True)
+                if room is not None and is_scene_room(room):
+                    await session.commit()
+                    return None
+            facilitator = await get_room_system_persona(session, room_id, "facilitator")
+            config = dict(facilitator.config or {})
+            if config.get("disabled") and not force:
+                await trace_record(
+                    session,
+                    room_id,
+                    "facilitator_signal",
+                    "facilitator disabled",
+                    {"latest_message_id": latest_message_id},
+                )
+                await session.commit()
+                return None
+            context_window = int(config.get("context_window_messages", 50))
+            recent = list(
+                (
+                    await session.scalars(
+                        select(Message)
+                        .where(Message.room_id == room_id, Message.visibility_to_models.is_(True))
+                        .order_by(Message.created_at.desc())
+                        .limit(context_window)
+                    )
+                ).all()
             )
-        ).all()
-    )
-    runtime = await session.get(RoomRuntimeState, room_id)
-    phase = await get_current_phase(session, runtime) if runtime else None
-    template = await get_phase_template(session, phase)
-    history_limit = max(1, int(config.get("cooldown_per_tag_rounds", 5)))
-    previous = list(
-        (
-            await session.scalars(
-                select(FacilitatorSignal)
-                .where(FacilitatorSignal.room_id == room_id)
-                .order_by(FacilitatorSignal.created_at.desc())
-                .limit(history_limit)
+            runtime = await session.get(RoomRuntimeState, room_id, populate_existing=True)
+            phase = await get_current_phase(session, runtime) if runtime else None
+            template = await get_phase_template(session, phase)
+            history_limit = max(1, int(config.get("cooldown_per_tag_rounds", 5)))
+            previous = list(
+                (
+                    await session.scalars(
+                        select(FacilitatorSignal)
+                        .where(FacilitatorSignal.room_id == room_id)
+                        .order_by(FacilitatorSignal.created_at.desc())
+                        .limit(history_limit)
+                    )
+                ).all()
             )
-        ).all()
-    )
-    facilitator, facilitator_runtime = await _runtime_view_for_persona(session, facilitator)
-    evaluation = await llm_adapter.complete_tool(
-        facilitator,
-        "facilitator_evaluation",
-        FACILITATOR_TOOL_DESCRIPTION,
-        FacilitatorEvaluation,
-        {
-            "latest_message_id": latest_message_id,
-            "recent_messages": [message_to_tool_payload(message) for message in recent],
-            "current_phase": phase_to_tool_payload(phase, template),
-            "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
-            "manual_request": force,
-        },
-        api_provider=facilitator_runtime,
-    )
-    signals = evaluation.get("signals") or [default_facilitator_signal(recent)]
-    signals = (await limit_facilitator_signals(session, runtime, phase, template, latest_message_id)) + signals
-    signals = filter_facilitator_signals(signals, previous, config, force)
-    if not signals:
-        await trace_record(
-            session,
-            room_id,
-            "facilitator_signal",
-            "all facilitator signals suppressed by cooldown",
-            {"evaluation": evaluation, "cooldown_per_tag_rounds": history_limit},
-        )
-        await session.flush()
-        return None
-    overall = evaluation.get("overall_health") or "productive"
-    pacing = evaluation.get("pacing_note") or "节奏正常。"
+            facilitator, facilitator_runtime = await _runtime_view_for_persona(session, facilitator)
+            fallback_signal = default_facilitator_signal(recent)
+            payload = {
+                "latest_message_id": latest_message_id,
+                "recent_messages": [message_to_tool_payload(message) for message in recent],
+                "current_phase": phase_to_tool_payload(phase, template),
+                "previous_signals": [facilitator_signal_to_tool_payload(item) for item in previous],
+                "manual_request": force,
+            }
+            await session.commit()
 
-    meta = Message(
-        room_id=room_id,
-        message_type="facilitator_signal",
-        author_actual="system",
-        visibility="observer_only",
-        visibility_to_models=False,
-        content="\n".join(f"{s['tag']}: {s['reasoning']}" for s in signals),
-    )
-    session.add(meta)
-    await session.flush()
-    item = FacilitatorSignal(
-        room_id=room_id,
-        message_id=meta.id,
-        trigger_after_message_id=latest_message_id,
-        signals=signals,
-        overall_health=overall,
-        pacing_note=pacing,
-    )
-    session.add(item)
-    await trace_record(
-        session,
-        room_id,
-        "facilitator_signal",
-        overall,
-        {
-            "evaluation": evaluation,
-            "model_runtime": facilitator_runtime.trace_payload(),
-        },
-    )
-    await session.flush()
-    await event_bus.publish(
-        room_id,
-        {
-            "type": "facilitator.signal",
-            "signal": {
-                "id": item.id,
-                "signals": signals,
-                "overall_health": overall,
-                "pacing_note": pacing,
-                "message_id": meta.id,
-            },
-        },
-    )
-    return item
+            evaluation = await llm_adapter.complete_tool(
+                facilitator,
+                "facilitator_evaluation",
+                FACILITATOR_TOOL_DESCRIPTION,
+                FacilitatorEvaluation,
+                payload,
+                api_provider=facilitator_runtime,
+            )
+
+            runtime = await session.get(RoomRuntimeState, room_id, populate_existing=True)
+            phase = await get_current_phase(session, runtime) if runtime else None
+            template = await get_phase_template(session, phase)
+            previous = list(
+                (
+                    await session.scalars(
+                        select(FacilitatorSignal)
+                        .where(FacilitatorSignal.room_id == room_id)
+                        .order_by(FacilitatorSignal.created_at.desc())
+                        .limit(history_limit)
+                    )
+                ).all()
+            )
+            signals = evaluation.get("signals") or [fallback_signal]
+            signals = (await limit_facilitator_signals(session, runtime, phase, template, latest_message_id)) + signals
+            signals = filter_facilitator_signals(signals, previous, config, force)
+            if not signals:
+                await trace_record(
+                    session,
+                    room_id,
+                    "facilitator_signal",
+                    "all facilitator signals suppressed by cooldown",
+                    {"evaluation": evaluation, "cooldown_per_tag_rounds": history_limit},
+                )
+                await session.commit()
+                return None
+            overall = evaluation.get("overall_health") or "productive"
+            pacing = evaluation.get("pacing_note") or "节奏正常。"
+
+            meta = Message(
+                room_id=room_id,
+                message_type="facilitator_signal",
+                author_actual="system",
+                visibility="observer_only",
+                visibility_to_models=False,
+                content="\n".join(f"{s['tag']}: {s['reasoning']}" for s in signals),
+            )
+            session.add(meta)
+            await session.flush()
+            item = FacilitatorSignal(
+                room_id=room_id,
+                message_id=meta.id,
+                trigger_after_message_id=latest_message_id,
+                signals=signals,
+                overall_health=overall,
+                pacing_note=pacing,
+            )
+            session.add(item)
+            await trace_record(
+                session,
+                room_id,
+                "facilitator_signal",
+                overall,
+                {
+                    "evaluation": evaluation,
+                    "model_runtime": facilitator_runtime.trace_payload(),
+                },
+            )
+            await session.commit()
+            await event_bus.publish(
+                room_id,
+                {
+                    "type": "facilitator.signal",
+                    "signal": {
+                        "id": item.id,
+                        "signals": signals,
+                        "overall_health": overall,
+                        "pacing_note": pacing,
+                        "message_id": meta.id,
+                    },
+                },
+            )
+            return item
+        except Exception as exc:  # noqa: BLE001
+            await _record_system_task_failure(session, room_id, "facilitator", latest_message_id, exc)
+            return None
 
 
 async def run_manual_facilitator_eval(session: AsyncSession, room_id: str) -> FacilitatorSignal | None:

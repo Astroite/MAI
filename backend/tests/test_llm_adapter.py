@@ -1,3 +1,5 @@
+import pytest
+
 from app.llm import LLMAdapter, llm_adapter
 from app.models import ApiProvider, Persona
 
@@ -41,6 +43,12 @@ def test_provider_params_passed_through_adapter():
     assert adapter._build_provider_params(
         ApiProvider(id="t2", name="t2", provider_slug="openai", api_key="sk-y")
     ) == {"api_key": "sk-y"}
+
+
+def test_parse_tool_arguments_wraps_malformed_json():
+    adapter = LLMAdapter()
+    with pytest.raises(ValueError, match="malformed JSON tool arguments"):
+        adapter._parse_tool_arguments('{"signals": [{"tag": "x" "severity": "info"}]}')
 
 
 def _provider(slug: str) -> ApiProvider:

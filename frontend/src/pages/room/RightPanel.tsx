@@ -45,14 +45,30 @@ export function RightPanel({
   const [params, setParams] = useSearchParams();
   const { t } = useI18n();
   const expandedKey = params.get("panel") as AnyKey | null;
+  const panelRef = useRef<HTMLElement | null>(null);
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const readOnly = state.runtime.frozen || Boolean(state.room.sealed_at);
   const isScene = isSceneRoom(state.room);
 
   useEffect(() => {
     if (!expandedKey) return;
-    const node = sectionRefs.current[expandedKey];
-    if (node) node.scrollIntoView({ behavior: "smooth", block: "start" });
+    const frame = window.requestAnimationFrame(() => {
+      const panel = panelRef.current;
+      const node = sectionRefs.current[expandedKey];
+      if (!panel || !node) return;
+      const panelRect = panel.getBoundingClientRect();
+      const nodeRect = node.getBoundingClientRect();
+      const nextTop = getPanelSectionScrollTop({
+        currentScrollTop: panel.scrollTop,
+        maxScrollTop: panel.scrollHeight - panel.clientHeight,
+        panelTop: panelRect.top,
+        panelBottom: panelRect.bottom,
+        sectionTop: nodeRect.top,
+        sectionBottom: nodeRect.bottom
+      });
+      if (nextTop !== panel.scrollTop) panel.scrollTo({ top: nextTop, behavior: "smooth" });
+    });
+    return () => window.cancelAnimationFrame(frame);
   }, [expandedKey]);
 
   const setExpanded = (key: AnyKey | null) => {
@@ -73,7 +89,7 @@ export function RightPanel({
   };
 
   return (
-    <aside className="mai-scrollbar flex h-full min-h-0 flex-col overflow-y-auto bg-panel">
+    <aside ref={panelRef} className="mai-scrollbar flex h-full min-h-0 flex-col overflow-y-auto bg-panel">
       {isScene ? (
         sceneStage ? (
           <SceneStagePanel {...sceneStage} />
@@ -221,6 +237,38 @@ export function RightPanel({
       </div>
     </aside>
   );
+}
+
+export function getPanelSectionScrollTop({
+  currentScrollTop,
+  maxScrollTop,
+  panelTop,
+  panelBottom,
+  sectionTop,
+  sectionBottom,
+  padding = 12
+}: {
+  currentScrollTop: number;
+  maxScrollTop: number;
+  panelTop: number;
+  panelBottom: number;
+  sectionTop: number;
+  sectionBottom: number;
+  padding?: number;
+}) {
+  const visibleTop = panelTop + padding;
+  const visibleBottom = panelBottom - padding;
+  const visibleHeight = Math.max(0, visibleBottom - visibleTop);
+  const sectionHeight = sectionBottom - sectionTop;
+  let nextTop = currentScrollTop;
+
+  if (sectionTop < visibleTop || sectionHeight > visibleHeight) {
+    nextTop += sectionTop - visibleTop;
+  } else if (sectionBottom > visibleBottom) {
+    nextTop += sectionBottom - visibleBottom;
+  }
+
+  return Math.min(Math.max(0, maxScrollTop), Math.max(0, nextTop));
 }
 
 const TONE_DOT: Record<"brand" | "info" | "warning", string> = {
