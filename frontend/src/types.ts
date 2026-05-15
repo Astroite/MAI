@@ -490,9 +490,12 @@ export interface SceneMemoryScribeResult {
 export interface SceneSealResult {
   scene: Room;
   scribe_results: SceneMemoryScribeResult[];
+  committed?: Record<string, number>;
+  skipped?: Record<string, number>;
+  warnings?: SealDraftWarning[];
 }
 
-export type SceneSealDraftStatus = "generating" | "ready" | "failed" | "committed" | "discarded";
+export type SceneSealDraftStatus = "generating" | "partial" | "ready" | "failed" | "committed" | "discarded";
 
 export interface SealDraftTimelineEvent {
   id: string;
@@ -503,6 +506,10 @@ export interface SealDraftTimelineEvent {
   relatedCharacterIds?: string[];
   confidence?: "low" | "medium" | "high";
   selected: boolean;
+  status?: "validated" | "skipped" | string;
+  skipReason?: string;
+  evidenceMessageIds?: string[];
+  evidence_message_ids?: string[];
 }
 
 export interface SealDraftMemoryUpdate {
@@ -517,6 +524,10 @@ export interface SealDraftMemoryUpdate {
   locked?: boolean;
   selected: boolean;
   evidence?: string;
+  status?: "validated" | "skipped" | string;
+  skipReason?: string;
+  evidenceMessageIds?: string[];
+  evidence_message_ids?: string[];
 }
 
 export interface SealDraftRelationshipUpdate {
@@ -535,6 +546,10 @@ export interface SealDraftRelationshipUpdate {
   confidence?: "low" | "medium" | "high";
   selected: boolean;
   evidence?: string;
+  status?: "validated" | "skipped" | string;
+  skipReason?: string;
+  evidenceMessageIds?: string[];
+  evidence_message_ids?: string[];
 }
 
 export interface SealDraftWarning {
@@ -582,7 +597,7 @@ export interface SceneSealDraftUpdateBody {
   world_bible_suggestions?: Array<Record<string, unknown>>;
   next_scene_suggestions?: Array<Record<string, unknown>>;
   warnings?: SealDraftWarning[];
-  status?: "ready" | "discarded";
+  status?: "partial" | "ready" | "discarded";
 }
 
 export interface InFlightPartial {

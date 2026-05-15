@@ -41,6 +41,8 @@ from .engine import (
     schedule_autodrive,
     transition_to_next_phase,
     unfreeze_room,
+    build_scene_seal_context,
+    validate_scene_seal_draft,
 )
 from .event_bus import event_bus
 from .exporter import build_content_disposition, render_room_markdown
@@ -3638,10 +3640,25 @@ async def _create_seal_draft(
     scene = await _scene_or_404(session, room_id)
     if scene.sealed_at is not None:
         raise HTTPException(409, "scene is already sealed")
+    retry_of_snapshot = None
     if retry_of_draft_id:
         retry_of = await _get_seal_draft_or_404(session, room_id, retry_of_draft_id)
         if retry_of.status == "committed":
             raise HTTPException(409, "committed seal draft cannot be retried")
+        retry_of_snapshot = SimpleNamespace(
+            status=retry_of.status,
+            scene_summary=retry_of.scene_summary,
+            title_suggestion=retry_of.title_suggestion,
+            date_label=retry_of.date_label,
+            location=retry_of.location,
+            timeline_events=list(retry_of.timeline_events or []),
+            memory_updates=list(retry_of.memory_updates or []),
+            relationship_updates=list(retry_of.relationship_updates or []),
+            plot_hook_updates=list(retry_of.plot_hook_updates or []),
+            world_bible_suggestions=list(retry_of.world_bible_suggestions or []),
+            next_scene_suggestions=list(retry_of.next_scene_suggestions or []),
+            warnings=list(retry_of.warnings or []),
+        )
     await session.rollback()
     drain_result = await drain_active_calls(
         room_id,
@@ -3667,12 +3684,12 @@ async def _create_seal_draft(
         runtime.frozen = True
     scene.status = "frozen"
     scene.frozen_at = scene.frozen_at or datetime.now(timezone.utc)
-    payload = await generate_scene_seal_draft_payload(session, scene)
+    payload = await generate_scene_seal_draft_payload(session, scene, retry_of=retry_of_snapshot)
     draft = WorldSceneSealDraft(
         id=new_id(),
         world_id=scene.world_id or "",
         scene_id=scene.id,
-        status="failed" if payload.get("error") else "ready",
+        status=payload.get("status") or ("failed" if payload.get("error") else "ready"),
         scene_summary=payload.get("scene_summary") or "",
         title_suggestion=payload.get("title_suggestion") or scene.title,
         date_label=payload.get("date_label") or "",
@@ -3722,9 +3739,9 @@ async def _commit_seal_draft(
     scene = await _scene_or_404(session, room_id)
     draft = await _get_seal_draft_or_404(session, room_id, draft_id)
     if draft.status == "committed":
-        return {"scene": scene, "scribe_results": []}
-    if draft.status != "ready":
-        raise HTTPException(409, "only ready seal drafts can be committed")
+        return {"scene": scene, "scribe_results": [], "committed": {}, "skipped": {}, "warnings": []}
+    if draft.status not in {"ready", "partial"}:
+        raise HTTPException(409, "only ready or partial seal drafts can be committed")
     await session.rollback()
     drain_result = await drain_active_calls(
         room_id,
@@ -3745,9 +3762,9 @@ async def _commit_seal_draft(
     scene = await _scene_or_404(session, room_id)
     draft = await _get_seal_draft_or_404(session, room_id, draft_id)
     if draft.status == "committed":
-        return {"scene": scene, "scribe_results": []}
-    if draft.status != "ready":
-        raise HTTPException(409, "only ready seal drafts can be committed")
+        return {"scene": scene, "scribe_results": [], "committed": {}, "skipped": {}, "warnings": []}
+    if draft.status not in {"ready", "partial"}:
+        raise HTTPException(409, "only ready or partial seal drafts can be committed")
     if scene.sealed_at is not None:
         raise HTTPException(409, "scene is already sealed")
     existing_committed = await session.scalar(
@@ -3761,6 +3778,26 @@ async def _commit_seal_draft(
     )
     if existing_committed:
         raise HTTPException(409, "scene already has a committed seal draft")
+    context = await build_scene_seal_context(session, scene.id)
+    validated_payload = validate_scene_seal_draft(
+        {
+            "scene_summary": draft.scene_summary,
+            "title_suggestion": draft.title_suggestion,
+            "date_label": draft.date_label,
+            "location": draft.location,
+            "timeline_events": list(draft.timeline_events or []),
+            "memory_updates": list(draft.memory_updates or []),
+            "relationship_updates": list(draft.relationship_updates or []),
+            "warnings": list(draft.warnings or []),
+            "error": draft.error,
+        },
+        context,
+    )
+    draft.timeline_events = validated_payload["timeline_events"]
+    draft.memory_updates = validated_payload["memory_updates"]
+    draft.relationship_updates = validated_payload["relationship_updates"]
+    draft.warnings = validated_payload["warnings"]
+    validation_stats = validated_payload.get("validation") or {}
     world_id = scene.world_id or ""
     characters = {
         character.id: character
@@ -3773,6 +3810,8 @@ async def _commit_seal_draft(
     )
     next_order = int(current_max_order or 0) + 1
     for item in _selected_draft_items(draft.timeline_events):
+        if item.get("status") != "validated":
+            continue
         event_type = _draft_value(item, "type", default="arc_update")
         if event_type == "scene":
             continue
@@ -3815,6 +3854,8 @@ async def _commit_seal_draft(
 
     in_world_time = draft.date_label or scene.in_world_time_end or scene.in_world_time_start or ""
     for item in _selected_draft_items(draft.memory_updates):
+        if item.get("status") != "validated":
+            continue
         character_id = _draft_value(item, "characterId", "character_id")
         character = characters.get(character_id)
         content = _draft_value(item, "content").strip()
@@ -3840,6 +3881,8 @@ async def _commit_seal_draft(
         else:
             result["episodes_count"] = int(result["episodes_count"]) + 1
     for item in _selected_draft_items(draft.relationship_updates):
+        if item.get("status") != "validated":
+            continue
         from_id = _draft_value(item, "fromCharacterId", "from_character_id")
         to_id = _draft_value(item, "toCharacterId", "to_character_id")
         if from_id == to_id or from_id not in characters or to_id not in characters:
@@ -3888,6 +3931,15 @@ async def _commit_seal_draft(
     decayed = await decay_unused_memories(session, scene)
     dropped = await enforce_memory_cap(session, scene)
     results = [dict(item) for item in result_by_character.values()]
+    committed_stats = {
+        "timeline_events": next_order - int(current_max_order or 0) - 1,
+        "memory_updates": sum(
+            int(item.get("episodes_count", 0)) + int(item.get("vows_count", 0))
+            for item in results
+        ),
+        "relationship_updates": sum(int(item.get("impressions_count", 0)) for item in results),
+    }
+    skipped_stats = dict((validation_stats.get("skipped") or {}))
     await trace_record(
         session,
         scene.id,
@@ -3898,6 +3950,9 @@ async def _commit_seal_draft(
             "results": results,
             "decayed": decayed,
             "dropped": dropped,
+            "committed": committed_stats,
+            "skipped": skipped_stats,
+            "warnings": draft.warnings,
         },
     )
     await session.flush()
@@ -3907,7 +3962,13 @@ async def _commit_seal_draft(
         scene.id,
         {"type": "scene.sealed", "scene": RoomOut.model_validate(scene).model_dump(mode="json")},
     )
-    return {"scene": scene, "scribe_results": results}
+    return {
+        "scene": scene,
+        "scribe_results": results,
+        "committed": committed_stats,
+        "skipped": skipped_stats,
+        "warnings": draft.warnings,
+    }
 
 
 @app.post("/rooms/{room_id}/seal", response_model=SceneSealDraftOut)

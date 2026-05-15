@@ -858,13 +858,16 @@ class SceneMemoryScribeResult(APIModel):
 class SceneSealOut(APIModel):
     scene: RoomOut
     scribe_results: list[SceneMemoryScribeResult] = Field(default_factory=list)
+    committed: dict[str, int] = Field(default_factory=dict)
+    skipped: dict[str, int] = Field(default_factory=dict)
+    warnings: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class SceneSealDraftOut(APIModel):
     id: str
     world_id: str
     scene_id: str
-    status: Literal["generating", "ready", "failed", "committed", "discarded"]
+    status: Literal["generating", "partial", "ready", "failed", "committed", "discarded"]
     scene_summary: str = ""
     title_suggestion: str = ""
     date_label: str = ""
@@ -899,7 +902,7 @@ class SceneSealDraftUpdate(APIModel):
     world_bible_suggestions: list[dict[str, Any]] | None = None
     next_scene_suggestions: list[dict[str, Any]] | None = None
     warnings: list[dict[str, Any]] | None = None
-    status: Literal["ready", "discarded"] | None = None
+    status: Literal["partial", "ready", "discarded"] | None = None
 
 
 class RoomRuntimeOut(APIModel):
@@ -1522,9 +1525,11 @@ class WorldCharacterMemoryUpdate(APIModel):
 class MemoryEntryDraft(APIModel):
     """One row the LLM proposes adding for a character at scene seal."""
 
-    kind: Literal["episode", "vow"] = "episode"
+    kind: Literal["episode", "vow", "fact"] = "episode"
     content: str = Field(min_length=1, max_length=600)
     salience: float = Field(default=0.5, ge=0.0, le=1.0)
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    evidence_message_ids: list[str] = Field(default_factory=list)
 
 
 class MemoryDistillation(APIModel):
@@ -1548,6 +1553,8 @@ class RelationImpression(APIModel):
     sentiment_delta: float = Field(default=0.0, ge=-1.0, le=1.0)
     label: str | None = Field(default=None, max_length=64)
     notes_append: str = Field(default="", max_length=400)
+    confidence: float = Field(default=0.7, ge=0.0, le=1.0)
+    evidence_message_ids: list[str] = Field(default_factory=list)
 
 
 # --- Relationship card CRUD ---------------------------------------------

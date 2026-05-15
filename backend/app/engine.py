@@ -150,6 +150,19 @@ class DrainResult:
     clean: bool
 
 
+@dataclass(frozen=True)
+class SceneSealContext:
+    scene: Room
+    world: World | None
+    transcript_messages: list[Message]
+    public_transcript: list[Message]
+    stage_members: list[WorldSceneMember]
+    characters: dict[str, WorldCharacter]
+    character_visible_messages: dict[str, list[Message]]
+    character_existing_memories: dict[str, list[WorldCharacterMemory]]
+    character_existing_relations: dict[str, list[WorldCharacterRelation]]
+
+
 @dataclass
 class InFlightCall:
     room_id: str
@@ -1743,17 +1756,19 @@ async def run_scribe_update(session: AsyncSession, room_id: str, latest_message_
 
 
 SCENE_MEMORY_TOOL_DESCRIPTION = (
-    "Distill what THIS character experienced in this scene. Output two streams:\n"
+    "Distill what THIS character personally experienced in this scene. "
+    "Use only witnessed_messages and cite evidence_message_ids for every item. "
+    "Do not infer from system messages, tool logs, director instructions, or "
+    "anything outside this character's visible transcript. Output two streams:\n"
     "1) `new_episodes`: 0–6 short, first-person memory entries (specific event, "
     "vow they made, or sharp impression). Skip generic recap. Don't repeat "
-    "anything the existing-memories list already has. Salience: 0.3 trivial, "
-    "0.6 notable, 0.9 turning-point.\n"
+    "anything the existing-memories list already has. Include evidence_message_ids. "
+    "Salience: 0.3 trivial, 0.6 notable, 0.9 turning-point.\n"
     "2) `impressions`: 0–N per-peer relationship updates. about_character_id "
     "must be a peer that was on stage with this character (see peers_on_stage). "
     "sentiment_delta is the *change* this scene caused, clamped [-1, +1]. label "
     "names the relationship in 2-4 chars (e.g. 盟友/宿敌/暗恋). notes_append is a "
-    "short fact/quote you want to remember about them — it gets appended (not "
-    "replacing) the existing notes."
+    "short fact/quote you want to remember about them. Include evidence_message_ids."
 )
 
 
@@ -1813,6 +1828,174 @@ async def _slice_messages_for_character(
     return in_range
 
 
+_SEAL_EXCLUDED_MESSAGE_TYPES = {
+    "background_update",
+    "facilitator_signal",
+    "masquerade_reveal",
+    "meta",
+    "participant.enter",
+    "participant.exit",
+    "tool_invocation",
+}
+
+
+def _seal_memory_input_message(message: Message) -> bool:
+    if not message.visibility_to_models:
+        return False
+    if message.author_actual == "system":
+        return False
+    if message.message_type in _SEAL_EXCLUDED_MESSAGE_TYPES:
+        return False
+    return bool((message.content or "").strip())
+
+
+def _seal_message_payload(message: Message) -> dict[str, Any]:
+    content = (message.content or "").strip()
+    return {
+        "id": message.id,
+        "author": message.user_masquerade_name
+        or message.author_persona_id
+        or message.author_actual,
+        "author_persona_id": message.author_persona_id,
+        "author_actual": message.author_actual,
+        "message_type": message.message_type,
+        "created_at": message.created_at.isoformat() if message.created_at else None,
+        "content": content[:1200],
+    }
+
+
+def _confidence_label(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.7
+    if number >= 0.75:
+        return "high"
+    if number >= 0.4:
+        return "medium"
+    return "low"
+
+
+def _item_evidence_ids(item: dict[str, Any]) -> list[str]:
+    raw = item.get("evidence_message_ids")
+    if raw is None:
+        raw = item.get("evidenceMessageIds")
+    if raw is None:
+        raw = item.get("evidence_messageIds")
+    if not isinstance(raw, list):
+        return []
+    return [value for value in raw if isinstance(value, str)]
+
+
+def _with_evidence_ids(item: dict[str, Any], evidence_ids: list[str]) -> dict[str, Any]:
+    item["evidenceMessageIds"] = evidence_ids
+    item["evidence_message_ids"] = evidence_ids
+    return item
+
+
+def _seal_warning(
+    warning_type: str,
+    message: str,
+    *,
+    draft_item_ids: list[str] | None = None,
+    character_ids: list[str] | None = None,
+    part: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    warning: dict[str, Any] = {
+        "id": new_id(),
+        "type": warning_type,
+        "message": message,
+    }
+    if draft_item_ids:
+        warning["relatedDraftItemIds"] = draft_item_ids
+    if character_ids:
+        warning["relatedCharacterIds"] = character_ids
+    if part:
+        warning["part"] = part
+    return warning
+
+
+async def build_scene_seal_context(session: AsyncSession, scene_id: str) -> SceneSealContext:
+    scene = await session.get(Room, scene_id)
+    if scene is None or not is_scene_room(scene):
+        raise ValueError("room is not a scene")
+    world = await session.get(World, scene.world_id) if scene.world_id else None
+    transcript_messages = list(
+        (
+            await session.scalars(
+                select(Message)
+                .where(Message.room_id == scene.id, Message.visibility_to_models.is_(True))
+                .order_by(Message.created_at)
+            )
+        ).all()
+    )
+    stage_members = list(
+        (
+            await session.scalars(
+                select(WorldSceneMember)
+                .where(WorldSceneMember.scene_id == scene.id)
+                .order_by(WorldSceneMember.joined_at)
+            )
+        ).all()
+    )
+    character_ids = [member.world_character_id for member in stage_members]
+    characters = {
+        character.id: character
+        for character in (
+            await session.scalars(
+                select(WorldCharacter).where(WorldCharacter.id.in_(character_ids))
+            )
+        ).all()
+    } if character_ids else {}
+    public_transcript = [
+        message for message in transcript_messages if _seal_memory_input_message(message)
+    ]
+    character_visible_messages: dict[str, list[Message]] = {}
+    character_existing_memories: dict[str, list[WorldCharacterMemory]] = {}
+    character_existing_relations: dict[str, list[WorldCharacterRelation]] = {}
+    for member in stage_members:
+        character_id = member.world_character_id
+        sliced = await _slice_messages_for_character(session, scene.id, member)
+        character_visible_messages[character_id] = [
+            message for message in sliced if _seal_memory_input_message(message)
+        ]
+        character_existing_memories[character_id] = list(
+            (
+                await session.scalars(
+                    select(WorldCharacterMemory)
+                    .where(WorldCharacterMemory.world_character_id == character_id)
+                    .order_by(
+                        WorldCharacterMemory.salience.desc(),
+                        WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
+                    )
+                    .limit(20)
+                )
+            ).all()
+        )
+        peer_ids = [pid for pid in character_ids if pid != character_id]
+        character_existing_relations[character_id] = list(
+            (
+                await session.scalars(
+                    select(WorldCharacterRelation).where(
+                        WorldCharacterRelation.from_character_id == character_id,
+                        WorldCharacterRelation.to_character_id.in_(peer_ids),
+                    )
+                )
+            ).all()
+        ) if peer_ids else []
+    return SceneSealContext(
+        scene=scene,
+        world=world,
+        transcript_messages=transcript_messages,
+        public_transcript=public_transcript,
+        stage_members=stage_members,
+        characters=characters,
+        character_visible_messages=character_visible_messages,
+        character_existing_memories=character_existing_memories,
+        character_existing_relations=character_existing_relations,
+    )
+
+
 def _seal_scene_summary(scene: Room, messages: list[Message]) -> str:
     visible = [
         message.content.strip()
@@ -1835,9 +2018,374 @@ def _importance_from_salience(value: float) -> str:
     return "low"
 
 
+async def generate_public_scene_summary(context: SceneSealContext) -> dict[str, Any]:
+    scene = context.scene
+    evidence_ids = [message.id for message in context.public_transcript[-12:]]
+    summary = _seal_scene_summary(scene, context.public_transcript)
+    return {
+        "summary": summary,
+        "world_delta": "",
+        "open_threads": [],
+        "timeline_suggestion": summary[:600],
+        "evidence_message_ids": evidence_ids,
+    }
+
+
+async def generate_character_memory_updates(
+    context: SceneSealContext,
+    character_id: str,
+    scribe: Any,
+    scribe_runtime: ResolvedModelRuntime,
+) -> dict[str, Any]:
+    scene = context.scene
+    character = context.characters.get(character_id)
+    base_result = {
+        "character_id": character_id,
+        "character_name": character.name if character else "",
+        "status": "skipped",
+        "episodes_count": 0,
+        "impressions_count": 0,
+        "vows_count": 0,
+        "error": None,
+    }
+    if character is None:
+        return {
+            "result": {**base_result, "status": "failed", "error": "character not found"},
+            "memory_updates": [],
+            "relationship_updates": [],
+            "warnings": [
+                _seal_warning(
+                    "failed_part",
+                    f"character not found: {character_id}",
+                    character_ids=[character_id],
+                    part={"kind": "character_memory", "characterId": character_id},
+                )
+            ],
+        }
+    if character.kind != "ai":
+        return {
+            "result": {
+                **base_result,
+                "error": "user characters do not run memory scribe",
+            },
+            "memory_updates": [],
+            "relationship_updates": [],
+            "warnings": [],
+        }
+    witnessed = context.character_visible_messages.get(character.id, [])
+    if not witnessed:
+        return {
+            "result": {**base_result, "error": "no witnessed messages"},
+            "memory_updates": [],
+            "relationship_updates": [],
+            "warnings": [],
+        }
+    peer_names = {
+        peer_id: peer.name
+        for peer_id, peer in context.characters.items()
+        if peer_id != character.id
+    }
+    payload = {
+        "scene": {
+            "id": scene.id,
+            "scene_index": scene.scene_index,
+            "title": scene.title,
+            "background": scene.background,
+            "in_world_time_start": scene.in_world_time_start,
+            "in_world_time_end": scene.in_world_time_end,
+        },
+        "character": {
+            "id": character.id,
+            "name": character.name,
+            "identity": character.identity,
+            "core_identity": character.core_identity,
+            "goals_text": character.goals_text,
+        },
+        "peers_on_stage": [
+            {"id": pid, "name": pname} for pid, pname in peer_names.items()
+        ],
+        "existing_memories": [
+            {"kind": m.kind, "content": m.content, "salience": m.salience}
+            for m in context.character_existing_memories.get(character.id, [])
+        ],
+        "existing_relations": [
+            {
+                "about_character_id": r.to_character_id,
+                "label": r.label,
+                "sentiment": r.sentiment,
+                "notes": r.notes,
+            }
+            for r in context.character_existing_relations.get(character.id, [])
+        ],
+        "witnessed_messages": [_seal_message_payload(message) for message in witnessed],
+    }
+    try:
+        distilled = await llm_adapter.complete_tool(
+            scribe,
+            "scene_memory_distill",
+            SCENE_MEMORY_TOOL_DESCRIPTION,
+            MemoryDistillation,
+            payload,
+            api_provider=scribe_runtime,
+        )
+    except Exception as exc:  # noqa: BLE001
+        error = str(exc)
+        return {
+            "result": {**base_result, "status": "failed", "error": error},
+            "memory_updates": [],
+            "relationship_updates": [],
+            "warnings": [
+                _seal_warning(
+                    "failed_part",
+                    f"{character.name}: {error}",
+                    character_ids=[character.id],
+                    part={"kind": "character_memory", "characterId": character.id},
+                )
+            ],
+            "trace": {"character_id": character.id, "error": error},
+        }
+
+    memory_updates: list[dict[str, Any]] = []
+    relationship_updates: list[dict[str, Any]] = []
+    episodes_count = 0
+    vows_count = 0
+    for entry in distilled.get("new_episodes") or []:
+        content = (entry.get("content") or "").strip()
+        if not content:
+            continue
+        kind = entry.get("kind") or "episode"
+        salience = max(0.0, min(1.0, float(entry.get("salience", 0.5))))
+        evidence_ids = _item_evidence_ids(entry)
+        item = {
+            "id": new_id(),
+            "characterId": character.id,
+            "characterName": character.name,
+            "type": kind,
+            "content": content,
+            "importance": _importance_from_salience(salience),
+            "confidence": _confidence_label(entry.get("confidence")),
+            "salience": salience,
+            "locked": False,
+            "selected": True,
+            "evidence": "",
+        }
+        memory_updates.append(_with_evidence_ids(item, evidence_ids))
+        if kind == "vow":
+            vows_count += 1
+        else:
+            episodes_count += 1
+    impressions_count = 0
+    for impression in distilled.get("impressions") or []:
+        target_id = impression.get("about_character_id")
+        if not target_id or target_id == character.id or target_id not in peer_names:
+            continue
+        delta = max(-1.0, min(1.0, float(impression.get("sentiment_delta") or 0.0)))
+        notes = (impression.get("notes_append") or "").strip()
+        evidence_ids = _item_evidence_ids(impression)
+        item = {
+            "id": new_id(),
+            "fromCharacterId": character.id,
+            "fromCharacterName": character.name,
+            "toCharacterId": target_id,
+            "toCharacterName": peer_names.get(target_id, target_id),
+            "relationType": "custom",
+            "label": (impression.get("label") or "").strip(),
+            "description": notes,
+            "sentimentDelta": delta,
+            "intensity": round(abs(delta) * 100),
+            "trust": round(max(delta, 0.0) * 100),
+            "tension": round(max(-delta, 0.0) * 100),
+            "confidence": _confidence_label(impression.get("confidence")),
+            "selected": True,
+            "evidence": notes,
+        }
+        relationship_updates.append(_with_evidence_ids(item, evidence_ids))
+        impressions_count += 1
+    return {
+        "result": {
+            **base_result,
+            "status": "success",
+            "episodes_count": episodes_count,
+            "impressions_count": impressions_count,
+            "vows_count": vows_count,
+        },
+        "memory_updates": memory_updates,
+        "relationship_updates": relationship_updates,
+        "warnings": [],
+    }
+
+
+async def generate_relationship_updates(
+    context: SceneSealContext,
+    pair: tuple[str, str],
+) -> list[dict[str, Any]]:
+    # Relationship deltas are generated with each character's memory pass so
+    # the evidence boundary stays anchored to the from-character's transcript.
+    # This hook exists to keep the seal pipeline split points explicit.
+    return []
+
+
+def _retry_character_targets(retry_of: Any | None, context: SceneSealContext) -> set[str] | None:
+    if retry_of is None:
+        return None
+    targets: set[str] = set()
+    for warning in retry_of.warnings or []:
+        if not isinstance(warning, dict):
+            continue
+        part = warning.get("part") if isinstance(warning.get("part"), dict) else {}
+        if part.get("kind") == "character_memory":
+            character_id = part.get("characterId") or part.get("character_id")
+            if isinstance(character_id, str):
+                targets.add(character_id)
+        for character_id in warning.get("relatedCharacterIds") or []:
+            if isinstance(character_id, str):
+                targets.add(character_id)
+    if targets:
+        return targets
+    if getattr(retry_of, "status", "") == "failed":
+        return None
+    return set()
+
+
+def validate_scene_seal_draft(
+    draft: dict[str, Any],
+    context: SceneSealContext,
+) -> dict[str, Any]:
+    warnings = list(draft.get("warnings") or [])
+    timeline_events = [dict(item) for item in draft.get("timeline_events") or []]
+    memory_updates = [dict(item) for item in draft.get("memory_updates") or []]
+    relationship_updates = [dict(item) for item in draft.get("relationship_updates") or []]
+    public_ids = {message.id for message in context.public_transcript}
+    visible_ids_by_character = {
+        character_id: {message.id for message in messages}
+        for character_id, messages in context.character_visible_messages.items()
+    }
+    skipped = {
+        "timeline_events": sum(1 for item in timeline_events if item.get("status") == "skipped"),
+        "memory_updates": sum(1 for item in memory_updates if item.get("status") == "skipped"),
+        "relationship_updates": sum(
+            1 for item in relationship_updates if item.get("status") == "skipped"
+        ),
+    }
+
+    def skip_item(item: dict[str, Any], reason: str, warning_type: str, character_ids: list[str] | None = None) -> None:
+        item["selected"] = False
+        item["status"] = "skipped"
+        item["skipReason"] = reason
+        skipped_key = (
+            "memory_updates" if warning_type == "invalid_memory"
+            else "relationship_updates" if warning_type == "invalid_relationship"
+            else "timeline_events"
+        )
+        skipped[skipped_key] += 1
+        warnings.append(
+            _seal_warning(
+                "validation_skipped",
+                reason,
+                draft_item_ids=[item.get("id")] if item.get("id") else None,
+                character_ids=character_ids,
+                part={"kind": warning_type, "itemId": item.get("id")},
+            )
+        )
+
+    for item in timeline_events:
+        if item.get("selected", True) is False:
+            continue
+        evidence_ids = _item_evidence_ids(item)
+        if not evidence_ids:
+            skip_item(item, "timeline event has no evidence_message_ids", "invalid_timeline")
+            continue
+        if any(evidence_id not in public_ids for evidence_id in evidence_ids):
+            skip_item(item, "timeline event evidence is not in the public scene transcript", "invalid_timeline")
+            continue
+        item["status"] = "validated"
+
+    for item in memory_updates:
+        if item.get("selected", True) is False:
+            continue
+        character_id = item.get("characterId") or item.get("character_id")
+        if not isinstance(character_id, str) or character_id not in context.characters:
+            skip_item(item, "memory character_id does not exist in this scene world", "invalid_memory")
+            continue
+        evidence_ids = _item_evidence_ids(item)
+        if not evidence_ids:
+            skip_item(item, "memory has no evidence_message_ids", "invalid_memory", [character_id])
+            continue
+        visible_ids = visible_ids_by_character.get(character_id, set())
+        if any(evidence_id not in visible_ids for evidence_id in evidence_ids):
+            skip_item(
+                item,
+                "memory evidence is outside this character's visible transcript",
+                "invalid_memory",
+                [character_id],
+            )
+            continue
+        item["status"] = "validated"
+
+    for item in relationship_updates:
+        if item.get("selected", True) is False:
+            continue
+        from_id = item.get("fromCharacterId") or item.get("from_character_id")
+        to_id = item.get("toCharacterId") or item.get("to_character_id")
+        character_ids = [value for value in [from_id, to_id] if isinstance(value, str)]
+        if (
+            not isinstance(from_id, str)
+            or not isinstance(to_id, str)
+            or from_id not in context.characters
+            or to_id not in context.characters
+            or from_id == to_id
+        ):
+            skip_item(item, "relationship from/to characters are invalid", "invalid_relationship", character_ids)
+            continue
+        evidence_ids = _item_evidence_ids(item)
+        if not evidence_ids:
+            skip_item(item, "relationship update has no evidence_message_ids", "invalid_relationship", [from_id])
+            continue
+        visible_ids = visible_ids_by_character.get(from_id, set())
+        if any(evidence_id not in visible_ids for evidence_id in evidence_ids):
+            skip_item(
+                item,
+                "relationship evidence is outside the source character's visible transcript",
+                "invalid_relationship",
+                [from_id, to_id],
+            )
+            continue
+        item["status"] = "validated"
+
+    selected_valid = sum(
+        1
+        for collection in [timeline_events, memory_updates, relationship_updates]
+        for item in collection
+        if item.get("selected", True) is not False and item.get("status") == "validated"
+    )
+    has_failed_part = any(
+        isinstance(warning, dict) and warning.get("type") == "failed_part"
+        for warning in warnings
+    )
+    has_skipped = any(skipped.values())
+    error = draft.get("error") or ""
+    if error and selected_valid == 0:
+        status = "failed"
+    elif has_failed_part or has_skipped:
+        status = "partial"
+    else:
+        status = "ready"
+    return {
+        **draft,
+        "timeline_events": timeline_events,
+        "memory_updates": memory_updates,
+        "relationship_updates": relationship_updates,
+        "warnings": warnings,
+        "validation": {"skipped": skipped, "selected_valid": selected_valid},
+        "status": status,
+    }
+
+
 async def generate_scene_seal_draft_payload(
     session: AsyncSession,
     scene: Room,
+    *,
+    retry_of: Any | None = None,
 ) -> dict[str, Any]:
     """Generate an editable seal draft without mutating world state."""
     if not is_scene_room(scene):
@@ -1852,257 +2400,181 @@ async def generate_scene_seal_draft_payload(
             "plot_hook_updates": [],
             "world_bible_suggestions": [],
             "next_scene_suggestions": [],
-            "warnings": [{"id": new_id(), "type": "llm_error", "message": "room is not a scene"}],
+            "warnings": [_seal_warning("llm_error", "room is not a scene")],
             "error": "room is not a scene",
+            "status": "failed",
         }
-    messages = list(
-        (
-            await session.scalars(
-                select(Message)
-                .where(Message.room_id == scene.id, Message.visibility_to_models.is_(True))
-                .order_by(Message.created_at)
+    try:
+        context = await build_scene_seal_context(session, scene.id)
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "scene_summary": "",
+            "title_suggestion": scene.title,
+            "date_label": "",
+            "location": "",
+            "timeline_events": [],
+            "memory_updates": [],
+            "relationship_updates": [],
+            "plot_hook_updates": [],
+            "world_bible_suggestions": [],
+            "next_scene_suggestions": [],
+            "warnings": [_seal_warning("llm_error", str(exc))],
+            "error": str(exc),
+            "status": "failed",
+        }
+
+    retry_targets = _retry_character_targets(retry_of, context)
+    public_summary = await generate_public_scene_summary(context)
+    peer_names = {character.id: character.name for character in context.characters.values()}
+    if retry_of is not None and retry_targets is not None:
+        memory_updates = [
+            dict(item)
+            for item in retry_of.memory_updates or []
+            if (item.get("characterId") or item.get("character_id")) not in retry_targets
+        ]
+        relationship_updates = [
+            dict(item)
+            for item in retry_of.relationship_updates or []
+            if (item.get("fromCharacterId") or item.get("from_character_id")) not in retry_targets
+        ]
+        timeline_events = list(retry_of.timeline_events or [])
+        warnings = [
+            dict(warning)
+            for warning in retry_of.warnings or []
+            if not (
+                isinstance(warning, dict)
+                and warning.get("type") in {"failed_part", "validation_skipped"}
+                and any(
+                    character_id in retry_targets
+                    for character_id in (warning.get("relatedCharacterIds") or [])
+                    if isinstance(character_id, str)
+                )
             )
-        ).all()
-    )
-    members = list(
-        (
-            await session.scalars(
-                select(WorldSceneMember).where(WorldSceneMember.scene_id == scene.id)
-            )
-        ).all()
-    )
-    char_ids = [member.world_character_id for member in members]
-    characters = {
-        character.id: character
-        for character in (
-            await session.scalars(
-                select(WorldCharacter).where(WorldCharacter.id.in_(char_ids))
-            )
-        ).all()
-    } if char_ids else {}
-    peer_names = {character.id: character.name for character in characters.values()}
-    warnings: list[dict[str, Any]] = []
-    memory_updates: list[dict[str, Any]] = []
-    relationship_updates: list[dict[str, Any]] = []
-    character_results: list[dict[str, Any]] = []
-    for member in members:
-        character = characters.get(member.world_character_id)
-        if character is None:
-            warnings.append(
+        ]
+        characters_to_generate = [
+            character_id for character_id in retry_targets if character_id in context.characters
+        ]
+    else:
+        memory_updates = []
+        relationship_updates = []
+        warnings: list[dict[str, Any]] = []
+        timeline_summary = public_summary["timeline_suggestion"]
+        timeline_events = [
+            _with_evidence_ids(
                 {
                     "id": new_id(),
-                    "type": "llm_error",
-                    "message": f"character not found: {member.world_character_id}",
-                }
+                    "type": "arc_update",
+                    "title": f"第{scene.scene_index}幕封幕" if scene.scene_index else scene.title,
+                    "summary": timeline_summary,
+                    "dateLabel": scene.in_world_time_end or scene.in_world_time_start or "",
+                    "relatedCharacterIds": list(peer_names),
+                    "confidence": "medium",
+                    "selected": True,
+                },
+                list(public_summary["evidence_message_ids"]),
             )
-            continue
-        result_base = {
-            "character_id": character.id,
-            "character_name": character.name,
-            "status": "skipped",
-            "episodes_count": 0,
-            "impressions_count": 0,
-            "vows_count": 0,
-            "error": None,
-        }
-        if character.kind != "ai":
+        ] if timeline_summary and public_summary["evidence_message_ids"] else []
+        characters_to_generate = [member.world_character_id for member in context.stage_members]
+
+    ai_targets = [
+        character_id
+        for character_id in characters_to_generate
+        if context.characters.get(character_id) is not None
+        and context.characters[character_id].kind == "ai"
+        and not await _scene_memory_already_written(session, character_id, scene.id)
+    ]
+    character_results: list[dict[str, Any]] = []
+    for character_id in characters_to_generate:
+        character = context.characters.get(character_id)
+        if character is None:
+            warning = _seal_warning(
+                "failed_part",
+                f"character not found: {character_id}",
+                character_ids=[character_id],
+                part={"kind": "character_memory", "characterId": character_id},
+            )
+            warnings.append(warning)
             character_results.append(
                 {
-                    **result_base,
+                    "character_id": character_id,
+                    "character_name": "",
+                    "status": "failed",
+                    "episodes_count": 0,
+                    "impressions_count": 0,
+                    "vows_count": 0,
+                    "error": "character not found",
+                }
+            )
+        elif character.kind != "ai":
+            character_results.append(
+                {
+                    "character_id": character.id,
+                    "character_name": character.name,
+                    "status": "skipped",
+                    "episodes_count": 0,
+                    "impressions_count": 0,
+                    "vows_count": 0,
                     "error": "user characters do not run memory scribe",
                 }
             )
-            continue
-        if await _scene_memory_already_written(session, character.id, scene.id):
+        elif character_id not in ai_targets:
             character_results.append(
                 {
-                    **result_base,
+                    "character_id": character.id,
+                    "character_name": character.name,
+                    "status": "skipped",
+                    "episodes_count": 0,
+                    "impressions_count": 0,
+                    "vows_count": 0,
                     "error": "scene memory already written for this character",
                 }
             )
-            continue
-        witnessed = await _slice_messages_for_character(session, scene.id, member)
-        if not witnessed:
-            character_results.append({**result_base, "error": "no witnessed messages"})
-            continue
-        try:
-            existing = (
-                await session.scalars(
-                    select(WorldCharacterMemory)
-                    .where(WorldCharacterMemory.world_character_id == character.id)
-                    .order_by(
-                        WorldCharacterMemory.salience.desc(),
-                        WorldCharacterMemory.scene_index_at_write.desc().nulls_last(),
-                    )
-                    .limit(20)
+    if ai_targets:
+        scribe = await get_room_system_persona(session, scene.id, "scribe")
+        scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
+        semaphore = asyncio.Semaphore(3)
+
+        async def _run_target(character_id: str) -> dict[str, Any]:
+            async with semaphore:
+                return await generate_character_memory_updates(
+                    context,
+                    character_id,
+                    scribe,
+                    scribe_runtime,
                 )
-            ).all()
-            scribe = await get_room_system_persona(session, scene.id, "scribe")
-            scribe, scribe_runtime = await _runtime_view_for_persona(session, scribe)
-            peer_ids = [pid for pid in peer_names if pid != character.id]
-            existing_relations = (
-                await session.scalars(
-                    select(WorldCharacterRelation).where(
-                        WorldCharacterRelation.from_character_id == character.id,
-                        WorldCharacterRelation.to_character_id.in_(peer_ids),
-                    )
+
+        generated = await asyncio.gather(*[_run_target(character_id) for character_id in ai_targets])
+        for item in generated:
+            memory_updates.extend(item.get("memory_updates") or [])
+            relationship_updates.extend(item.get("relationship_updates") or [])
+            warnings.extend(item.get("warnings") or [])
+            character_results.append(item["result"])
+            trace_payload = item.get("trace")
+            if trace_payload:
+                await trace_record(
+                    session,
+                    scene.id,
+                    "seal_draft_memory_failed",
+                    "scene memory draft failed for character",
+                    trace_payload,
                 )
-            ).all() if peer_ids else []
-            payload = {
-                "scene": {
-                    "id": scene.id,
-                    "scene_index": scene.scene_index,
-                    "title": scene.title,
-                    "background": scene.background,
-                    "in_world_time_start": scene.in_world_time_start,
-                    "in_world_time_end": scene.in_world_time_end,
-                },
-                "character": {
-                    "id": character.id,
-                    "name": character.name,
-                    "identity": character.identity,
-                    "core_identity": character.core_identity,
-                    "goals_text": character.goals_text,
-                },
-                "peers_on_stage": [
-                    {"id": pid, "name": pname}
-                    for pid, pname in peer_names.items()
-                    if pid != character.id
-                ],
-                "existing_memories": [
-                    {"kind": m.kind, "content": m.content, "salience": m.salience}
-                    for m in existing
-                ],
-                "existing_relations": [
-                    {
-                        "about_character_id": r.to_character_id,
-                        "label": r.label,
-                        "sentiment": r.sentiment,
-                        "notes": r.notes,
-                    }
-                    for r in existing_relations
-                ],
-                "witnessed_messages": [message_to_tool_payload(message) for message in witnessed],
-            }
-            distilled = await llm_adapter.complete_tool(
-                scribe,
-                "scene_memory_distill",
-                SCENE_MEMORY_TOOL_DESCRIPTION,
-                MemoryDistillation,
-                payload,
-                api_provider=scribe_runtime,
-            )
-        except Exception as exc:  # noqa: BLE001
-            error = str(exc)
-            warnings.append(
-                {
-                    "id": new_id(),
-                    "type": "llm_error",
-                    "message": f"{character.name}: {error}",
-                    "relatedCharacterIds": [character.id],
-                }
-            )
-            await trace_record(
-                session,
-                scene.id,
-                "seal_draft_memory_failed",
-                "scene memory draft failed for character",
-                {"character_id": character.id, "error": error},
-            )
-            character_results.append({**result_base, "status": "failed", "error": error})
-            continue
-        episodes_count = 0
-        vows_count = 0
-        for entry in distilled.get("new_episodes") or []:
-            content = (entry.get("content") or "").strip()
-            if not content:
-                continue
-            kind = entry.get("kind") or "episode"
-            salience = float(entry.get("salience", 0.5))
-            memory_updates.append(
-                {
-                    "id": new_id(),
-                    "characterId": character.id,
-                    "characterName": character.name,
-                    "type": kind,
-                    "content": content,
-                    "importance": _importance_from_salience(salience),
-                    "confidence": "high",
-                    "salience": max(0.0, min(1.0, salience)),
-                    "locked": False,
-                    "selected": True,
-                    "evidence": "",
-                }
-            )
-            if kind == "vow":
-                vows_count += 1
-            else:
-                episodes_count += 1
-        impressions_count = 0
-        for impression in distilled.get("impressions") or []:
-            target_id = impression.get("about_character_id")
-            if not target_id or target_id == character.id or target_id not in peer_names:
-                continue
-            delta = max(-1.0, min(1.0, float(impression.get("sentiment_delta") or 0.0)))
-            notes = (impression.get("notes_append") or "").strip()
-            relationship_updates.append(
-                {
-                    "id": new_id(),
-                    "fromCharacterId": character.id,
-                    "fromCharacterName": character.name,
-                    "toCharacterId": target_id,
-                    "toCharacterName": peer_names.get(target_id, target_id),
-                    "relationType": "custom",
-                    "label": (impression.get("label") or "").strip(),
-                    "description": notes,
-                    "sentimentDelta": delta,
-                    "intensity": round(abs(delta) * 100),
-                    "trust": round(max(delta, 0.0) * 100),
-                    "tension": round(max(-delta, 0.0) * 100),
-                    "confidence": "high",
-                    "selected": True,
-                    "evidence": notes,
-                }
-            )
-            impressions_count += 1
-        character_results.append(
-            {
-                **result_base,
-                "status": "success",
-                "episodes_count": episodes_count,
-                "impressions_count": impressions_count,
-                "vows_count": vows_count,
-            }
-        )
-    scene_summary = _seal_scene_summary(scene, messages)
-    timeline_summary = scene_summary[:600]
-    timeline_events = [
-        {
-            "id": new_id(),
-            "type": "arc_update",
-            "title": f"第{scene.scene_index}幕封幕" if scene.scene_index else scene.title,
-            "summary": timeline_summary,
-            "dateLabel": scene.in_world_time_end or scene.in_world_time_start or "",
-            "relatedCharacterIds": list(peer_names),
-            "confidence": "medium",
-            "selected": True,
-        }
-    ] if timeline_summary else []
-    return {
-        "scene_summary": scene_summary,
-        "title_suggestion": scene.title,
-        "date_label": scene.in_world_time_end or scene.in_world_time_start or "",
-        "location": "",
+
+    payload = {
+        "scene_summary": retry_of.scene_summary if retry_of is not None else public_summary["summary"],
+        "title_suggestion": retry_of.title_suggestion if retry_of is not None else scene.title,
+        "date_label": retry_of.date_label if retry_of is not None else scene.in_world_time_end or scene.in_world_time_start or "",
+        "location": retry_of.location if retry_of is not None else "",
         "timeline_events": timeline_events,
         "memory_updates": memory_updates,
         "relationship_updates": relationship_updates,
-        "plot_hook_updates": [],
-        "world_bible_suggestions": [],
-        "next_scene_suggestions": [],
+        "plot_hook_updates": list(retry_of.plot_hook_updates or []) if retry_of is not None else [],
+        "world_bible_suggestions": list(retry_of.world_bible_suggestions or []) if retry_of is not None else [],
+        "next_scene_suggestions": list(retry_of.next_scene_suggestions or []) if retry_of is not None else [],
         "warnings": warnings,
         "error": "",
         "character_results": character_results,
     }
+    return validate_scene_seal_draft(payload, context)
 
 
 async def _scribe_memory_for_character(

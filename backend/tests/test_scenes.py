@@ -508,10 +508,21 @@ def test_seal_scribe_reports_single_character_failure_without_blocking_others(
         if character["name"] == "失败者":
             raise RuntimeError("pytest scribe failure")
         peer_id = payload["peers_on_stage"][0]["id"]
+        evidence_ids = [payload["witnessed_messages"][0]["id"]]
         return {
             "new_episodes": [
-                {"kind": "episode", "content": "记住了风雨夜的约定。", "salience": 0.7},
-                {"kind": "vow", "content": "发誓查清真相。", "salience": 0.8},
+                {
+                    "kind": "episode",
+                    "content": "记住了风雨夜的约定。",
+                    "salience": 0.7,
+                    "evidence_message_ids": evidence_ids,
+                },
+                {
+                    "kind": "vow",
+                    "content": "发誓查清真相。",
+                    "salience": 0.8,
+                    "evidence_message_ids": evidence_ids,
+                },
             ],
             "impressions": [
                 {
@@ -519,6 +530,7 @@ def test_seal_scribe_reports_single_character_failure_without_blocking_others(
                     "sentiment_delta": 0.2,
                     "label": "同伴",
                     "notes_append": "共同经历了风雨夜。",
+                    "evidence_message_ids": evidence_ids,
                 }
             ],
             "reasoning": "pytest deterministic memory result",
@@ -551,7 +563,7 @@ def test_seal_scribe_reports_single_character_failure_without_blocking_others(
     draft = client.post(f"/rooms/{scene_id}/seal")
     assert draft.status_code == 200, draft.text
     draft_payload = draft.json()
-    assert draft_payload["status"] == "ready"
+    assert draft_payload["status"] == "partial"
     assert any("pytest scribe failure" in warning["message"] for warning in draft_payload["warnings"])
     assert len(draft_payload["memory_updates"]) == 2
     assert len(draft_payload["relationship_updates"]) == 1
@@ -602,9 +614,15 @@ def test_seal_draft_can_be_edited_and_commit_is_idempotent(
     ):
         assert tool_name == "scene_memory_distill"
         peer_id = payload["peers_on_stage"][0]["id"]
+        evidence_ids = [payload["witnessed_messages"][0]["id"]]
         return {
             "new_episodes": [
-                {"kind": "episode", "content": "应该被用户取消的记忆。", "salience": 0.7}
+                {
+                    "kind": "episode",
+                    "content": "应该被用户取消的记忆。",
+                    "salience": 0.7,
+                    "evidence_message_ids": evidence_ids,
+                }
             ],
             "impressions": [
                 {
@@ -612,6 +630,7 @@ def test_seal_draft_can_be_edited_and_commit_is_idempotent(
                     "sentiment_delta": 0.3,
                     "label": "盟友",
                     "notes_append": "应该被用户取消的关系变化。",
+                    "evidence_message_ids": evidence_ids,
                 }
             ],
             "reasoning": "pytest deterministic draft edit",
@@ -672,3 +691,220 @@ def test_seal_draft_can_be_edited_and_commit_is_idempotent(
     assert len(committed_events) == 1
     assert committed_events[0]["summary"] == "用户编辑后的时间轴摘要。"
     assert committed_events[0]["seal_draft_id"] == draft["id"]
+
+
+def test_seal_draft_does_not_feed_exited_character_post_exit_messages(
+    client, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_after(room_id, message):
+        return None
+
+    async def controlled_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=1200,
+        api_provider=None,
+    ):
+        assert tool_name == "scene_memory_distill"
+        character = payload["character"]
+        visible_text = "\n".join(message["content"] for message in payload["witnessed_messages"])
+        if character["name"] == "先退场的人":
+            assert "退场后才说出的秘密" not in visible_text
+        if not payload["witnessed_messages"]:
+            return {"new_episodes": [], "impressions": [], "reasoning": "no evidence"}
+        evidence_ids = [payload["witnessed_messages"][-1]["id"]]
+        return {
+            "new_episodes": [
+                {
+                    "kind": "episode",
+                    "content": f"{character['name']}只记录自己在场时听见的内容。",
+                    "salience": 0.7,
+                    "evidence_message_ids": evidence_ids,
+                }
+            ],
+            "impressions": [],
+            "reasoning": "visibility regression",
+        }
+
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", noop_autodrive_after)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", controlled_complete_tool)
+
+    world = _make_world(client)
+    template = discussant_personas[0]
+    exited_char = _make_ai_character(client, world["id"], template["id"], name="先退场的人")
+    witness_char = _make_ai_character(client, world["id"], template["id"], name="留下的人")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "退场可见性封幕测试",
+            "members": [
+                {"world_character_id": exited_char["id"]},
+                {"world_character_id": witness_char["id"]},
+            ],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+    client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "退场前共享的线索。", "message_type": "narration"},
+    )
+    exited = client.post(
+        f"/rooms/{scene_id}/scene/exit",
+        json={"world_character_id": exited_char["id"], "description": "先退场的人离开。"},
+    )
+    assert exited.status_code == 200, exited.text
+    client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "退场后才说出的秘密。", "message_type": "narration"},
+    )
+
+    draft = client.post(f"/rooms/{scene_id}/seal").json()
+    committed = client.post(f"/rooms/{scene_id}/seal-drafts/{draft['id']}/commit")
+    assert committed.status_code == 200, committed.text
+    memories = client.get(
+        f"/worlds/{world['id']}/characters/{exited_char['id']}/memories"
+    ).json()
+    assert memories
+    assert all("退场后才说出的秘密" not in memory["content"] for memory in memories)
+
+
+def test_seal_commit_skips_memory_and_relation_without_evidence(
+    client, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_after(room_id, message):
+        return None
+
+    async def controlled_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=1200,
+        api_provider=None,
+    ):
+        assert tool_name == "scene_memory_distill"
+        peer_id = payload["peers_on_stage"][0]["id"]
+        return {
+            "new_episodes": [
+                {"kind": "episode", "content": "没有证据的记忆不该写入。", "salience": 0.7}
+            ],
+            "impressions": [
+                {
+                    "about_character_id": peer_id,
+                    "sentiment_delta": 0.5,
+                    "label": "无证",
+                    "notes_append": "没有证据的关系不该写入。",
+                }
+            ],
+            "reasoning": "missing evidence regression",
+        }
+
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", noop_autodrive_after)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", controlled_complete_tool)
+
+    world = _make_world(client)
+    template = discussant_personas[0]
+    char_a = _make_ai_character(client, world["id"], template["id"], name="甲无证")
+    char_b = _make_ai_character(client, world["id"], template["id"], name="乙无证")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "无证封幕测试",
+            "members": [
+                {"world_character_id": char_a["id"]},
+                {"world_character_id": char_b["id"]},
+            ],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+    client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "有对话，但模型没有给证据 id。", "message_type": "narration"},
+    )
+
+    draft = client.post(f"/rooms/{scene_id}/seal").json()
+    assert draft["status"] == "partial"
+    assert draft["memory_updates"][0]["status"] == "skipped"
+    assert draft["relationship_updates"][0]["status"] == "skipped"
+    committed = client.post(f"/rooms/{scene_id}/seal-drafts/{draft['id']}/commit")
+    assert committed.status_code == 200, committed.text
+    payload = committed.json()
+    assert payload["skipped"]["memory_updates"] >= 1
+    assert payload["skipped"]["relationship_updates"] >= 1
+    assert payload["scene"]["sealed_at"] is not None
+    memories = client.get(f"/worlds/{world['id']}/characters/{char_a['id']}/memories").json()
+    assert all(memory["source_scene_id"] != scene_id for memory in memories)
+    relations = client.get(f"/worlds/{world['id']}/characters/{char_a['id']}/relations").json()
+    assert relations == []
+
+
+def test_retry_seal_draft_regenerates_only_failed_character_parts(
+    client, discussant_personas, monkeypatch
+):
+    async def noop_autodrive_after(room_id, message):
+        return None
+
+    call_counts: dict[str, int] = {}
+
+    async def controlled_complete_tool(
+        persona,
+        tool_name,
+        tool_description,
+        output_model,
+        payload,
+        max_tokens=1200,
+        api_provider=None,
+    ):
+        assert tool_name == "scene_memory_distill"
+        character = payload["character"]
+        call_counts[character["name"]] = call_counts.get(character["name"], 0) + 1
+        if character["name"] == "需要重试" and call_counts[character["name"]] == 1:
+            raise RuntimeError("first attempt fails")
+        evidence_ids = [payload["witnessed_messages"][0]["id"]]
+        return {
+            "new_episodes": [
+                {
+                    "kind": "episode",
+                    "content": f"{character['name']}的可验证记忆。",
+                    "salience": 0.7,
+                    "evidence_message_ids": evidence_ids,
+                }
+            ],
+            "impressions": [],
+            "reasoning": "retry failed part only",
+        }
+
+    monkeypatch.setattr(engine_module, "maybe_autodrive_after", noop_autodrive_after)
+    monkeypatch.setattr(engine_module.llm_adapter, "complete_tool", controlled_complete_tool)
+
+    world = _make_world(client)
+    template = discussant_personas[0]
+    stable = _make_ai_character(client, world["id"], template["id"], name="一次成功")
+    flaky = _make_ai_character(client, world["id"], template["id"], name="需要重试")
+    scene = client.post(
+        f"/worlds/{world['id']}/scenes",
+        json={
+            "title": "部分重试封幕测试",
+            "members": [
+                {"world_character_id": stable["id"]},
+                {"world_character_id": flaky["id"]},
+            ],
+        },
+    ).json()
+    scene_id = scene["room"]["id"]
+    client.post(
+        f"/rooms/{scene_id}/messages",
+        json={"content": "两人都听见了同一句证词。", "message_type": "narration"},
+    )
+
+    draft = client.post(f"/rooms/{scene_id}/seal").json()
+    assert draft["status"] == "partial"
+    assert call_counts == {"一次成功": 1, "需要重试": 1}
+    retried = client.post(f"/rooms/{scene_id}/seal-drafts/{draft['id']}/retry").json()
+    assert retried["status"] == "ready"
+    assert call_counts == {"一次成功": 1, "需要重试": 2}
+    assert len(retried["memory_updates"]) == 2

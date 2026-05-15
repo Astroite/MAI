@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { AlertTriangle, CheckCircle2, RefreshCw, Save, X } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, Save, X, XCircle } from "lucide-react";
 import { useMutation } from "@tanstack/react-query";
 import { api } from "../../api";
 import { toast } from "../../components/Toaster";
@@ -72,11 +72,16 @@ export function SealResultsDialog({
     onError: (err) => toast.error(err instanceof Error ? err.message : String(err))
   });
 
-  const ready = draft?.status === "ready";
+  const ready = draft?.status === "ready" || draft?.status === "partial";
   const selectedCounts = {
     timeline: timelineEvents.filter((item) => item.selected !== false).length,
     memory: memoryUpdates.filter((item) => item.selected !== false).length,
     relationship: relationshipUpdates.filter((item) => item.selected !== false).length
+  };
+  const skippedCounts = {
+    timeline: timelineEvents.filter((item) => item.status === "skipped").length,
+    memory: memoryUpdates.filter((item) => item.status === "skipped").length,
+    relationship: relationshipUpdates.filter((item) => item.status === "skipped").length
   };
 
   return (
@@ -125,6 +130,20 @@ export function SealResultsDialog({
                         <li key={warning.id}>{warning.message}</li>
                       ))}
                     </ul>
+                  </section>
+                )}
+
+                {(draft.status === "partial" || skippedCounts.timeline + skippedCounts.memory + skippedCounts.relationship > 0) && (
+                  <section className="rounded-md border border-border bg-surface p-3 text-xs text-muted">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <AlertTriangle size={15} className="text-warning" />
+                      <span>{t("sealResults.partialNotice")}</span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <StatusChip label={t("sealResults.skippedTimeline", { count: skippedCounts.timeline })} />
+                      <StatusChip label={t("sealResults.skippedMemory", { count: skippedCounts.memory })} />
+                      <StatusChip label={t("sealResults.skippedRelationship", { count: skippedCounts.relationship })} />
+                    </div>
                   </section>
                 )}
 
@@ -279,6 +298,7 @@ function TimelineDraftItem({
         value={item.summary}
         onChange={(event) => onChange({ ...item, summary: event.target.value })}
       />
+      <DraftEvidence item={item} />
     </div>
   );
 }
@@ -317,6 +337,7 @@ function MemoryDraftItem({
         value={item.content}
         onChange={(event) => onChange({ ...item, content: event.target.value })}
       />
+      <DraftEvidence item={item} />
     </div>
   );
 }
@@ -351,6 +372,41 @@ function RelationshipDraftItem({
         value={item.description}
         onChange={(event) => onChange({ ...item, description: event.target.value })}
       />
+      <DraftEvidence item={item} />
+    </div>
+  );
+}
+
+function StatusChip({ label }: { label: string }) {
+  return (
+    <span className="rounded-full border border-border bg-panel px-2 py-0.5 text-xs text-muted">
+      {label}
+    </span>
+  );
+}
+
+function DraftEvidence({
+  item
+}: {
+  item: {
+    status?: string;
+    skipReason?: string;
+    evidenceMessageIds?: string[];
+    evidence_message_ids?: string[];
+  };
+}) {
+  const { t } = useI18n();
+  const evidenceIds = item.evidenceMessageIds ?? item.evidence_message_ids ?? [];
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+      {item.status === "skipped" ? (
+        <span className="inline-flex items-center gap-1 text-danger">
+          <XCircle size={13} />
+          {item.skipReason || t("sealResults.skippedInvalid")}
+        </span>
+      ) : (
+        <span>{t("sealResults.evidenceCount", { count: evidenceIds.length })}</span>
+      )}
     </div>
   );
 }
