@@ -36,6 +36,7 @@ vi.mock("../../i18n", () => {
     "room.stage.presentStatus": "Present",
     "room.stage.relationshipCues": "Relationship cues",
     "room.stage.role": "Stage role",
+    "room.stage.selected": "Selected",
     "room.stage.speaker": "Speech access",
     "room.stage.timeUnknown": "Time unknown",
     "room.stage.unknownWorld": "Unknown world",
@@ -148,6 +149,8 @@ describe("SceneStagePanel", () => {
     expect(html).toContain("Su Li");
     expect(html).toContain("AI");
     expect(html).toContain("Can speak");
+    expect(html).toContain("Selected");
+    expect(html).toContain('aria-pressed="true"');
   });
 
   it("keeps exited characters collapsed by default while showing the count", () => {
@@ -157,15 +160,16 @@ describe("SceneStagePanel", () => {
     expect(html).not.toContain("Offstage courier");
   });
 
-  it("renders selected character cues and caps cue lists at three items", () => {
+  it("renders selected character cues inside scrollable collapsible sections", () => {
     const html = renderPanel();
 
     expect(html).toContain("7 messages");
     expect(html).toContain("Memory one");
     expect(html).toContain("Memory three");
-    expect(html).not.toContain("Memory four");
+    expect(html).toContain("Memory four");
     expect(html).toContain("Liu Qing: Owes a favor");
-    expect(html).not.toContain("Bandit: Should stay hidden");
+    expect(html).toContain("Bandit: Should stay hidden");
+    expect(html).toContain("max-h-36");
   });
 });
 
