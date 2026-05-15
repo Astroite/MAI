@@ -272,7 +272,18 @@ class LLMAdapter:
             text = text[text.index("{"):]
         if not text.endswith("}") and "}" in text:
             text = text[: text.rindex("}") + 1]
-        return self._unstring_nested(json.loads(text or "{}"))
+        try:
+            parsed = json.loads(text or "{}")
+        except json.JSONDecodeError as exc:
+            snippet = (text or "")[:500]
+            if len(text) > 500:
+                snippet += "..."
+            raise ValueError(
+                "model returned malformed JSON tool arguments "
+                f"at line {exc.lineno} column {exc.colno}: {exc.msg}. "
+                f"Snippet: {snippet}"
+            ) from exc
+        return self._unstring_nested(parsed)
 
     def _unstring_nested(self, value: Any) -> Any:
         """Recursively re-hydrate JSON-string sub-fields.

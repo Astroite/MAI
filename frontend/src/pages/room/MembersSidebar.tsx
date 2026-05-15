@@ -3,7 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PauseCircle, Pencil, Save, Users, Wrench, X } from "lucide-react";
 import { api } from "../../api";
 import { useUIStore } from "../../store";
-import type { ApiModel, ApiProvider, PersonaInstance } from "../../types";
+import type { ApiModel, ApiProvider, PersonaInstance, Room, RoomState } from "../../types";
 import { useI18n } from "../../i18n";
 import { queryKeys } from "../../queryKeys";
 import { PersonaIcon } from "../../components/PersonaIcon";
@@ -75,6 +75,15 @@ export function MembersSidebar({
                     {personaModelLabel(persona, modelById, providerById, t)}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  className="btn h-7 w-7 shrink-0 px-0"
+                  onClick={() => setEditingId(editingId === persona.id ? null : persona.id)}
+                  aria-label={editingId === persona.id ? t("room.closeEdit") : t("room.editPersona")}
+                  title={editingId === persona.id ? t("room.closeEdit") : t("room.editPersona")}
+                >
+                  {editingId === persona.id ? <X size={12} /> : <Pencil size={12} />}
+                </button>
                 <span
                   className={`h-1.5 w-1.5 shrink-0 rounded-full ${
                     activePersonaIds.has(persona.id) ? "bg-brand" : "bg-success"
@@ -92,6 +101,23 @@ export function MembersSidebar({
             </div>
           ))}
         </div>
+        {editingId && (
+          <div>
+            {discussants
+              .filter((persona) => persona.id === editingId)
+              .map((persona) => (
+                <PersonaInstanceEditor
+                  key={persona.id}
+                  roomId={roomId}
+                  persona={persona}
+                  apiModels={models.data ?? []}
+                  providerById={providerById}
+                  t={t}
+                  onClose={() => setEditingId(null)}
+                />
+              ))}
+          </div>
+        )}
       </div>
     );
   }
@@ -280,8 +306,10 @@ function PersonaInstanceEditor({
           tools_allow_write: toolsEnabled ? toolsAllowWrite : false
         }
       }),
-    onSuccess: () => {
+    onSuccess: (updated) => {
+      applyPersonaInstanceUpdate(queryClient, roomId, updated);
       void queryClient.invalidateQueries({ queryKey: queryKeys.room(roomId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.rooms });
       onClose();
     },
     onError: (err) => setError(err instanceof Error ? err.message : t("api.saveFailed"))
@@ -395,5 +423,39 @@ function PersonaInstanceEditor({
         </button>
       </div>
     </form>
+  );
+}
+
+function applyPersonaInstanceUpdate(
+  queryClient: ReturnType<typeof useQueryClient>,
+  roomId: string,
+  updated: PersonaInstance
+) {
+  queryClient.setQueryData<RoomState>(queryKeys.room(roomId), (current) => {
+    if (!current) return current;
+    return {
+      ...current,
+      personas: current.personas.map((persona) => (persona.id === updated.id ? updated : persona))
+    };
+  });
+  queryClient.setQueryData<Room[]>(queryKeys.rooms, (current) =>
+    current?.map((room) =>
+      room.id === roomId
+        ? {
+            ...room,
+            members: room.members?.map((member) =>
+              member.id === updated.id
+                ? {
+                    ...member,
+                    name: updated.name,
+                    identity: updated.identity,
+                    color: updated.color,
+                    icon: updated.icon
+                  }
+                : member
+            )
+          }
+        : room
+    )
   );
 }

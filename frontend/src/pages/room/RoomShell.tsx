@@ -295,7 +295,7 @@ export function RoomShell() {
   };
 
   return (
-    <div className="grid h-[100dvh] overflow-hidden bg-surface text-text grid-cols-[300px_minmax(0,1fr)_360px] max-2xl:grid-cols-[280px_minmax(0,1fr)_340px] max-xl:grid-cols-[260px_minmax(0,1fr)] max-md:grid-cols-1">
+    <div className="grid min-h-0 flex-1 overflow-hidden bg-surface text-text grid-cols-[300px_minmax(0,1fr)_360px] max-2xl:grid-cols-[280px_minmax(0,1fr)_340px] max-xl:grid-cols-[260px_minmax(0,1fr)] max-md:grid-cols-1">
       <div className="min-h-0 overflow-hidden max-md:hidden">
         <RoomListSidebar activeRoomId={activeRoomId} />
       </div>
@@ -497,6 +497,17 @@ export function RoomShell() {
               frozen={state.runtime.frozen}
               sealed={sceneSealed}
               isScene={isScene}
+              phaseExit={{
+                active: state.runtime.phase_exit_suggested,
+                onNext: () => nextPhase.mutate(),
+                onContinue: () => continuePhase.mutate(),
+                onExtend: () => extendPhase.mutate(),
+                disabled:
+                  roomReadOnly ||
+                  nextPhase.isPending ||
+                  continuePhase.isPending ||
+                  extendPhase.isPending
+              }}
             />
             <MessageList
               roomId={activeRoomId}
